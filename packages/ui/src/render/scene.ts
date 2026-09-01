@@ -2,7 +2,7 @@ import { SPRITES } from '../art/sprites.js';
 import type { FloorId } from '../floors.js';
 import type { UiState } from '../store.js';
 import { drawSprite, drawTilemap } from './draw.js';
-import { FLOORPLANS } from './floorplans.js';
+import { dynamicFurniture, FLOORPLANS } from './floorplans.js';
 
 /**
  * Ambience is a pure function of the 8fps tick and the sprite's own x, so
@@ -40,23 +40,25 @@ function bobFor(anim: string | undefined, tick: number, x: number): number {
 /**
  * Draws one floor: ground tilemap, then furniture in declaration order
  * (painter's algorithm — a robot is listed before the desk it sits behind).
- * `state` is unused until Task 4 replaces the placeholder racks and desks
- * with live nodes and agents.
+ * Live nodes and agents are appended by `dynamicFurniture`.
+ *
+ * `elevatorFrame` overrides the doors' idle shimmer while the car is moving.
  */
 export function renderFloor(
   ctx: CanvasRenderingContext2D,
   floorId: FloorId,
   state: UiState,
   tick: number,
+  elevatorFrame?: number,
 ): void {
-  void state;
   const plan = FLOORPLANS[floorId];
   drawTilemap(ctx, plan.tilemap, plan.legend);
 
-  for (const item of plan.furniture) {
+  for (const item of [...plan.furniture, ...dynamicFurniture(floorId, state)]) {
     const frames = SPRITES[item.sprite];
     if (!frames) continue;
-    const frame = frameFor(item.anim, tick, frames.length, item.x);
+    const pinned = item.sprite === 'elevator' ? elevatorFrame : item.frame;
+    const frame = pinned ?? frameFor(item.anim, tick, frames.length, item.x);
     drawSprite(ctx, frames, item.x, item.y + bobFor(item.anim, tick, item.x), frame);
   }
 }

@@ -1,5 +1,92 @@
 import type { SpriteDef } from './validate.js';
 
+const RACK_LEGEND = { 'D': 'steelDark', 'S': 'steel', 'm': 'mid', 'k': 'ink', 'e': 'ledGreen' };
+
+// The two rack frames light alternate LED banks; the offline rack reuses the
+// first bank with the ramp's red so a dead node reads at a glance. 16x32
+const RACK_ROWS_A = [
+  'DDDDDDDDDDDDDDDD',
+  'DSSSSSSSSSSSSSSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+];
+
+const RACK_ROWS_B = [
+  'DDDDDDDDDDDDDDDD',
+  'DSSSSSSSSSSSSSSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkDDSD',
+  'DSkkkkkkkkkkkkSD',
+  'DSmmmmmmmmmmmmSD',
+  'DSmkkkkkkkkkeeSD',
+  'DSkkkkkkkkkkkkSD',
+];
+
+const GAUGE_LEGEND = { 'D': 'steelDark', 'S': 'steel', 'k': 'ink', 'o': 'mid', 'e': 'ledGreen' };
+
+/** Wall meter: four segments in a steel bezel, `lit` of them green. 23x8 */
+function gaugeFrame(lit: number): SpriteDef {
+  const bar = [0, 1, 2, 3].map((i) => (i < lit ? 'eeee' : 'oooo')).join('k');
+  const edge = 'D'.repeat(23);
+  const rim = `D${'S'.repeat(21)}D`;
+  return {
+    legend: GAUGE_LEGEND,
+    rows: [edge, rim, `DS${'k'.repeat(19)}SD`, `DS${bar}SD`, `DS${bar}SD`, `DS${bar}SD`, rim, edge],
+  };
+}
+
 /**
  * Every entry is a frame list, so animated and static art share one shape:
  * `SPRITES.desk` is a single frame, `SPRITES.elevator` is three.
@@ -145,81 +232,13 @@ export const SPRITES: Record<string, SpriteDef[]> = {
   ],
   // Server rack; the two frames alternate blade LEDs. 16x32
   rack: [
-    {
-      legend: { 'D': 'steelDark', 'S': 'steel', 'm': 'mid', 'k': 'ink', 'e': 'ledGreen' },
-      rows: [
-        'DDDDDDDDDDDDDDDD',
-        'DSSSSSSSSSSSSSSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-      ],
-    },
-    {
-      legend: { 'D': 'steelDark', 'S': 'steel', 'm': 'mid', 'k': 'ink', 'e': 'ledGreen' },
-      rows: [
-        'DDDDDDDDDDDDDDDD',
-        'DSSSSSSSSSSSSSSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkDDSD',
-        'DSkkkkkkkkkkkkSD',
-        'DSmmmmmmmmmmmmSD',
-        'DSmkkkkkkkkkeeSD',
-        'DSkkkkkkkkkkkkSD',
-      ],
-    },
+    { legend: RACK_LEGEND, rows: RACK_ROWS_A },
+    { legend: RACK_LEGEND, rows: RACK_ROWS_B },
   ],
+  // Dead node: same chassis, LEDs stuck on the ramp's red. 16x32
+  rackOffline: [{ legend: { ...RACK_LEGEND, 'e': 'accentRed' }, rows: RACK_ROWS_A }],
+  // Per-tier stream gauge; frame index is the number of active streams. 23x8
+  gauge: [gaugeFrame(0), gaugeFrame(1), gaugeFrame(2), gaugeFrame(3), gaugeFrame(4)],
   // Elevator doors; three frames sweep the indicator and a door glint. 32x32
   elevator: [
     {

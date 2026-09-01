@@ -1,4 +1,6 @@
+import type { Tier } from '@agenthub/shared';
 import type { FloorId } from '../floors.js';
+import type { UiState } from '../store.js';
 
 export const GRID_COLS = 20;
 export const GRID_ROWS = 18;
@@ -8,6 +10,8 @@ export interface Furniture {
   x: number;
   y: number;
   anim?: string;
+  /** Pins the frame instead of animating it — used by the stream gauges. */
+  frame?: number;
 }
 
 export interface Hotspot {
@@ -65,6 +69,24 @@ function workstation(x: number, y: number, anim: 'idle' | 'typing'): Furniture[]
 // Centred in the 16..304 floor span: 56px of deck either side of the block.
 const RACK_XS = [72, 104, 136, 168, 200, 232];
 const SUBAGENT_XS = [32, 104, 176, 248];
+const DESK_XS = [40, 144, 248];
+
+const RACK_W = 16;
+const RACK_H = 32;
+const DESK_W = 32;
+/** A workstation reads from the robot's head down to the desk's front edge. */
+const STATION_H = 24;
+const STATION_LIFT = 12;
+
+/** Aisle slots on B1 and desk slots on 2F: front row first, then the back row. */
+const RACK_SLOTS = [64, 144].flatMap((y) => RACK_XS.map((x) => ({ x, y })));
+const DESK_SLOTS = [112, 200].flatMap((y) => DESK_XS.map((x) => ({ x, y })));
+
+const GAUGE_TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
+const GAUGE_X = 160;
+const GAUGE_PITCH = 32;
+const GAUGE_Y = 24;
+const GAUGE_SEGMENTS = 4;
 
 export const FLOORPLANS: Record<FloorId, FloorPlan> = {
   // B1 — dark steel plant room, two aisles of racks and an ops console.
@@ -90,10 +112,9 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       OPEN,
     ],
     legend: { ...STEEL, f: 'floorGrid' },
+    // Racks and gauges are live data — see dynamicFurniture().
     furniture: [
       elevator,
-      ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 64, anim: 'led' })),
-      ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 144, anim: 'led' })),
       { sprite: 'desk', x: 144, y: 224 },
       { sprite: 'monitor', x: 162, y: 216, anim: 'flicker' },
     ],
@@ -139,7 +160,7 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
     ],
   },
 
-  // 2F — open-plan carpet, six placeholder workstations (Task 4 makes them agents).
+  // 2F — open-plan carpet; the workstations are one live agent each.
   f2: {
     tilemap: [
       TOP,
@@ -164,12 +185,6 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
     legend: { ...PAINTED, f: 'carpet' },
     furniture: [
       elevator,
-      ...workstation(40, 112, 'idle'),
-      ...workstation(144, 112, 'idle'),
-      ...workstation(248, 112, 'idle'),
-      ...workstation(40, 200, 'idle'),
-      ...workstation(144, 200, 'idle'),
-      ...workstation(248, 200, 'idle'),
       { sprite: 'plant', x: 24, y: 248 },
       { sprite: 'plant', x: 284, y: 248 },
     ],
@@ -302,3 +317,83 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
     hotspots: [elevatorHotspot],
   },
 };
+
+/**
+ * The live half of a floor: one rack per registered node and the tier gauges on
+ * B1, one staffed workstation per API agent on 2F. Nothing is baked into
+ * FLOORPLANS, so the plans stay static data and this stays a pure projection of
+ * the store. Nodes and agents beyond the floor's slots are not drawn.
+ */
+export function dynamicFurniture(floorId: FloorId, state: UiState): Furniture[] {
+  const hub = state.hub;
+  if (!hub) return [];
+
+  if (floorId === 'b1') {
+    return [
+      ...hub.nodes.slice(0, RACK_SLOTS.length).map((node, i): Furniture => {
+        const online = node.status === 'online';
+        return {
+          sprite: online ? 'rack' : 'rackOffline',
+          x: RACK_SLOTS[i].x,
+          y: RACK_SLOTS[i].y,
+          anim: online ? 'led' : undefined,
+        };
+      }),
+      ...GAUGE_TIERS.map((tier, i): Furniture => ({
+        sprite: 'gauge',
+        x: GAUGE_X + i * GAUGE_PITCH,
+        y: GAUGE_Y,
+        frame: Math.min(hub.streams[tier] ?? 0, GAUGE_SEGMENTS),
+      })),
+    ];
+  }
+
+  if (floorId === 'f2') {
+    return hub.agents
+      .slice(0, DESK_SLOTS.length)
+      .flatMap((agent, i) =>
+        workstation(DESK_SLOTS[i].x, DESK_SLOTS[i].y, state.busy.has(agent.id) ? 'typing' : 'idle'),
+      );
+  }
+
+  return [];
+}
+
+/** Static hotspots plus the ones the live floors grow; used for hit-testing. */
+export function hotspotsFor(floorId: FloorId, state: UiState): Hotspot[] {
+  const plan = FLOORPLANS[floorId];
+  const hub = state.hub;
+  if (!hub) return plan.hotspots;
+
+  if (floorId === 'b1') {
+    return [
+      ...plan.hotspots,
+      ...hub.nodes.slice(0, RACK_SLOTS.length).map(
+        (node, i): Hotspot => ({
+          id: `rack:${node.name}`,
+          x: RACK_SLOTS[i].x,
+          y: RACK_SLOTS[i].y,
+          w: RACK_W,
+          h: RACK_H,
+        }),
+      ),
+    ];
+  }
+
+  if (floorId === 'f2') {
+    return [
+      ...plan.hotspots,
+      ...hub.agents.slice(0, DESK_SLOTS.length).map(
+        (agent, i): Hotspot => ({
+          id: `agent:${agent.id}`,
+          x: DESK_SLOTS[i].x,
+          y: DESK_SLOTS[i].y - STATION_LIFT,
+          w: DESK_W,
+          h: STATION_H,
+        }),
+      ),
+    ];
+  }
+
+  return plan.hotspots;
+}

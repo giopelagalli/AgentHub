@@ -1,0 +1,129 @@
+/* Game Boy text boxes: cream card, hard ink border, cream outline as the
+   second bevel. Colours come from src/art/palette.ts, published as CSS
+   custom properties on <html> at boot — no hex lives here. */
+
+.gb-panel {
+  position: fixed;
+  z-index: 10;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--c-ink);
+  background: var(--c-cream);
+  border: 3px solid var(--c-ink);
+  outline: 3px solid var(--c-cream);
+}
+
+.gb-panel h2 {
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  border-bottom: 2px solid var(--c-mid);
+}
+
+.gb-panel--menu {
+  top: 24px;
+  right: 24px;
+  min-width: 180px;
+}
+
+.gb-panel--center {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(560px, 88vw);
+  max-height: 76vh;
+  overflow: auto;
+}
+
+.gb-menu {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gb-menu button {
+  display: block;
+  width: 100%;
+  padding: 1px 2px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.gb-menu button::before {
+  content: '\00a0\00a0';
+}
+
+.gb-menu button:hover::before,
+.gb-menu button:focus::before {
+  content: '\25b8\00a0';
+}
+
+/* The pointer arrow is the selection cue; the UA ring would fight the palette. */
+.gb-menu button:focus-visible {
+  outline: 1px dotted var(--c-mid);
+}
+
+.gb-menu button[aria-current='true'] {
+  color: var(--c-mid);
+}
+
+.gb-panel table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.gb-panel th,
+.gb-panel td {
+  padding: 1px 8px 1px 0;
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+/* Endpoint URLs are long: wrap them rather than push the later columns off. */
+.gb-panel td.gb-cell--wrap {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.gb-panel th {
+  color: var(--c-mid);
+  font-weight: normal;
+}
+
+.gb-panel dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0 10px;
+  margin: 0 0 8px;
+}
+
+.gb-panel dt {
+  color: var(--c-mid);
+}
+
+.gb-panel dd {
+  margin: 0;
+}
+
+.gb-status--offline {
+  color: var(--c-accentRed);
+}
+
+.gb-hint {
+  margin: 8px 0 0;
+  color: var(--c-mid);
+}

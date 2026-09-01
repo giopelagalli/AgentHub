@@ -6,6 +6,8 @@ import { startLoop } from './engine/loop.js';
 import { Screen } from './engine/screen.js';
 import { FLOORS } from './floors.js';
 import { connect } from './net.js';
+import { openChat } from './panels/chat.js';
+import { closeDialog, dialogIsOpen, openDialog, tickDialog } from './panels/dialog.js';
 import { openElevatorMenu } from './panels/elevator.js';
 import { openNodeInfo } from './panels/nodeinfo.js';
 import { openQueuePanel } from './panels/queue.js';
@@ -13,8 +15,13 @@ import { hotspotsFor } from './render/floorplans.js';
 import { renderFloor } from './render/scene.js';
 import { Store } from './store.js';
 
-const app = document.getElementById('app');
-if (!app) throw new Error('#app host element not found');
+function hostElement(): HTMLElement {
+  const element = document.getElementById('app');
+  if (!element) throw new Error('#app host element not found');
+  return element;
+}
+
+const app = hostElement();
 
 // The panel stylesheet reads the canvas palette through these.
 for (const [name, hex] of Object.entries(PALETTE)) {
@@ -27,12 +34,19 @@ const store = new Store();
 /** Informational panels, newest last: Esc closes the one on top. */
 const panels: (() => void)[] = [];
 
-function openPanel(close: () => void): void {
-  panels.push(close);
+/** Returns a dismiss that closes the panel and drops it from the stack, once. */
+function openPanel(close: () => void): () => void {
+  const dismiss = (): void => {
+    const index = panels.indexOf(dismiss);
+    if (index >= 0) panels.splice(index, 1);
+    close();
+  };
+  panels.push(dismiss);
+  return dismiss;
 }
 
 function closeTopPanel(): void {
-  panels.pop()?.();
+  panels[panels.length - 1]?.();
 }
 
 let closeMenu: (() => void) | null = null;
@@ -47,8 +61,33 @@ const elevator = new Elevator(store, (state) => {
   }
 });
 
+/** One chat at a time: a second one would land on top of the first. */
+let dismissChat: (() => void) | null = null;
+
+async function greetAgent(agent: { id: number; name: string }): Promise<void> {
+  const name = agent.name.toUpperCase();
+  const busy = store.getState().busy.has(agent.id);
+  const choice = await openDialog(
+    app,
+    [busy ? `${name} is hard at work!` : `${name} is taking a breather.`],
+    busy
+      ? [
+          { id: 'watch', label: 'Watch' },
+          { id: 'talk', label: 'Talk' },
+          { id: 'close', label: 'Close' },
+        ]
+      : [
+          { id: 'talk', label: 'Talk' },
+          { id: 'close', label: 'Close' },
+        ],
+  );
+  if (choice !== 'talk') return;
+  dismissChat?.();
+  dismissChat = openPanel(openChat(document.body, agent));
+}
+
 bindPointer(screen.canvas, (x, y) => {
-  if (elevator.state.kind !== 'idle') return;
+  if (elevator.state.kind !== 'idle' || dialogIsOpen()) return;
   const state = store.getState();
   const spot = hotspotsFor(state.floor, state).find(
     (h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h,
@@ -67,15 +106,29 @@ bindPointer(screen.canvas, (x, y) => {
   if (spot.id.startsWith('rack:')) {
     const node = state.hub?.nodes.find((n) => n.name === spot.id.slice('rack:'.length));
     if (node) openPanel(openNodeInfo(document.body, node, state.hub?.streams ?? {}));
+    return;
+  }
+  if (spot.id.startsWith('agent:')) {
+    const id = Number(spot.id.slice('agent:'.length));
+    const agent = state.hub?.agents.find((a) => a.id === id);
+    if (agent) void greetAgent(agent);
   }
 });
 
+function typingInAnInput(): boolean {
+  const element = document.activeElement;
+  return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
+}
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (elevator.state.kind === 'menuOpen') elevator.cancel();
+    if (dialogIsOpen()) closeDialog();
+    else if (elevator.state.kind === 'menuOpen') elevator.cancel();
     else closeTopPanel();
     return;
   }
+  // Shortcuts stay out of the way of the chat box and of an open text screen.
+  if (typingInAnInput() || dialogIsOpen()) return;
   // Number keys are shortcuts, not teleports: they ride the elevator too.
   const floor = FLOORS[Number(event.key) - 1];
   if (floor) elevator.choose(floor.id);
@@ -89,6 +142,7 @@ startLoop(
   (value) => {
     tick = value;
     elevator.tick();
+    tickDialog(value);
   },
   () => {
     const state = store.getState();

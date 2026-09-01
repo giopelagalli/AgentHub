@@ -42,6 +42,96 @@
   overflow: auto;
 }
 
+.gb-panel--dialog {
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, 88vw);
+}
+
+.gb-dialog__text {
+  margin: 0;
+  min-height: 3.2em;
+  white-space: pre-wrap;
+}
+
+.gb-panel--chat {
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  width: min(360px, 44vw);
+}
+
+.gb-chat__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.gb-chat__msg {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.gb-chat__who {
+  margin-right: 6px;
+  color: var(--c-mid);
+}
+
+.gb-chat__msg--error {
+  color: var(--c-accentRed);
+}
+
+.gb-chat__form {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.gb-chat__form input {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 4px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: var(--c-pale);
+  border: 2px solid var(--c-ink);
+}
+
+.gb-chat__form button {
+  padding: 3px 8px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--c-cream);
+  background: var(--c-ink);
+  border: 2px solid var(--c-ink);
+  cursor: pointer;
+}
+
+/* The UA focus ring is off-palette; match the menu's dotted cue instead. */
+.gb-chat__form input:focus-visible,
+.gb-chat__form button:focus-visible {
+  outline: 1px dotted var(--c-mid);
+  outline-offset: 2px;
+}
+
+.gb-chat__form input:disabled,
+.gb-chat__form button:disabled {
+  color: var(--c-mid);
+  border-color: var(--c-mid);
+  cursor: default;
+}
+
+.gb-chat__form button:disabled {
+  background: var(--c-pale);
+}
+
 .gb-menu {
   margin: 0;
   padding: 0;

@@ -3,14 +3,12 @@
   "version": "0.0.1",
   "type": "module",
   "dependencies": {
-    "@agenthub/mocks": "*",
     "@agenthub/shared": "*",
     "better-sqlite3": "^11",
-    "fastify": "^5",
-    "js-yaml": "^4"
+    "fastify": "^5"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/js-yaml": "^4.0.9"
+    "@agenthub/mocks": "*",
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

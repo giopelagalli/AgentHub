@@ -1,0 +1,290 @@
+import type { FloorId } from '../floors.js';
+
+export const GRID_COLS = 20;
+export const GRID_ROWS = 18;
+
+export interface Furniture {
+  sprite: string;
+  x: number;
+  y: number;
+  anim?: string;
+}
+
+export interface Hotspot {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface FloorPlan {
+  tilemap: string[];
+  legend: Record<string, string>;
+  furniture: Furniture[];
+  hotspots: Hotspot[];
+}
+
+// Tilemap alphabet, shared by every floor; the per-floor legend picks the tiles.
+//   T ceiling shadow   W wall face   B wall face + baseboard
+//   S side wall / partition          f primary ground   g alternate ground
+const TOP = 'TTTTTTTTTTTTTTTTTTTT';
+const WALL = 'WWWWWWWWWWWWWWWWWWWW';
+const BASE = 'BBBBBBBBBBBBBBBBBBBB';
+const OPEN = 'SffffffffffffffffffS';
+// 1F: a carpet runner down from the elevator bay, then across to reception.
+const RUNNER_DOWN = 'SfggfffffffffffffffS';
+const RUNNER_ACROSS = 'SfgggggggggggffffffS';
+// 3F: a partitioned corner office occupying the top-right of the floor.
+const OFFICE = 'SffffffffffSfffffffS';
+const OFFICE_BOTTOM = 'SffffffffffBBBBBBBBS';
+
+const PAINTED = { T: 'wallTop', W: 'wallFace', B: 'wallBase', S: 'wallSide' };
+const STEEL = { T: 'wallTop', W: 'wallFaceDark', B: 'wallBaseDark', S: 'wallSideDark' };
+
+// The elevator sits in the same wall bay on every floor so the tower reads as
+// one shaft; Task 4 hangs the elevator panel off this hotspot.
+const ELEVATOR_X = 32;
+const ELEVATOR_Y = 16;
+const elevator: Furniture = { sprite: 'elevator', x: ELEVATOR_X, y: ELEVATOR_Y, anim: 'elevator' };
+const elevatorHotspot: Hotspot = { id: 'elevator', x: ELEVATOR_X, y: ELEVATOR_Y, w: 32, h: 32 };
+
+/** Desk with a robot seated behind it and a monitor standing on the near edge. */
+function workstation(x: number, y: number, anim: 'idle' | 'typing'): Furniture[] {
+  return [
+    { sprite: anim === 'typing' ? 'agentTyping' : 'agentIdle', x: x + 2, y: y - 12, anim },
+    { sprite: 'desk', x, y },
+    { sprite: 'monitor', x: x + 18, y: y - 8, anim: 'flicker' },
+  ];
+}
+
+const RACK_XS = [80, 112, 144, 176, 208, 240];
+const SUBAGENT_XS = [32, 104, 176, 248];
+
+export const FLOORPLANS: Record<FloorId, FloorPlan> = {
+  // B1 — dark steel plant room, two aisles of racks and an ops console.
+  b1: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...STEEL, f: 'floorGrid' },
+    furniture: [
+      elevator,
+      ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 64, anim: 'led' })),
+      ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 144, anim: 'led' })),
+      { sprite: 'desk', x: 128, y: 224 },
+      { sprite: 'monitor', x: 146, y: 216, anim: 'flicker' },
+    ],
+    hotspots: [elevatorHotspot],
+  },
+
+  // 1F — warm chequerboard lobby: reception, job kiosk, floor directory.
+  f1: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_DOWN,
+      RUNNER_ACROSS,
+      RUNNER_ACROSS,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'floorCream', g: 'floorPale' },
+    furniture: [
+      elevator,
+      { sprite: 'directoryBoard', x: 240, y: 18 },
+      { sprite: 'reception', x: 136, y: 136 },
+      { sprite: 'plant', x: 112, y: 138 },
+      { sprite: 'plant', x: 192, y: 138 },
+      { sprite: 'kiosk', x: 72, y: 200 },
+      { sprite: 'plant', x: 272, y: 208 },
+    ],
+    hotspots: [
+      elevatorHotspot,
+      { id: 'jobboard', x: 68, y: 196, w: 24, h: 28 },
+      { id: 'directory', x: 238, y: 16, w: 28, h: 22 },
+    ],
+  },
+
+  // 2F — open-plan carpet, six placeholder workstations (Task 4 makes them agents).
+  f2: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'carpet' },
+    furniture: [
+      elevator,
+      ...workstation(40, 112, 'idle'),
+      ...workstation(144, 112, 'idle'),
+      ...workstation(248, 112, 'idle'),
+      ...workstation(40, 200, 'idle'),
+      ...workstation(144, 200, 'idle'),
+      ...workstation(248, 200, 'idle'),
+      { sprite: 'plant', x: 24, y: 248 },
+      { sprite: 'plant', x: 284, y: 248 },
+    ],
+    hotspots: [elevatorHotspot],
+  },
+
+  // 3F — furnished sample project: corner office, four cubicles, task board.
+  f3: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OFFICE,
+      OFFICE,
+      OFFICE,
+      OPEN,
+      OFFICE_BOTTOM,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'carpet' },
+    furniture: [
+      elevator,
+      { sprite: 'taskboard', x: 96, y: 20 },
+      { sprite: 'agentTyping', x: 224, y: 76, anim: 'typing' },
+      { sprite: 'execDesk', x: 208, y: 88 },
+      { sprite: 'monitor', x: 244, y: 80, anim: 'flicker' },
+      { sprite: 'plant', x: 284, y: 56 },
+      ...SUBAGENT_XS.flatMap((x) => workstation(x, 176, 'typing')),
+      { sprite: 'plant', x: 24, y: 248 },
+      { sprite: 'plant', x: 284, y: 248 },
+    ],
+    hotspots: [
+      elevatorHotspot,
+      { id: 'sample:board', x: 96, y: 20, w: 32, h: 18 },
+      { id: 'sample:orch', x: 208, y: 76, w: 48, h: 32 },
+      ...SUBAGENT_XS.map(
+        (x, i): Hotspot => ({ id: `sample:sub${i + 1}`, x, y: 164, w: 32, h: 24 }),
+      ),
+    ],
+  },
+
+  // 4F — bare screed, a FOR LEASE sign and one failing strip light.
+  f4: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'floorBare' },
+    furniture: [
+      elevator,
+      { sprite: 'ceilingLight', x: 144, y: 72, anim: 'vacant' },
+      { sprite: 'forLease', x: 144, y: 128 },
+    ],
+    hotspots: [elevatorHotspot],
+  },
+
+  // PH — polished stone, gilded desk, briefing board, night skyline window.
+  ph: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'carpetFancy' },
+    furniture: [
+      elevator,
+      { sprite: 'windowPaneL', x: 176, y: 16 },
+      { sprite: 'windowPaneC', x: 208, y: 16 },
+      { sprite: 'windowPaneR', x: 240, y: 16 },
+      { sprite: 'twinkle', x: 188, y: 22, anim: 'twinkle' },
+      { sprite: 'twinkle', x: 216, y: 20, anim: 'twinkle' },
+      { sprite: 'twinkle', x: 250, y: 19, anim: 'twinkle' },
+      { sprite: 'twinkle', x: 262, y: 23, anim: 'twinkle' },
+      { sprite: 'taskboard', x: 96, y: 20 },
+      { sprite: 'agentIdle', x: 144, y: 140, anim: 'idle' },
+      { sprite: 'execDesk', x: 136, y: 152 },
+      { sprite: 'monitor', x: 166, y: 144, anim: 'flicker' },
+      { sprite: 'plant', x: 48, y: 152 },
+      { sprite: 'plant', x: 260, y: 152 },
+    ],
+    hotspots: [elevatorHotspot],
+  },
+};

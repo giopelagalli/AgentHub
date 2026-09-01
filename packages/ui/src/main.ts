@@ -1,24 +1,30 @@
-import { Screen } from './engine/screen.js';
 import { startLoop } from './engine/loop.js';
-import { PALETTE } from './art/palette.js';
+import { Screen } from './engine/screen.js';
+import { FLOORS } from './floors.js';
+import { renderFloor } from './render/scene.js';
+import { Store } from './store.js';
 
 const app = document.getElementById('app');
 if (!app) throw new Error('#app host element not found');
 
 const screen = new Screen(app);
-const { ctx } = screen;
+const store = new Store();
 
-function render(): void {
-  ctx.fillStyle = PALETTE.bg0;
-  ctx.fillRect(0, 0, 320, 288);
-  ctx.fillStyle = PALETTE.cream;
-  ctx.font = '8px monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('AGENTHUB', 160, 144);
-}
+// Temporary for Task 3: keys 1-6 walk the tower. Task 4 replaces this with the
+// elevator panel driven by hotspot clicks.
+window.addEventListener('keydown', (event) => {
+  const floor = FLOORS[Number(event.key) - 1];
+  if (floor) store.dispatch({ type: 'set-floor', floor: floor.id });
+});
+
+let tick = 0;
 
 startLoop(
-  () => {},
-  () => render(),
+  (value) => {
+    tick = value;
+  },
+  () => {
+    const state = store.getState();
+    renderFloor(screen.ctx, state.floor, state, tick);
+  },
 );

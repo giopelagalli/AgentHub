@@ -1,0 +1,12 @@
+{
+  "name": "@agenthub/node-daemon",
+  "version": "0.0.1",
+  "type": "module",
+  "dependencies": {
+    "@agenthub/shared": "*",
+    "js-yaml": "^4"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
+  }
+}

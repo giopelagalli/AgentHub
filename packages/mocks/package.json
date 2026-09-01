@@ -1,0 +1,11 @@
+{
+  "name": "@agenthub/mocks",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/openai-mock.ts"
+  },
+  "dependencies": {
+    "fastify": "^5"
+  }
+}

@@ -34,9 +34,13 @@ const BASE = 'BBBBBBBBBBBBBBBBBBBB';
 const OPEN = 'SffffffffffffffffffS';
 // 1F: a carpet runner down from the elevator bay, then across to reception.
 const RUNNER_DOWN = 'SfggfffffffffffffffS';
-const RUNNER_ACROSS = 'SfgggggggggggffffffS';
-// 3F: a partitioned corner office occupying the top-right of the floor.
-const OFFICE = 'SffffffffffSfffffffS';
+// Terminates against both side walls rather than stopping mid-floor.
+const RUNNER_ACROSS = 'SggggggggggggggggggS';
+// 3F: an L-shaped corner office in the top-right. The vertical run (P) is the
+// same painted ramp as the horizontal run (B) so the two read as one wall; the
+// doorway is a gap in the vertical run, not at the corner.
+const OFFICE = 'SffffffffffPfffffffS';
+const OFFICE_DOOR = OPEN;
 const OFFICE_BOTTOM = 'SffffffffffBBBBBBBBS';
 
 const PAINTED = { T: 'wallTop', W: 'wallFace', B: 'wallBase', S: 'wallSide' };
@@ -58,7 +62,8 @@ function workstation(x: number, y: number, anim: 'idle' | 'typing'): Furniture[]
   ];
 }
 
-const RACK_XS = [80, 112, 144, 176, 208, 240];
+// Centred in the 16..304 floor span: 56px of deck either side of the block.
+const RACK_XS = [72, 104, 136, 168, 200, 232];
 const SUBAGENT_XS = [32, 104, 176, 248];
 
 export const FLOORPLANS: Record<FloorId, FloorPlan> = {
@@ -89,8 +94,8 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       elevator,
       ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 64, anim: 'led' })),
       ...RACK_XS.map((x): Furniture => ({ sprite: 'rack', x, y: 144, anim: 'led' })),
-      { sprite: 'desk', x: 128, y: 224 },
-      { sprite: 'monitor', x: 146, y: 216, anim: 'flicker' },
+      { sprite: 'desk', x: 144, y: 224 },
+      { sprite: 'monitor', x: 162, y: 216, anim: 'flicker' },
     ],
     hotspots: [elevatorHotspot],
   },
@@ -179,8 +184,8 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       BASE,
       OFFICE,
       OFFICE,
+      OFFICE_DOOR,
       OFFICE,
-      OPEN,
       OFFICE_BOTTOM,
       OPEN,
       OPEN,
@@ -193,7 +198,7 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       OPEN,
       OPEN,
     ],
-    legend: { ...PAINTED, f: 'carpet' },
+    legend: { ...PAINTED, P: 'partitionSide', f: 'carpet' },
     furniture: [
       elevator,
       { sprite: 'taskboard', x: 96, y: 20 },
@@ -274,16 +279,25 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       { sprite: 'windowPaneL', x: 176, y: 16 },
       { sprite: 'windowPaneC', x: 208, y: 16 },
       { sprite: 'windowPaneR', x: 240, y: 16 },
+      // x/8 of these four lands on 23, 27, 31, 32 — one per twinkle phase.
       { sprite: 'twinkle', x: 188, y: 22, anim: 'twinkle' },
       { sprite: 'twinkle', x: 216, y: 20, anim: 'twinkle' },
       { sprite: 'twinkle', x: 250, y: 19, anim: 'twinkle' },
       { sprite: 'twinkle', x: 262, y: 23, anim: 'twinkle' },
-      { sprite: 'taskboard', x: 96, y: 20 },
-      { sprite: 'agentIdle', x: 144, y: 140, anim: 'idle' },
-      { sprite: 'execDesk', x: 136, y: 152 },
-      { sprite: 'monitor', x: 166, y: 144, anim: 'flicker' },
-      { sprite: 'plant', x: 48, y: 152 },
-      { sprite: 'plant', x: 260, y: 152 },
+      { sprite: 'briefingBoard', x: 96, y: 18 },
+      // Executive desk set under the skyline.
+      { sprite: 'plant', x: 176, y: 96 },
+      { sprite: 'agentIdle', x: 216, y: 100, anim: 'idle' },
+      { sprite: 'execDesk', x: 200, y: 112 },
+      { sprite: 'monitor', x: 232, y: 104, anim: 'flicker' },
+      { sprite: 'plant', x: 272, y: 176 },
+      // Lounge: rug first, then what stands on it.
+      { sprite: 'rug', x: 48, y: 200 },
+      { sprite: 'armchair', x: 52, y: 194 },
+      { sprite: 'armchair', x: 88, y: 194 },
+      { sprite: 'coffeeTable', x: 66, y: 218 },
+      { sprite: 'floorLamp', x: 120, y: 184 },
+      { sprite: 'plant', x: 232, y: 240 },
     ],
     hotspots: [elevatorHotspot],
   },

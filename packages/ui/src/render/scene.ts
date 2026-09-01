@@ -11,14 +11,17 @@ import { FLOORPLANS } from './floorplans.js';
  */
 function frameFor(anim: string | undefined, tick: number, frames: number, x: number): number {
   switch (anim) {
+    // Desks sit on a 72-104px pitch, so x/8 separates neighbouring typists.
     case 'typing':
-      return tick % frames;
+      return (tick + Math.floor(x / 8)) % frames;
     case 'flicker':
       return tick % 16 === 0 ? 1 : 0;
     case 'vacant':
       return tick % 11 === 0 ? 1 : 0;
+    // Racks sit on a 32px pitch: x/32 makes adjacent racks alternate rather
+    // than blink in unison (x/16 would land them all on the same parity).
     case 'led':
-      return (Math.floor(tick / 2) + Math.floor(x / 16)) % frames;
+      return (Math.floor(tick / 2) + Math.floor(x / 32)) % frames;
     case 'elevator':
       return Math.floor(tick / 4) % frames;
     case 'twinkle':
@@ -28,10 +31,10 @@ function frameFor(anim: string | undefined, tick: number, frames: number, x: num
   }
 }
 
-/** Idle agents sway back by a pixel every couple of seconds. */
+/** Idle agents lean back — away from the viewer — by a pixel now and then. */
 function bobFor(anim: string | undefined, tick: number, x: number): number {
   if (anim !== 'idle') return 0;
-  return (Math.floor(tick / 4) + Math.floor(x / 8)) % 4 === 0 ? 1 : 0;
+  return (Math.floor(tick / 4) + Math.floor(x / 8)) % 4 === 0 ? -1 : 0;
 }
 
 /**

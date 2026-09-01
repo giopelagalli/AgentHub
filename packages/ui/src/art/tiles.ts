@@ -81,26 +81,51 @@ export const TILES: Record<string, SpriteDef> = {
     ],
   },
 
-  // Side wall / interior partition seen edge on.
+  // Room's side wall, seen edge on and in shadow: deliberately much darker
+  // than `carpet` so it still reads as a wall on the carpeted floors.
   wallSide: {
     legend: WALL,
     rows: [
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
-      'kmmmmmmmmmmmmmmm',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+      'kmkkkkkkkkkkkkmk',
+    ],
+  },
+
+  // Interior partition seen edge on. Painted in the same ramp as `wallFace` /
+  // `wallBase` so an L-shaped office reads as one continuous wall.
+  partitionSide: {
+    legend: WALL,
+    rows: [
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
+      'kmlllllllllllpmk',
     ],
   },
 

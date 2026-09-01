@@ -53,6 +53,27 @@ async function fetchState(store: Store): Promise<boolean> {
   }
 }
 
+// WebSocket.readyState values, spelled out so this module stays runnable in node.
+const CONNECTING = 0;
+const OPEN = 1;
+
+/**
+ * A poll result may only speak for the connection status while no socket is
+ * open. Checked both before the fetch and after it resolves, so a socket that
+ * comes back mid-flight is not demoted to 'polling' by the late answer.
+ */
+export function shouldUsePoll(socketReadyState: number | null): boolean {
+  return socketReadyState !== OPEN;
+}
+
+/**
+ * Only one socket at a time: a handshake that outlives the reconnect interval
+ * must not be joined by a second attempt, or both would deliver every frame.
+ */
+export function shouldOpenSocket(socketReadyState: number | null): boolean {
+  return socketReadyState !== CONNECTING && socketReadyState !== OPEN;
+}
+
 function socketUrl(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${window.location.host}/ws`;
@@ -63,9 +84,12 @@ function socketUrl(): string {
  * store falls back to polling every 5s and a reconnect is attempted every 10s.
  */
 export function connect(store: Store): void {
-  let live: WebSocket | null = null;
+  /** The one socket this client owns, from construction until it closes. */
+  let current: WebSocket | null = null;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let reconnectTimer: ReturnType<typeof setInterval> | undefined;
+
+  const readyState = (): number | null => current?.readyState ?? null;
 
   const stopFallback = (): void => {
     clearInterval(pollTimer);
@@ -74,28 +98,33 @@ export function connect(store: Store): void {
     reconnectTimer = undefined;
   };
 
+  const poll = async (): Promise<void> => {
+    if (!shouldUsePoll(readyState())) return;
+    const ok = await fetchState(store);
+    if (!shouldUsePoll(readyState())) return;
+    store.dispatch({ type: 'connection', status: ok ? 'polling' : 'down' });
+  };
+
   const startFallback = (): void => {
     if (pollTimer) return;
     store.dispatch({ type: 'connection', status: 'polling' });
-    pollTimer = setInterval(() => {
-      void fetchState(store).then((ok) =>
-        store.dispatch({ type: 'connection', status: ok ? 'polling' : 'down' }),
-      );
-    }, POLL_MS);
+    pollTimer = setInterval(() => void poll(), POLL_MS);
     reconnectTimer = setInterval(open, RECONNECT_MS);
   };
 
   function open(): void {
+    if (!shouldOpenSocket(readyState())) return;
     const socket = new WebSocket(socketUrl());
+    current = socket;
     socket.addEventListener('open', () => {
-      live = socket;
       stopFallback();
       store.dispatch({ type: 'connection', status: 'live' });
     });
     socket.addEventListener('message', (event) => handleWsMessage(store, String(event.data)));
     socket.addEventListener('close', () => {
-      if (live === socket) live = null;
-      if (!live) startFallback();
+      if (current !== socket) return;
+      current = null;
+      startFallback();
     });
     socket.addEventListener('error', () => socket.close());
   }

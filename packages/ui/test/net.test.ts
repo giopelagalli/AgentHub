@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { HubState } from '@agenthub/shared';
-import { applyHubState, handleWsMessage } from '../src/net.js';
+import { applyHubState, handleWsMessage, shouldOpenSocket, shouldUsePoll } from '../src/net.js';
 import { Store } from '../src/store.js';
 
 const hubState: HubState = {
@@ -18,6 +18,38 @@ const hubState: HubState = {
   jobs: [],
   streams: { orchestrator: 0, worker: 2, vision: 0, 'video-gen': 0 },
 };
+
+// WebSocket.readyState values.
+const CONNECTING = 0;
+const OPEN = 1;
+const CLOSING = 2;
+const CLOSED = 3;
+
+describe('shouldUsePoll', () => {
+  it('lets the poll own the connection status while no socket is open', () => {
+    expect(shouldUsePoll(null)).toBe(true);
+    expect(shouldUsePoll(CONNECTING)).toBe(true);
+    expect(shouldUsePoll(CLOSING)).toBe(true);
+    expect(shouldUsePoll(CLOSED)).toBe(true);
+  });
+
+  it('stands down as soon as a socket is open, so a late poll cannot demote it', () => {
+    expect(shouldUsePoll(OPEN)).toBe(false);
+  });
+});
+
+describe('shouldOpenSocket', () => {
+  it('opens when nothing is in flight', () => {
+    expect(shouldOpenSocket(null)).toBe(true);
+    expect(shouldOpenSocket(CLOSED)).toBe(true);
+    expect(shouldOpenSocket(CLOSING)).toBe(true);
+  });
+
+  it('refuses a second socket while one is connecting or open', () => {
+    expect(shouldOpenSocket(CONNECTING)).toBe(false);
+    expect(shouldOpenSocket(OPEN)).toBe(false);
+  });
+});
 
 describe('applyHubState', () => {
   it('dispatches a valid payload into the store', () => {

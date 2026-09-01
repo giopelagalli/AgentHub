@@ -5,7 +5,12 @@ import { Supervisor } from './supervisor.js';
 export class Daemon {
   private supervisor: Supervisor;
   private timer?: NodeJS.Timeout;
-  constructor(private cfg: DaemonConfig) { this.supervisor = new Supervisor(cfg.serving); }
+  constructor(private cfg: DaemonConfig) {
+    this.supervisor = new Supervisor(cfg.serving, (s) => {
+      console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
+      void this.stop().then(() => process.exit(1));
+    });
+  }
 
   registration(): NodeRegistration {
     const host = this.cfg.advertiseHost ?? '127.0.0.1';

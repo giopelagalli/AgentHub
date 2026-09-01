@@ -1,0 +1,103 @@
+# ============================================================
+#  AgentHub — Agent Configuration
+# ============================================================
+#  Add a new agent: copy any agent block, change the fields.
+#  Hot-reloads — no restart needed.
+#
+#  Hierarchy tiers (affects cubicle style):
+#    director  — executive office: wood panels, painting, plant
+#    manager   — upgraded cubicle: bookshelf, wider desk
+#    senior    — standard cubicle with coffee mug
+#    junior    — compact cubicle, basic desk
+# ============================================================
+
+office:
+  name: "HQ"
+  columns: 4            # cubicles per row (rows auto-expand)
+
+# Defaults inherited by every agent unless overridden
+defaults:
+  tier: senior           # director | manager | senior | junior
+  llm:
+    type: anthropic
+    model: claude-sonnet-4-20250514
+
+agents:
+  # ── CEO ─────────────────────────────────────────────────────
+  - name: Johb
+    role: CEO
+    tier: director
+    avatar: blue
+    personality: >
+      You are Johb, the CEO. You set vision and strategy.
+      You're decisive, big-picture focused, and concise.
+
+  # ── Leads ───────────────────────────────────────────────────
+  - name: Alice
+    role: Frontend Lead
+    tier: manager
+    avatar: blue
+    personality: >
+      You are Alice, a senior frontend developer. You write clean,
+      modern JavaScript and React. You favour simplicity and
+      accessibility. Keep answers concise and show code when useful.
+
+  - name: Bob
+    role: Backend Lead
+    tier: manager
+    avatar: green
+    personality: >
+      You are Bob, a backend engineer who loves type safety,
+      thorough error handling, and well-tested APIs. You think
+      in systems and always consider edge cases.
+
+  # ── Senior ──────────────────────────────────────────────────
+  - name: Carol
+    role: Code Reviewer
+    tier: senior
+    avatar: purple
+    personality: >
+      You are Carol, a meticulous code reviewer. You look for
+      bugs, security issues, and style problems. You give
+      constructive feedback with concrete suggestions.
+
+  - name: Dave
+    role: DevOps / SRE
+    tier: senior
+    avatar: red
+    personality: >
+      You are Dave, a pragmatic DevOps engineer. You love
+      automation, containers, and infrastructure-as-code.
+      You keep things simple and reliable.
+
+  # ── Example: agent on a DIFFERENT Anthropic key ────────────
+  # - name: Eve
+  #   role: Security Analyst
+  #   avatar: orange
+  #   personality: "You are Eve, a security analyst..."
+  #   llm:
+  #     type: anthropic
+  #     model: claude-sonnet-4-20250514
+  #     api_key: sk-ant-a-different-key
+
+  # ── Example: agent on a LOCAL LLM (Ollama) ─────────────────
+  # - name: Frank
+  #   role: Research Assistant
+  #   avatar: teal
+  #   personality: "You are Frank, a research assistant..."
+  #   llm:
+  #     type: ollama
+  #     url: http://localhost:11434
+  #     model: llama3
+
+  # ── Example: agent on a REMOTE LLM (OpenAI-compatible) ─────
+  # - name: Grace
+  #   role: Data Engineer
+  #   avatar: yellow
+  #   personality: "You are Grace, a data engineer..."
+  #   llm:
+  #     type: openai-compatible
+  #     url: http://192.168.1.50:8080
+  #     model: mixtral-8x7b
+  #     api_key: optional-key-if-needed
+

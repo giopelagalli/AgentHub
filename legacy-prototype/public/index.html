@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentHub</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- ── Top Bar ─────────────────────────────────────── -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <span class="logo">AgentHub</span>
+      <span class="subtitle" id="officeName">HQ</span>
+    </div>
+    <div class="topbar-right">
+      <button id="btnSettings" class="pixel-btn">Settings</button>
+      <span class="agent-count" id="agentCount">0 agents</span>
+    </div>
+  </header>
+
+  <!-- ── Main Layout ─────────────────────────────────── -->
+  <div id="main">
+    <!-- Office Canvas -->
+    <div id="office-container">
+      <canvas id="office"></canvas>
+    </div>
+
+    <!-- Agent Side Panel -->
+    <div id="panel" class="hidden">
+      <div class="panel-header">
+        <div class="panel-agent-info">
+          <span class="panel-avatar" id="panelAvatar"></span>
+          <div>
+            <h2 id="panelName">Agent</h2>
+            <span class="panel-role" id="panelRole">Role</span>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <span class="panel-status" id="panelStatus">idle</span>
+          <button id="btnClearChat" class="pixel-btn small" title="Clear chat">Clear</button>
+          <button id="btnDeleteAgent" class="pixel-btn small" title="Delete agent" style="color:var(--red);border-color:var(--red)">Del</button>
+          <button id="btnClosePanel" class="pixel-btn close">X</button>
+        </div>
+      </div>
+      <div class="panel-meta">
+        <span id="panelLlm" class="badge">anthropic</span>
+        <span id="panelModel" class="badge">claude-sonnet</span>
+        <span id="panelLocation" class="badge location-badge">At desk</span>
+      </div>
+
+      <!-- Panel Tabs: Chat | Tasks -->
+      <div class="panel-tabs" id="panelTabs">
+        <button class="panel-tab active" data-tab="chat">Chat</button>
+        <button class="panel-tab" data-tab="tasks">Tasks</button>
+      </div>
+
+      <!-- Chat Tab -->
+      <div id="chatTab" class="panel-tab-content">
+        <div id="chatMessages" class="chat-messages"></div>
+        <div class="chat-input-row">
+          <textarea id="chatInput" placeholder="Talk to this agent..." rows="2"></textarea>
+          <button id="btnSend" class="pixel-btn send">Send</button>
+        </div>
+      </div>
+
+      <!-- Tasks Tab -->
+      <div id="tasksTab" class="panel-tab-content hidden">
+        <div class="agent-tasks-header">
+          <h3>Agent Tasks</h3>
+          <div class="agent-task-tabs" id="agentTaskTabs">
+            <button class="pixel-btn small tab-btn active" data-board="research">Research</button>
+            <button class="pixel-btn small tab-btn" data-board="project">Projects</button>
+          </div>
+        </div>
+        <div class="agent-task-create">
+          <input id="agentTaskTitle" class="pixel-input" placeholder="Add task..." />
+          <button id="btnCreateAgentTask" class="pixel-btn small">+ Add</button>
+        </div>
+        <div id="agentTaskList" class="task-list"></div>
+        <div class="agent-next-task" id="agentNextTask">
+          <span class="next-label">Next:</span>
+          <span class="next-title" id="nextTaskTitle">No pending tasks</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CEO Directives Overlay ────────────────────────── -->
+  <div id="ceoTodoOverlay" class="overlay hidden">
+    <div class="overlay-content ceo-todo-content">
+      <div class="overlay-header">
+        <h2>CEO Directives</h2>
+        <button id="btnCloseCeoTodo" class="pixel-btn close">X</button>
+      </div>
+      <div class="ceo-todo-settings">
+        <span class="ceo-setting-label">Max concurrent projects:</span>
+        <input id="ceoMaxProjects" type="number" min="1" max="20" value="3" class="pixel-input ceo-max-input" />
+        <button id="btnSaveMaxProjects" class="pixel-btn small">Set</button>
+      </div>
+      <div class="task-create-row">
+        <input id="ceoTodoTitle" placeholder="Add directive for CEO..." class="pixel-input" />
+        <button id="btnCreateCeoTodo" class="pixel-btn">+ Add</button>
+      </div>
+      <div id="ceoTodoList" class="task-list"></div>
+    </div>
+  </div>
+
+  <!-- ── Team Panel Overlay ──────────────────────────── -->
+  <div id="teamPanelOverlay" class="overlay hidden">
+    <div class="overlay-content team-panel-content">
+      <div class="overlay-header team-panel-header">
+        <div>
+          <h2 id="teamPanelName">Team</h2>
+          <span id="teamPanelType" class="team-panel-type">RESEARCH</span>
+        </div>
+        <div class="panel-actions">
+          <button id="btnDeleteTeam" class="pixel-btn small" style="color:var(--red);border-color:var(--red)">Delete</button>
+          <button id="btnCloseTeamPanel" class="pixel-btn close">X</button>
+        </div>
+      </div>
+      <!-- Editable description -->
+      <div class="team-panel-desc-row">
+        <input id="teamPanelDescInput" class="pixel-input team-desc-input" placeholder="What is this team working on?" />
+        <button id="btnSaveTeamDesc" class="pixel-btn small">Save</button>
+      </div>
+      <!-- Members with add/remove -->
+      <div class="team-panel-members-section">
+        <div class="team-panel-members" id="teamPanelMembers"></div>
+        <div class="team-panel-add-member">
+          <select id="teamAddMemberSelect" class="pixel-select"></select>
+          <button id="btnAddTeamMember" class="pixel-btn small">+ Add</button>
+        </div>
+      </div>
+      <div class="team-panel-section-label">Team Tasks</div>
+      <div class="task-create-row">
+        <input id="teamTaskTitle" placeholder="Add task for team..." class="pixel-input" />
+        <select id="teamTaskAgent" class="pixel-select">
+          <option value="">Unassigned</option>
+        </select>
+        <button id="btnCreateTeamTask" class="pixel-btn small">+ Add</button>
+      </div>
+      <div id="teamTaskList" class="task-list"></div>
+      <div class="team-panel-section-label">Meetings</div>
+      <div class="team-panel-meeting-actions" id="teamMeetingActions"></div>
+      <div id="teamMeetingHistory" class="meeting-history"></div>
+    </div>
+  </div>
+
+  <!-- ── Create Team Modal ───────────────────────────── -->
+  <div id="createTeamOverlay" class="overlay hidden">
+    <div class="overlay-content add-agent-content">
+      <div class="overlay-header">
+        <h2>Create Team</h2>
+        <button id="btnCloseCreateTeam" class="pixel-btn close">X</button>
+      </div>
+      <div class="add-agent-form">
+        <div class="form-field">
+          <label>Team Name</label>
+          <input id="createTeamName" class="pixel-input" placeholder="e.g. Security Research" />
+        </div>
+        <div class="form-field">
+          <label>Type</label>
+          <select id="createTeamType" class="pixel-select">
+            <option value="research">Research</option>
+            <option value="production">Project</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Color</label>
+          <select id="createTeamColor" class="pixel-select">
+            <option value="#3388cc">Blue</option>
+            <option value="#cc8833">Amber</option>
+            <option value="#44aa66">Green</option>
+            <option value="#cc4466">Red</option>
+            <option value="#8866cc">Purple</option>
+            <option value="#33aaaa">Teal</option>
+            <option value="#ccaa33">Yellow</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Description (optional)</label>
+          <input id="createTeamDesc" class="pixel-input" placeholder="What will this team work on?" />
+        </div>
+        <div class="form-field">
+          <label>Add Members</label>
+          <div id="createTeamAgents" class="create-team-agents"></div>
+        </div>
+        <div id="createTeamStatus" class="settings-status"></div>
+        <div class="form-actions">
+          <button id="btnConfirmCreateTeam" class="pixel-btn">Create Team</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Add Agent Modal ─────────────────────────────── -->
+  <div id="addAgentOverlay" class="overlay hidden">
+    <div class="overlay-content add-agent-content">
+      <div class="overlay-header">
+        <h2>Add Agent</h2>
+        <button id="btnCloseAddAgent" class="pixel-btn close">X</button>
+      </div>
+      <div class="add-agent-form">
+        <div class="form-field">
+          <label>Name</label>
+          <input id="addAgentName" class="pixel-input" placeholder="e.g. Eve" />
+        </div>
+        <div class="form-field">
+          <label>Role</label>
+          <input id="addAgentRole" class="pixel-input" placeholder="e.g. Security Analyst" />
+        </div>
+        <div class="form-field">
+          <label>Avatar Color</label>
+          <select id="addAgentAvatar" class="pixel-select">
+            <option value="blue">Blue</option>
+            <option value="green">Green</option>
+            <option value="purple">Purple</option>
+            <option value="red">Red</option>
+            <option value="orange">Orange</option>
+            <option value="teal">Teal</option>
+            <option value="yellow">Yellow</option>
+            <option value="pink">Pink</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Hierarchy Tier</label>
+          <select id="addAgentTier" class="pixel-select">
+            <option value="junior">Junior — basic desk</option>
+            <option value="senior" selected>Senior — standard cubicle</option>
+            <option value="manager">Manager — upgraded office</option>
+            <option value="director">Director — executive suite</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Personality (optional)</label>
+          <textarea id="addAgentPersonality" class="pixel-input" rows="3" placeholder="Leave blank for auto-generated..."></textarea>
+        </div>
+        <div id="addAgentStatus" class="settings-status"></div>
+        <div class="form-actions">
+          <button id="btnConfirmAddAgent" class="pixel-btn">Create Agent</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Settings Overlay ────────────────────────────── -->
+  <div id="settingsOverlay" class="overlay hidden">
+    <div class="overlay-content settings-content">
+      <div class="overlay-header">
+        <h2>Settings</h2>
+        <button id="btnCloseSettings" class="pixel-btn close">X</button>
+      </div>
+      <div class="settings-section">
+        <h3>Global API Key</h3>
+        <p class="settings-hint">Used by all agents unless overridden.</p>
+        <div class="settings-row">
+          <input id="settingsGlobalKey" type="password" placeholder="sk-ant-..." class="pixel-input" autocomplete="off" />
+          <button id="btnToggleKeyVis" class="pixel-btn small">Show</button>
+          <button id="btnSaveGlobalKey" class="pixel-btn">Save</button>
+        </div>
+        <div id="globalKeyStatus" class="settings-status"></div>
+      </div>
+      <div class="settings-section">
+        <h3>Agent LLM Config</h3>
+        <p class="settings-hint">Override provider, model, or key per agent.</p>
+        <div id="agentSettingsList" class="agent-settings-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scripts ─────────────────────────────────────── -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/sprites.js"></script>
+  <script src="/js/office.js"></script>
+  <script src="/js/agent-panel.js"></script>
+  <script src="/js/task-board-ui.js"></script>
+  <script src="/js/settings-ui.js"></script>
+  <script src="/js/ceo-todo-ui.js"></script>
+  <script src="/js/team-panel.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

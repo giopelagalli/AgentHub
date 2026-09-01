@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -b --noEmit || tsc --noEmit -p tsconfig.base.json",
+    "typecheck": "tsc --noEmit -p packages/shared && tsc --noEmit -p packages/mocks && tsc --noEmit -p packages/hub && tsc --noEmit -p packages/node-daemon",
     "dev:hub": "tsx packages/hub/src/main.ts",
     "dev:node": "tsx packages/node-daemon/src/main.ts configs/dev-node.yaml"
   },

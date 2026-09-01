@@ -1,0 +1,17 @@
+# Dev node: serves both tiers from mock servers on this machine.
+node:
+  name: dev-node
+  arch: arm64
+hub: http://127.0.0.1:4000
+heartbeatMs: 5000
+serving:
+  - tier: orchestrator
+    model: mock-model
+    port: 8101
+    maxStreams: 4
+    cmd: ["npx", "tsx", "packages/mocks/src/serve.ts", "8101", "20"]
+  - tier: worker
+    model: mock-model
+    port: 8102
+    maxStreams: 8
+    cmd: ["npx", "tsx", "packages/mocks/src/serve.ts", "8102", "20"]

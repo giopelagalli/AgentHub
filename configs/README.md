@@ -1,0 +1,5 @@
+# Daemon configs
+
+A daemon config is the YAML file passed to `packages/node-daemon` (`tsx packages/node-daemon/src/main.ts <config.yaml>`). It tells the node daemon who it is, which hub to register with, and which model-serving processes to supervise on this machine — one entry per tier it serves. The daemon launches each `serving` entry's `cmd`, waits for it to come up on `port`, and registers the resulting endpoints with the hub so the gateway can route agent traffic to them.
+
+`DaemonConfig` fields: `node: { name: string; arch: string }`, `hub: string`, `advertiseHost?: string`, `heartbeatMs?: number`, `serving: ServingConfig[]`. `ServingConfig` fields (one per entry in `serving`): `tier: Tier`, `model: string`, `port: number`, `maxStreams: number`, `cmd: string[]`. `configs/dev-node.yaml` is a working example that serves both tiers from the mock OpenAI server (`packages/mocks/src/serve.ts`) instead of a real model. Real nodes replace `cmd` with their own serving-stack launch command (e.g. a `vllm serve ...` invocation or a wrapper script around it) — everything else about the config stays the same.

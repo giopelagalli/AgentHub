@@ -1,16 +1,20 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { NodeRegistration, Tier } from '@agenthub/shared';
+import fastifyStatic from '@fastify/static';
+import type { HubState, NodeRegistration, Tier } from '@agenthub/shared';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { ModelGateway } from './gateway.js';
 import { AgentRuntime } from './agents.js';
+import { registerWs } from './ws.js';
 
 export interface Hub { app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway; runtime: AgentRuntime; stop(): Promise<void>; }
 
-export function createHub(opts: { dbPath?: string; staleMs?: number; sweepIntervalMs?: number } = {}): Hub {
+const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
+
+export function createHub(opts: { dbPath?: string; staleMs?: number; sweepIntervalMs?: number; uiDist?: string } = {}): Hub {
   const dbPath = opts.dbPath ?? ':memory:';
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const db = openDb(dbPath);
@@ -20,6 +24,19 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   const runtime = new AgentRuntime(db, gateway);
   const app = Fastify();
 
+  if (opts.uiDist && existsSync(opts.uiDist)) {
+    app.register(fastifyStatic, { root: opts.uiDist });
+  }
+
+  const getState = (): HubState => ({
+    nodes: registry.all(),
+    agents: runtime.listAgents(),
+    jobs: queue.list(),
+    streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
+  });
+
+  const { broadcastState, broadcast } = registerWs(app, getState);
+
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
       const n = queue.requeueForNode(node.id);
@@ -27,14 +44,19 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     }
   };
 
-  const sweeper = setInterval(sweepAndRequeue, opts.sweepIntervalMs ?? 5000);
+  const sweeper = setInterval(() => { sweepAndRequeue(); broadcastState(); }, opts.sweepIntervalMs ?? 5000);
   sweeper.unref();
 
-  app.post('/api/nodes/register', async (req) => registry.register(req.body as NodeRegistration));
+  app.post('/api/nodes/register', async (req) => {
+    const result = registry.register(req.body as NodeRegistration);
+    broadcastState();
+    return result;
+  });
 
   app.post('/api/nodes/:name/heartbeat', async (req, reply) => {
     const { name } = req.params as { name: string };
     if (!registry.heartbeat(name)) return reply.code(404).send({ ok: false });
+    broadcastState();
     return { ok: true };
   });
 
@@ -45,11 +67,14 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.get('/api/state', async () => {
     sweepAndRequeue();
-    return { nodes: registry.all(), agents: runtime.listAgents(), jobs: queue.list() };
+    return getState();
   });
 
-  app.post('/api/agents', async (req) =>
-    runtime.createAgent(req.body as { name: string; tier: Tier; systemPrompt: string }));
+  app.post('/api/agents', async (req) => {
+    const agent = runtime.createAgent(req.body as { name: string; tier: Tier; systemPrompt: string });
+    broadcastState();
+    return agent;
+  });
 
   app.post('/api/agents/:id/messages', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
@@ -58,6 +83,7 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const ac = new AbortController();
     reply.raw.on('close', () => ac.abort());
+    broadcast({ type: 'agent-busy', agentId: id, busy: true });
     try {
       const full = await runtime.send(id, text, (token) => {
         reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`);
@@ -65,6 +91,8 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
       reply.raw.write(`data: ${JSON.stringify({ done: true, full })}\n\n`);
     } catch (err) {
       reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    } finally {
+      broadcast({ type: 'agent-busy', agentId: id, busy: false });
     }
     reply.raw.end();
     return reply;

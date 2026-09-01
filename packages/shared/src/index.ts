@@ -47,3 +47,14 @@ export interface Job extends JobSpec {
 export function comparePriority(a: Pick<JobSpec, 'priority'>, b: Pick<JobSpec, 'priority'>): number {
   return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
 }
+
+export interface HubState {
+  nodes: NodeInfo[];
+  agents: { id: number; name: string; tier: Tier; systemPrompt: string }[];
+  jobs: Job[];
+  streams: Record<string, number>;
+}
+
+export type WsMessage =
+  | { type: 'state'; state: HubState }
+  | { type: 'agent-busy'; agentId: number; busy: boolean };

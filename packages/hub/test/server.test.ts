@@ -45,4 +45,29 @@ describe('hub server', () => {
     expect(tokens).toBe('echo: ping pong');
     expect(done.full).toBe('echo: ping pong');
   });
+
+  it('requeues jobs from a node that goes stale between sweep timer ticks', async () => {
+    const staleHub = createHub({ staleMs: 50 });
+    try {
+      const node = (await staleHub.app.inject({
+        method: 'POST', url: '/api/nodes/register',
+        payload: { name: 'stale-node', arch: 'arm64', endpoints: [{ tier: 'worker', url: mockUrl, model: 'mock-model', maxStreams: 8 }] },
+      })).json();
+      const job = staleHub.queue.enqueue({ type: 'shell-task', tier: 'worker', priority: 'batch', payload: {} });
+      staleHub.queue.claim(['shell-task'], node.id);
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const state = (await staleHub.app.inject({ method: 'GET', url: '/api/state' })).json();
+      const found = state.nodes.find((n: { id: number }) => n.id === node.id);
+      expect(found.status).toBe('offline');
+
+      const queued = staleHub.queue.list('queued');
+      const requeued = queued.find((j) => j.id === job.id);
+      expect(requeued).toBeDefined();
+      expect(requeued!.nodeId).toBeNull();
+    } finally {
+      await staleHub.stop();
+    }
+  });
 });

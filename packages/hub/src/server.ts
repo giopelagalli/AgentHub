@@ -20,12 +20,14 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   const runtime = new AgentRuntime(db, gateway);
   const app = Fastify();
 
-  const sweeper = setInterval(() => {
+  const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
       const n = queue.requeueForNode(node.id);
       if (n) app.log.info(`requeued ${n} jobs from offline node ${node.name}`);
     }
-  }, opts.sweepIntervalMs ?? 5000);
+  };
+
+  const sweeper = setInterval(sweepAndRequeue, opts.sweepIntervalMs ?? 5000);
   sweeper.unref();
 
   app.post('/api/nodes/register', async (req) => registry.register(req.body as NodeRegistration));
@@ -37,12 +39,12 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   });
 
   app.get('/api/nodes', async () => {
-    registry.sweep();
+    sweepAndRequeue();
     return registry.all();
   });
 
   app.get('/api/state', async () => {
-    registry.sweep();
+    sweepAndRequeue();
     return { nodes: registry.all(), agents: runtime.listAgents(), jobs: queue.list() };
   });
 

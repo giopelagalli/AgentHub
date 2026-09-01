@@ -45,8 +45,15 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
   hint.textContent = 'Esc to close';
   panel.appendChild(hint);
 
+  /** Within a few pixels of the end, so a reader who scrolled back stays there. */
+  const atBottom = (): boolean => log.scrollHeight - log.scrollTop - log.clientHeight < 8;
+  const pinIfFollowing = (wasFollowing: boolean): void => {
+    if (wasFollowing) log.scrollTop = log.scrollHeight;
+  };
+
   /** Returns the element the caller keeps writing text into. */
   const addMessage = (speaker: string, text: string): HTMLElement => {
+    const following = atBottom();
     const message = document.createElement('p');
     message.className = 'gb-chat__msg';
     const who = document.createElement('span');
@@ -56,7 +63,7 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
     said.textContent = text;
     message.append(who, said);
     log.appendChild(message);
-    log.scrollTop = log.scrollHeight;
+    pinIfFollowing(following);
     return said;
   };
 
@@ -71,8 +78,10 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
     input.disabled = true;
     send.disabled = true;
 
+    // Keep whatever already streamed in: a mid-stream failure is more legible
+    // next to the partial reply than in place of it.
     const fail = (message: string): void => {
-      reply.textContent = message;
+      reply.textContent = reply.textContent ? `${reply.textContent}\n${message}` : message;
       reply.parentElement?.classList.add('gb-chat__msg--error');
     };
 
@@ -94,11 +103,12 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
         const parsed = parseSseFrames(rest + decoder.decode(value, { stream: true }));
         rest = parsed.rest;
         for (const event of parsed.events) {
+          const following = atBottom();
           if (event.token !== undefined) reply.textContent += event.token;
           if (event.error !== undefined) fail(event.error);
           // The done frame carries the whole reply: trust it over the pieces.
           if (event.done && typeof event.full === 'string') reply.textContent = event.full;
-          log.scrollTop = log.scrollHeight;
+          pinIfFollowing(following);
         }
       }
     } catch (error) {
@@ -108,7 +118,10 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
       if (!closed) {
         input.disabled = false;
         send.disabled = false;
-        input.focus();
+        // Don't steal focus back if the reader clicked into something else.
+        // Disabling the input blurs it, so body/null still counts as ours.
+        const active = document.activeElement;
+        if (active === null || active === document.body || panel.contains(active)) input.focus();
       }
     }
   };

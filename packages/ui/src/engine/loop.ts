@@ -1,4 +1,7 @@
 const TICK_MS = 1000 / 8;
+/** A backgrounded tab stops painting; without a cap it would fast-forward every
+ * missed tick in one frame, replaying ambience and elevator rides at once. */
+const MAX_CATCHUP_MS = TICK_MS * 4;
 
 export function startLoop(onTick: (tick: number) => void, onFrame: () => void): () => void {
   let tick = 0;
@@ -9,7 +12,7 @@ export function startLoop(onTick: (tick: number) => void, onFrame: () => void): 
 
   const frame = (now: number) => {
     if (stopped) return;
-    accumulator += now - last;
+    accumulator = Math.min(accumulator + (now - last), MAX_CATCHUP_MS);
     last = now;
     while (accumulator >= TICK_MS) {
       accumulator -= TICK_MS;

@@ -13,6 +13,7 @@ export class Screen {
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2d canvas context unavailable');
     ctx.imageSmoothingEnabled = false;
+    canvas.style.imageRendering = 'pixelated';
 
     this.canvas = canvas;
     this.ctx = ctx;

@@ -32,7 +32,7 @@ export class AgentRuntime {
       .all(agentId) as MessageRow[]).map((m) => ({ role: m.role, content: m.content }));
   }
 
-  async send(agentId: number, userText: string, onToken?: (t: string) => void): Promise<string> {
+  async send(agentId: number, userText: string, onToken?: (t: string) => void, signal?: AbortSignal): Promise<string> {
     const agent = this.getAgent(agentId);
     if (!agent) throw new Error(`unknown agent: ${agentId}`);
     const messages: ChatMessage[] = [
@@ -40,7 +40,7 @@ export class AgentRuntime {
       ...this.history(agentId),
       { role: 'user', content: userText },
     ];
-    const reply = await this.gateway.chat(agent.tier, messages, onToken);
+    const reply = await this.gateway.chat(agent.tier, messages, onToken, signal);
     const insert = this.db.prepare(`INSERT INTO messages (agent_id, role, content, created_at) VALUES (?,?,?,?)`);
     const now = Date.now();
     insert.run(agentId, 'user', userText, now);

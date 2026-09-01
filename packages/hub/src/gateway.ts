@@ -29,7 +29,7 @@ export class ModelGateway {
     return sum;
   }
 
-  async chat(tier: Tier, messages: ChatMessage[], onToken?: (t: string) => void): Promise<string> {
+  async chat(tier: Tier, messages: ChatMessage[], onToken?: (t: string) => void, signal?: AbortSignal): Promise<string> {
     const picked = this.pick(tier);
     if (!picked) throw new Error(`no capacity for tier: ${tier}`);
     const key = this.key(picked.node, picked.endpoint);
@@ -38,8 +38,13 @@ export class ModelGateway {
       const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ model: picked.endpoint.model, messages, stream: true }),
+        signal,
       });
-      if (!res.ok || !res.body) throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`);
+      }
+      if (!res.body) throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`);
       let full = '';
       let buf = '';
       const reader = res.body.getReader();

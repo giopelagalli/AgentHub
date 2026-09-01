@@ -56,10 +56,12 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     const { text } = req.body as { text: string };
     if (!runtime.getAgent(id)) return reply.code(404).send({ error: 'unknown agent' });
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    const ac = new AbortController();
+    reply.raw.on('close', () => ac.abort());
     try {
       const full = await runtime.send(id, text, (token) => {
         reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`);
-      });
+      }, ac.signal);
       reply.raw.write(`data: ${JSON.stringify({ done: true, full })}\n\n`);
     } catch (err) {
       reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);

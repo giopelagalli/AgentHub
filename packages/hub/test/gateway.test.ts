@@ -47,8 +47,18 @@ describe('ModelGateway', () => {
     expect(maxActive).toBe(2);
     // saturate: occupy both slots, third pick returns null
     const p = Promise.all([run(), run()]);
-    await new Promise((r) => setTimeout(r, 10));
     expect(gateway.pick('worker')).toBeNull();
     await p;
+  });
+
+  it('releases the stream slot when the caller aborts mid-stream', async () => {
+    const { gateway } = setup();
+    const ac = new AbortController();
+    const chat = gateway.chat('worker', [{ role: 'user', content: 'a b c d e f g h' }], () => ac.abort(), ac.signal);
+    await expect(chat).rejects.toThrow();
+
+    const deadline = Date.now() + 2000;
+    while (gateway.activeStreams() > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    expect(gateway.activeStreams()).toBe(0);
   });
 });

@@ -13,17 +13,22 @@ export class Supervisor {
       const child = spawn(cmd, args, { stdio: 'inherit' });
       this.children.push(child);
     }
-    await Promise.all(this.serving.map(async (s) => {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        try {
-          const res = await fetch(`http://127.0.0.1:${s.port}/v1/models`);
-          if (res.ok) return;
-        } catch { /* not up yet */ }
-        if (Date.now() > deadline) throw new Error(`serving process on port ${s.port} failed health check`);
-        await sleep(250);
-      }
-    }));
+    try {
+      await Promise.all(this.serving.map(async (s) => {
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+          try {
+            const res = await fetch(`http://127.0.0.1:${s.port}/v1/models`);
+            if (res.ok) return;
+          } catch { /* not up yet */ }
+          if (Date.now() > deadline) throw new Error(`serving process on port ${s.port} failed health check`);
+          await sleep(250);
+        }
+      }));
+    } catch (err) {
+      await this.stopAll();
+      throw err;
+    }
   }
 
   async stopAll(): Promise<void> {

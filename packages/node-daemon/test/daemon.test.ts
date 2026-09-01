@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { loadConfig } from '../src/config.js';
 import { Daemon } from '../src/daemon.js';
+import { Supervisor } from '../src/supervisor.js';
 
 const MOCK_SERVE = join(process.cwd(), 'packages/mocks/src/serve.ts');
 
@@ -52,4 +53,30 @@ describe('node daemon', () => {
     const models = await fetch(`http://127.0.0.1:${servePort}/v1/models`);
     expect(models.status).toBe(200);
   }, 30000);
+
+  it('startAll kills already-healthy children when a sibling fails its health check', async () => {
+    const okPort = 19300 + Math.floor(Math.random() * 500);
+    const stuckPort = okPort + 1;
+
+    const supervisor = new Supervisor([
+      { tier: 'worker', model: 'mock-model', port: okPort, maxStreams: 4, cmd: ['npx', 'tsx', MOCK_SERVE, String(okPort)] },
+      { tier: 'worker', model: 'mock-model', port: stuckPort, maxStreams: 4, cmd: ['node', '-e', 'setInterval(()=>{},1000)'] },
+    ]);
+
+    await expect(supervisor.startAll(1500)).rejects.toThrow(/failed health check/);
+
+    // the healthy sibling must have been torn down too, not left orphaned
+    const deadline = Date.now() + 5000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://127.0.0.1:${okPort}/v1/models`);
+      } catch {
+        alive = false;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(alive).toBe(false);
+  }, 15000);
 });

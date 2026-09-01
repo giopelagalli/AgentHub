@@ -41,6 +41,10 @@ export class NodeRegistry {
       .all(now - this.staleMs) as Row[]).map(toInfo);
   }
 
+  all(): NodeInfo[] {
+    return (this.db.prepare(`SELECT * FROM nodes ORDER BY id`).all() as Row[]).map(toInfo);
+  }
+
   byName(name: string): NodeInfo | null {
     const r = this.db.prepare(`SELECT * FROM nodes WHERE name=?`).get(name) as Row | undefined;
     return r ? toInfo(r) : null;

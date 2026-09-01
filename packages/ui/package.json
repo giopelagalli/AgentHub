@@ -1,0 +1,13 @@
+{
+  "name": "@agenthub/ui",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "vite": "^6",
+    "@agenthub/shared": "*"
+  }
+}

@@ -39,4 +39,55 @@ describe('JobQueue', () => {
     expect(q.list('queued')).toHaveLength(2);
     expect(q.requeueForNode(5)).toBe(0);
   });
+
+  it('claim increments attempts each time', () => {
+    const j = q.enqueue(spec('project'));
+    expect(q.claim(['shell-task'], 1)?.attempts).toBe(1);
+    q.fail(j.id, { requeue: true });
+    expect(q.claim(['shell-task'], 1)?.attempts).toBe(2);
+  });
+
+  it('fail with requeue true on attempts >= 3 marks failed with exact error', () => {
+    const j = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1); q.fail(j.id, { requeue: true }); // attempts 1 -> queued
+    q.claim(['shell-task'], 1); q.fail(j.id, { requeue: true }); // attempts 2 -> queued
+    q.claim(['shell-task'], 1); // attempts 3
+    q.fail(j.id, { requeue: true });
+    const failed = q.get(j.id)!;
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toBe('max attempts exceeded');
+  });
+
+  it('fail without requeue marks failed immediately with the given error', () => {
+    const j = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1);
+    q.fail(j.id, { error: 'boom' });
+    const failed = q.get(j.id)!;
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toBe('boom');
+  });
+
+  it('complete stores the result', () => {
+    const j = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1);
+    q.complete(j.id, { exitCode: 0, stdoutTail: 'hi' });
+    const done = q.get(j.id)!;
+    expect(done.status).toBe('done');
+    expect(done.result).toEqual({ exitCode: 0, stdoutTail: 'hi' });
+  });
+
+  it('requeueForNode applies the attempts cap per job', () => {
+    const j = q.enqueue(spec('project'));
+    const k = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 5); q.claim(['shell-task'], 5); // both attempts 1
+    q.requeueForNode(5);
+    q.claim(['shell-task'], 5); q.claim(['shell-task'], 5); // both attempts 2
+    q.requeueForNode(5);
+    q.claim(['shell-task'], 5); q.claim(['shell-task'], 5); // both attempts 3
+    const n = q.requeueForNode(5);
+    expect(n).toBe(0);
+    expect(q.get(j.id)!.status).toBe('failed');
+    expect(q.get(j.id)!.error).toBe('max attempts exceeded');
+    expect(q.get(k.id)!.status).toBe('failed');
+  });
 });

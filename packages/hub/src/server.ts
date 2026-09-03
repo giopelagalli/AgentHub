@@ -2,10 +2,12 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { HubState, NodeRegistration, Tier } from '@agenthub/shared';
+import type { HubState, JobResult, JobSpec, JobType, NodeRegistration, Priority, Tier } from '@agenthub/shared';
+import { PRIORITY_RANK } from '@agenthub/shared';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
+import { JobLogs } from './job-logs.js';
 import { ModelGateway } from './gateway.js';
 import { AgentRuntime } from './agents.js';
 import { registerWs } from './ws.js';
@@ -13,6 +15,8 @@ import { registerWs } from './ws.js';
 export interface Hub { app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway; runtime: AgentRuntime; stop(): Promise<void>; }
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
+const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
+const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 
 export function createHub(opts: { dbPath?: string; staleMs?: number; sweepIntervalMs?: number; uiDist?: string } = {}): Hub {
   const dbPath = opts.dbPath ?? ':memory:';
@@ -20,6 +24,7 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   const db = openDb(dbPath);
   const registry = new NodeRegistry(db, { staleMs: opts.staleMs });
   const queue = new JobQueue(db);
+  const jobLogs = new JobLogs(db);
   const gateway = new ModelGateway(registry);
   const runtime = new AgentRuntime(db, gateway);
   const app = Fastify();
@@ -70,6 +75,58 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   app.get('/api/state', async () => {
     sweepAndRequeue();
     return getState();
+  });
+
+  app.post('/api/jobs', async (req, reply) => {
+    const spec = req.body as JobSpec;
+    if (!JOB_TYPES.includes(spec.type) || !TIERS.includes(spec.tier) || !PRIORITIES.includes(spec.priority)) {
+      return reply.code(400).send({ error: 'invalid job spec' });
+    }
+    const job = queue.enqueue(spec);
+    broadcastState();
+    return reply.code(201).send(job);
+  });
+
+  app.get('/api/jobs/:id', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const job = queue.get(id);
+    if (!job) return reply.code(404).send({ error: 'unknown job' });
+    return { ...job, logs: jobLogs.list(id) };
+  });
+
+  app.post('/api/jobs/claim', async (req, reply) => {
+    const { node, types } = req.body as { node: string; types: JobType[] };
+    const info = registry.byName(node);
+    if (!info) return reply.code(404).send({ error: 'unknown node' });
+    if (!types.every((t) => info.jobTypes.includes(t))) return reply.code(403).send({ error: 'node cannot run requested job types' });
+    const job = queue.claim(types, info.id);
+    if (!job) return reply.code(204).send();
+    return job;
+  });
+
+  app.post('/api/jobs/:id/log', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const { line } = req.body as { line: string };
+    if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
+    return jobLogs.append(id, line);
+  });
+
+  app.post('/api/jobs/:id/complete', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const { result } = req.body as { result?: JobResult };
+    if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
+    queue.complete(id, result);
+    broadcastState();
+    return queue.get(id);
+  });
+
+  app.post('/api/jobs/:id/fail', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const { error, requeue } = req.body as { error: string; requeue?: boolean };
+    if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
+    queue.fail(id, { requeue, error });
+    broadcastState();
+    return queue.get(id);
   });
 
   app.post('/api/agents', async (req) => {

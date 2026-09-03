@@ -1,5 +1,6 @@
 import './panels/panels.css';
 import { PALETTE } from './art/palette.js';
+import { badgeLabel } from './badge.js';
 import { Elevator } from './elevator.js';
 import { bindPointer } from './engine/input.js';
 import { startLoop } from './engine/loop.js';
@@ -30,6 +31,14 @@ for (const [name, hex] of Object.entries(PALETTE)) {
 
 const screen = new Screen(app);
 const store = new Store();
+
+const badge = document.createElement('div');
+badge.className = 'gb-badge';
+app.appendChild(badge);
+store.subscribe((state) => {
+  badge.textContent = badgeLabel(state.connection);
+});
+badge.textContent = badgeLabel(store.getState().connection);
 
 /** Informational panels, newest last: Esc closes the one on top. */
 const panels: (() => void)[] = [];

@@ -52,7 +52,8 @@ export async function runShellTask(
     // rather than only the immediate child.
     const child = spawn(cmd, args, { cwd, env: { ...process.env, ...payload.env }, detached: true });
 
-    let settled = false;
+    let settled = false; // the direct child has exited/errored; only guards the promise executor itself
+    let resolved = false; // the JobResult has actually been produced; guards further onLine emission
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -62,17 +63,20 @@ export async function runShellTask(
     const stderrSplitter = lineSplitter('err', opts.onLine);
 
     const timeoutMs = payload.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    let escalateTimer: NodeJS.Timeout | undefined;
 
     function killGroup(sig: NodeJS.Signals): void {
       if (child.pid === undefined) return;
-      try { process.kill(-child.pid, sig); } catch { /* group already gone */ }
+      try { process.kill(-child.pid, sig); } catch { /* group already gone (ESRCH) */ }
     }
 
-    // SIGTERM the whole group first, then SIGKILL it if it's still alive after a grace period.
+    // SIGTERM the whole group first. A grandchild that traps SIGTERM (unlike the direct child, which
+    // we can observe via 'exit') can outlive it, so the SIGKILL escalation is scheduled independently
+    // of the direct child's own lifecycle — it fires on its own timer regardless of whether 'exit' has
+    // already happened — and is unref'd so it can't itself keep the process alive.
     function terminate(): void {
       killGroup('SIGTERM');
-      escalateTimer = setTimeout(() => killGroup('SIGKILL'), KILL_ESCALATION_MS);
+      const killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_ESCALATION_MS);
+      killTimer.unref?.();
     }
 
     const timer = setTimeout(() => { timedOut = true; terminate(); }, timeoutMs);
@@ -81,18 +85,21 @@ export async function runShellTask(
 
     const cleanup = () => {
       clearTimeout(timer);
-      if (escalateTimer) clearTimeout(escalateTimer);
       opts.signal?.removeEventListener('abort', onAbort);
     };
 
-    child.stdout.on('data', (chunk: Buffer) => {
+    const onStdoutData = (chunk: Buffer) => {
+      if (resolved) return;
       stdout = (stdout + chunk.toString()).slice(-TAIL_LENGTH);
       stdoutSplitter.push(chunk);
-    });
-    child.stderr.on('data', (chunk: Buffer) => {
+    };
+    const onStderrData = (chunk: Buffer) => {
+      if (resolved) return;
       stderr = (stderr + chunk.toString()).slice(-TAIL_LENGTH);
       stderrSplitter.push(chunk);
-    });
+    };
+    child.stdout.on('data', onStdoutData);
+    child.stderr.on('data', onStderrData);
 
     child.on('error', (err) => {
       if (settled) return;
@@ -109,9 +116,17 @@ export async function runShellTask(
       if (settled) return;
       settled = true;
       cleanup();
-      setTimeout(() => {
+      const drainTimer = setTimeout(() => {
         stdoutSplitter.flush();
         stderrSplitter.flush();
+        // Eager follow-up SIGKILL for the timeout/abort paths: don't wait out the full escalation
+        // window when we already know the run didn't end on its own.
+        if (timedOut || aborted) killGroup('SIGKILL');
+        resolved = true;
+        child.stdout.off('data', onStdoutData);
+        child.stderr.off('data', onStderrData);
+        child.stdout.destroy();
+        child.stderr.destroy();
         resolvePromise({
           // A killed process (timeout, or an abort) reports `code: null` from Node; JobResult's
           // `exitCode` field only admits `number | undefined`, so null is normalized to undefined
@@ -123,6 +138,7 @@ export async function runShellTask(
           timedOut,
         });
       }, DRAIN_MS);
+      drainTimer.unref?.();
     });
   });
 }

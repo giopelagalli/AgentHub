@@ -13,6 +13,8 @@ class InvalidPayloadError extends Error {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+const MAX_LOG_QUEUE = 500;
+
 export interface JobRunnerOptions {
   hub: string;
   node: string;
@@ -29,7 +31,10 @@ export class JobRunner {
   private currentAbort?: AbortController;
   private inFlightJobId?: number;
   private inFlightReported = false;
-  private logChain: Promise<void> = Promise.resolve();
+  private logQueue: { jobId: number; line: string }[] = [];
+  private logDraining = false;
+  private logDrainDone: Promise<void> = Promise.resolve();
+  private droppedLogCount = 0;
   private warned403 = false;
   private warned404 = false;
 
@@ -63,7 +68,7 @@ export class JobRunner {
     this.currentAbort?.abort();
     if (this.inFlightJobId !== undefined && !this.inFlightReported) {
       this.inFlightReported = true;
-      await this.logChain;
+      await this.flushLogs(this.inFlightJobId);
       await this.reportFail(this.inFlightJobId, 'daemon stopping', true);
     }
   }
@@ -111,7 +116,7 @@ export class JobRunner {
     this.inFlightJobId = job.id;
     this.inFlightReported = false;
     this.currentAbort = new AbortController();
-    const log = (line: string) => { this.postLog(job.id, line); };
+    const log = (line: string) => { this.enqueueLog(job.id, line); };
 
     let outcome: { ok: true; result: JobResult } | { ok: false; error: string; requeue: boolean };
     try {
@@ -132,17 +137,49 @@ export class JobRunner {
       return;
     }
     this.inFlightReported = true;
-    await this.logChain;
+    await this.flushLogs(job.id);
     if (outcome.ok) await this.reportComplete(job.id, outcome.result);
     else await this.reportFail(job.id, outcome.error, outcome.requeue);
     this.inFlightJobId = undefined;
     this.currentAbort = undefined;
   }
 
-  // Chains log posts behind a single promise so lines are delivered to the hub in order, with only
-  // one request in flight at a time, instead of racing concurrent fetches.
-  private postLog(jobId: number, line: string): void {
-    this.logChain = this.logChain.then(() => this.sendLog(jobId, line));
+  // Queues log lines behind a single draining loop so they're delivered to the hub in order, with
+  // only one POST in flight at a time. Bounded to MAX_LOG_QUEUE entries: once full, the oldest queued
+  // line is dropped and counted so a burst of output can't grow this without limit; the drop count is
+  // reported to the hub as one synthetic line (see flushLogs) once draining catches up.
+  private enqueueLog(jobId: number, line: string): void {
+    if (this.logQueue.length >= MAX_LOG_QUEUE) {
+      this.logQueue.shift();
+      this.droppedLogCount++;
+    }
+    this.logQueue.push({ jobId, line });
+    this.pumpLogQueue();
+  }
+
+  private pumpLogQueue(): void {
+    if (this.logDraining) return;
+    this.logDraining = true;
+    this.logDrainDone = (async () => {
+      while (this.logQueue.length > 0) {
+        const next = this.logQueue.shift()!;
+        await this.sendLog(next.jobId, next.line);
+      }
+      this.logDraining = false;
+    })();
+  }
+
+  // Waits for the queue to fully drain, then — if any lines were dropped along the way — enqueues a
+  // single synthetic notice and waits for that too. Call before reporting complete/fail so the report
+  // is never posted ahead of the job's own log lines.
+  private async flushLogs(jobId: number): Promise<void> {
+    await this.logDrainDone;
+    if (this.droppedLogCount > 0) {
+      const n = this.droppedLogCount;
+      this.droppedLogCount = 0;
+      this.enqueueLog(jobId, `[runner] dropped ${n} log lines`);
+      await this.logDrainDone;
+    }
   }
 
   private async sendLog(jobId: number, line: string): Promise<void> {

@@ -71,6 +71,33 @@ describe('runShellTask', () => {
     expect(() => process.kill(grandchildPid, 0)).toThrow();
   }, 5000);
 
+  it('eventually kills a grandchild that traps SIGTERM, and stops emitting once resolved', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const lines: string[] = [];
+    const result = await runShellTask(
+      {
+        cmd: ['sh', '-c', 'node -e "process.on(\'SIGTERM\',()=>{});setInterval(()=>{},1000)" & echo $!; sleep 100'],
+        timeoutMs: 500,
+      },
+      { workspaceRoot: root, onLine: (l) => lines.push(l) },
+    );
+    expect(result.timedOut).toBe(true);
+
+    const pidLine = lines.find((l) => /^out: \d+$/.test(l));
+    expect(pidLine).toBeDefined();
+    const grandchildPid = Number(pidLine!.slice('out: '.length));
+
+    // NEW-A: the grandchild ignores SIGTERM and the shell (the direct child we watch) exits well
+    // before it does, so only the independent SIGKILL escalation backstop can reap it.
+    await waitForProcessGone(grandchildPid, 6000);
+
+    // NEW-B: once runShellTask has resolved, nothing further should arrive via onLine even though
+    // the (now-dead, but briefly surviving) grandchild kept the pipes open past resolution.
+    const countAtResolve = lines.length;
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(lines.length).toBe(countAtResolve);
+  }, 10000);
+
   it('does not spawn when the signal is already aborted', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
     const controller = new AbortController();
@@ -82,3 +109,16 @@ describe('runShellTask', () => {
     expect(result.signal).toBe('aborted');
   });
 });
+
+async function waitForProcessGone(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return; // ESRCH: the process is gone
+    }
+    if (Date.now() > deadline) throw new Error(`process ${pid} still alive after ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}

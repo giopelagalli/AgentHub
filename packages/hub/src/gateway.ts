@@ -20,6 +20,24 @@ export class ModelGateway {
     this.unhealthyUntil.set(key, this.now() + UNHEALTHY_MS);
   }
 
+  // Whether some endpoint other than `excludeKey` could currently serve `tier` (i.e. registered,
+  // online, and not itself already marked unhealthy). Used to decide whether it's safe to blacklist
+  // a failing endpoint: doing so when it's the sole candidate would black out the tier entirely.
+  private hasOtherHealthyCandidate(tier: Tier, excludeKey: string): boolean {
+    const now = this.now();
+    for (const node of this.registry.online()) {
+      for (const endpoint of node.endpoints) {
+        if (endpoint.tier !== tier) continue;
+        const key = this.key(node, endpoint);
+        if (key === excludeKey) continue;
+        const until = this.unhealthyUntil.get(key);
+        if (until !== undefined && until > now) continue;
+        return true;
+      }
+    }
+    return false;
+  }
+
   health(): Record<string, number> {
     return Object.fromEntries(this.unhealthyUntil);
   }
@@ -89,7 +107,7 @@ export class ModelGateway {
         return full;
       } catch (err) {
         const aborted = signal?.aborted || (err instanceof Error && err.name === 'AbortError');
-        if (attempt === 0 && !streamedAny && !nonRetryable && !aborted) {
+        if (attempt === 0 && !streamedAny && !nonRetryable && !aborted && this.hasOtherHealthyCandidate(tier, key)) {
           this.markUnhealthy(key);
           continue;
         }

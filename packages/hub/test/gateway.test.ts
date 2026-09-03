@@ -145,6 +145,24 @@ describe('ModelGateway failover', () => {
     }
   });
 
+  it('does not blacklist the sole endpoint on a 5xx, so it stays pickable', async () => {
+    const bad = Fastify();
+    bad.post('/v1/chat/completions', async (_req, reply) => reply.code(500).send({ error: 'boom' }));
+    await bad.listen({ port: 0, host: '127.0.0.1' });
+    const badUrl = `http://127.0.0.1:${(bad.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'solo', arch: 'arm64', endpoints: [{ tier: 'worker', url: badUrl, model: 'mock-model', maxStreams: 2 }] });
+      const gateway = new ModelGateway(registry);
+
+      await expect(gateway.chat('worker', [{ role: 'user', content: 'hi' }])).rejects.toThrow('endpoint error 500');
+      expect(Object.keys(gateway.health())).toHaveLength(0);
+      expect(gateway.pick('worker')?.node.name).toBe('solo');
+    } finally {
+      await bad.close();
+    }
+  });
+
   // Note on coverage: "if tokens were already streamed, propagate the error (no
   // double replies)" is exercised indirectly by the existing "releases the stream
   // slot when the caller aborts mid-stream" test above — it aborts after the first

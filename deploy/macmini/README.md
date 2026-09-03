@@ -11,10 +11,12 @@ built UI — it does not serve any LLM tier.
 
 ## Daemon config
 
-The Mac mini's node daemon has no `serving` entries with real models — if
-this node also needs a daemon (e.g. for future browser-simulator jobs),
-give it an empty-ish config; today it's simplest to just run the hub
-directly, no node daemon required on the control node itself.
+The control node normally runs no node daemon at all — just the hub
+process above. If one is ever needed here (e.g. for future
+browser-simulator jobs), note that the daemon config validator requires
+at least one `serving` entry (`config.ts` throws `daemon config: serving
+missing` on an empty or missing list) — a real `serving` entry, not an
+empty one, would be required.
 
 ## launchd plist for the hub (sketch)
 

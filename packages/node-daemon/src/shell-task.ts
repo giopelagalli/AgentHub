@@ -1,20 +1,13 @@
 import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
-import type { JobResult, ShellTaskPayload } from '@agenthub/shared';
+import { resolveWorkspace, type JobResult, type ShellTaskPayload } from '@agenthub/shared';
+
+export { resolveWorkspace };
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const TAIL_LENGTH = 2000;
 const KILL_ESCALATION_MS = 5000;
 const DRAIN_MS = 200;
-
-export function resolveWorkspace(root: string, project: string | undefined, cwd: string | undefined): string {
-  const rootResolved = resolve(root);
-  const target = resolve(rootResolved, project ?? '_default', cwd ?? '.');
-  const rel = relative(rootResolved, target);
-  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('cwd escapes workspace');
-  return target;
-}
 
 function lineSplitter(prefix: 'out' | 'err', onLine: (line: string) => void) {
   let buf = '';

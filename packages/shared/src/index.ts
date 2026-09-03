@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve, sep } from 'node:path';
+
 export type Tier = 'orchestrator' | 'worker' | 'vision' | 'video-gen';
 export type Priority = 'interactive' | 'project' | 'batch';
 export const PRIORITY_RANK: Record<Priority, number> = { interactive: 0, project: 1, batch: 2 };
@@ -89,6 +91,19 @@ export interface JobLogLine {
   seq: number;
   line: string;
   at: number;
+}
+
+/**
+ * Resolves `cwd` inside `<root>/<project>` and refuses anything that escapes it. Shared by the node
+ * daemon's shell tasks and the hub's workspace tools; hub callers pass `'.'` as `project` because
+ * their root is already the per-project bundle workspace.
+ */
+export function resolveWorkspace(root: string, project: string | undefined, cwd: string | undefined): string {
+  const rootResolved = resolve(root);
+  const target = resolve(rootResolved, project ?? '_default', cwd ?? '.');
+  const rel = relative(rootResolved, target);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('cwd escapes workspace');
+  return target;
 }
 
 export function comparePriority(a: Pick<JobSpec, 'priority'>, b: Pick<JobSpec, 'priority'>): number {

@@ -35,10 +35,19 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  agent_id INTEGER NOT NULL REFERENCES agents(id),
+  agent_id INTEGER REFERENCES agents(id),
   role TEXT NOT NULL,
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at INTEGER,
+  outcome TEXT
 );
 CREATE TABLE IF NOT EXISTS job_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +67,32 @@ export function ensureColumn(db: Db, table: string, column: string, ddl: string)
   }
 }
 
+/**
+ * Agent-session messages have no owning agent, so `messages.agent_id` must be nullable. Older
+ * databases declared it NOT NULL; SQLite can't relax that in place, so the table is rebuilt once.
+ * Runs before the session columns are added, so only the original columns need copying.
+ */
+function relaxMessagesAgentId(db: Db): void {
+  const agentId = (db.pragma('table_info(messages)') as { name: string; notnull: number }[])
+    .find((c) => c.name === 'agent_id');
+  if (!agentId || agentId.notnull === 0) return;
+  db.exec(`
+    BEGIN;
+    CREATE TABLE messages_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id INTEGER REFERENCES agents(id),
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    INSERT INTO messages_new (id, agent_id, role, content, created_at)
+      SELECT id, agent_id, role, content, created_at FROM messages;
+    DROP TABLE messages;
+    ALTER TABLE messages_new RENAME TO messages;
+    COMMIT;
+  `);
+}
+
 export function openDb(path: string): Db {
   const db = new Database(path);
   if (path !== ':memory:') db.pragma('journal_mode = WAL');
@@ -66,5 +101,8 @@ export function openDb(path: string): Db {
   ensureColumn(db, 'jobs', 'attempts', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'result_json', `TEXT`);
   ensureColumn(db, 'jobs', 'error', `TEXT`);
+  relaxMessagesAgentId(db);
+  ensureColumn(db, 'messages', 'session_id', `INTEGER`);
+  ensureColumn(db, 'messages', 'tool_call_json', `TEXT`);
   return db;
 }

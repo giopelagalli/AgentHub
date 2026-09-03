@@ -52,8 +52,8 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
   };
 
   /** Returns the element the caller keeps writing text into. */
-  const addMessage = (speaker: string, text: string): HTMLElement => {
-    const following = atBottom();
+  const addMessage = (speaker: string, text: string, forcePin = false): HTMLElement => {
+    const following = forcePin || atBottom();
     const message = document.createElement('p');
     message.className = 'gb-chat__msg';
     const who = document.createElement('span');
@@ -68,13 +68,17 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
   };
 
   let inFlight: AbortController | null = null;
-  let closed = false;
 
   const stream = async (text: string): Promise<void> => {
-    addMessage('You', text);
+    // The user's own message always pins to bottom, even if they'd scrolled
+    // back to read history — sending is a clear signal they're back at the end.
+    addMessage('You', text, true);
     const reply = addMessage(agent.name, '');
     const controller = new AbortController();
     inFlight = controller;
+    // Captured before disabling blurs the input, so we know whether to give
+    // focus back afterwards or leave it wherever the reader had moved to.
+    const wasOurs = document.activeElement === input;
     input.disabled = true;
     send.disabled = true;
 
@@ -115,13 +119,11 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
       if (!controller.signal.aborted) fail(String(error));
     } finally {
       inFlight = null;
-      if (!closed) {
+      if (panel.isConnected) {
         input.disabled = false;
         send.disabled = false;
         // Don't steal focus back if the reader clicked into something else.
-        // Disabling the input blurs it, so body/null still counts as ours.
-        const active = document.activeElement;
-        if (active === null || active === document.body || panel.contains(active)) input.focus();
+        if (wasOurs) input.focus();
       }
     }
   };
@@ -138,7 +140,6 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
   input.focus();
 
   return () => {
-    closed = true;
     inFlight?.abort();
     panel.remove();
   };

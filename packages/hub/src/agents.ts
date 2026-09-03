@@ -5,7 +5,7 @@ import type { ModelGateway } from './gateway.js';
 export interface AgentRecord { id: number; name: string; tier: Tier; systemPrompt: string; }
 
 interface AgentRow { id: number; name: string; tier: Tier; system_prompt: string; }
-interface MessageRow { role: ChatMessage['role']; content: string; }
+interface MessageRow { role: 'system' | 'user' | 'assistant'; content: string; }
 
 const toAgent = (r: AgentRow): AgentRecord => ({ id: r.id, name: r.name, tier: r.tier, systemPrompt: r.system_prompt });
 
@@ -40,7 +40,8 @@ export class AgentRuntime {
       ...this.history(agentId),
       { role: 'user', content: userText },
     ];
-    const reply = await this.gateway.chat(agent.tier, messages, onToken, signal);
+    const result = await this.gateway.chat(agent.tier, messages, { onToken, signal });
+    const reply = result.content;
     const insert = this.db.prepare(`INSERT INTO messages (agent_id, role, content, created_at) VALUES (?,?,?,?)`);
     const now = Date.now();
     insert.run(agentId, 'user', userText, now);

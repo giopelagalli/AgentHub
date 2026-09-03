@@ -1,7 +1,9 @@
-import type { ChatMessage, NodeInfo, ServingEndpoint, Tier } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, NodeInfo, ServingEndpoint, Tier, ToolCall, ToolDef } from '@agenthub/shared';
 import type { NodeRegistry } from './node-registry.js';
 
 export interface PickResult { node: NodeInfo; endpoint: ServingEndpoint; }
+
+export interface ChatOptions { onToken?: (t: string) => void; tools?: ToolDef[]; signal?: AbortSignal; }
 
 const UNHEALTHY_MS = 10_000;
 
@@ -65,7 +67,22 @@ export class ModelGateway {
     return sum;
   }
 
-  async chat(tier: Tier, messages: ChatMessage[], onToken?: (t: string) => void, signal?: AbortSignal): Promise<string> {
+  chat(tier: Tier, messages: ChatMessage[], onToken?: (t: string) => void, signal?: AbortSignal): Promise<string>;
+  chat(tier: Tier, messages: ChatMessage[], opts?: ChatOptions): Promise<ChatResult>;
+  async chat(
+    tier: Tier,
+    messages: ChatMessage[],
+    arg3?: ((t: string) => void) | ChatOptions,
+    arg4?: AbortSignal,
+  ): Promise<string | ChatResult> {
+    const legacy = typeof arg3 !== 'object' || arg3 === null;
+    const opts: ChatOptions = legacy ? { onToken: arg3 as ((t: string) => void) | undefined, signal: arg4 } : arg3;
+    const result = await this.chatInternal(tier, messages, opts);
+    return legacy ? result.content : result;
+  }
+
+  private async chatInternal(tier: Tier, messages: ChatMessage[], opts: ChatOptions): Promise<ChatResult> {
+    const { onToken, tools, signal } = opts;
     for (let attempt = 0; ; attempt++) {
       const picked = this.pick(tier);
       if (!picked) throw new Error(`no capacity for tier: ${tier}`);
@@ -76,7 +93,7 @@ export class ModelGateway {
       try {
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
           method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model: picked.endpoint.model, messages, stream: true }),
+          body: JSON.stringify({ model: picked.endpoint.model, messages, stream: true, ...(tools ? { tools } : {}) }),
           signal,
         });
         if (!res.ok) {
@@ -87,6 +104,8 @@ export class ModelGateway {
         if (!res.body) { nonRetryable = true; throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`); }
         let full = '';
         let buf = '';
+        let finish: ChatResult['finish'] = 'stop';
+        const toolCallAcc = new Map<number, { id?: string; name?: string; arguments: string }>();
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         for (;;) {
@@ -100,11 +119,30 @@ export class ModelGateway {
             if (!line) continue;
             const data = line.slice(6);
             if (data === '[DONE]') continue;
-            const delta = JSON.parse(data).choices?.[0]?.delta?.content;
-            if (typeof delta === 'string' && delta.length) { full += delta; streamedAny = true; onToken?.(delta); }
+            const choice = JSON.parse(data).choices?.[0];
+            const delta = choice?.delta;
+            if (typeof delta?.content === 'string' && delta.content.length) {
+              full += delta.content; streamedAny = true; onToken?.(delta.content);
+            }
+            if (Array.isArray(delta?.tool_calls)) {
+              for (const frag of delta.tool_calls as { index?: number; id?: string; function?: { name?: string; arguments?: string } }[]) {
+                const i = frag.index ?? 0;
+                const acc = toolCallAcc.get(i) ?? { arguments: '' };
+                if (frag.id) acc.id = frag.id;
+                if (frag.function?.name) acc.name = frag.function.name;
+                if (typeof frag.function?.arguments === 'string') acc.arguments += frag.function.arguments;
+                toolCallAcc.set(i, acc);
+                streamedAny = true;
+              }
+            }
+            if (choice?.finish_reason === 'tool_calls') finish = 'tool_calls';
+            else if (choice?.finish_reason === 'length') finish = 'length';
           }
         }
-        return full;
+        const toolCalls: ToolCall[] = [...toolCallAcc.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([, v]) => ({ id: v.id ?? '', name: v.name ?? '', arguments: v.arguments }));
+        return { content: full, toolCalls, finish };
       } catch (err) {
         const aborted = signal?.aborted || (err instanceof Error && err.name === 'AbortError');
         if (attempt === 0 && !streamedAny && !nonRetryable && !aborted && this.hasOtherHealthyCandidate(tier, key)) {

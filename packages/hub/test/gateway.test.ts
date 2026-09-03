@@ -62,6 +62,40 @@ describe('ModelGateway', () => {
     await p;
   });
 
+  it('returns a ChatResult with toolCalls parsed and finish "tool_calls" when the options form is used', async () => {
+    const toolMock = createMockOpenAI({ script: [{ toolCalls: [{ name: 'read_file', arguments: { path: 'a.txt', mode: 'r' } }] }] });
+    await toolMock.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const toolUrl = `http://127.0.0.1:${(toolMock.server.address() as { port: number }).port}`;
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [{ tier: 'worker', url: toolUrl, model: 'mock-model', maxStreams: 2 }] });
+      const gateway = new ModelGateway(registry);
+
+      const result = await gateway.chat('worker', [{ role: 'user', content: 'read it' }], {});
+      expect(result.finish).toBe('tool_calls');
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0].name).toBe('read_file');
+      expect(JSON.parse(result.toolCalls[0].arguments)).toEqual({ path: 'a.txt', mode: 'r' });
+      expect(result.content).toBe('');
+    } finally {
+      await toolMock.close();
+    }
+  });
+
+  it('returns finish "stop" and empty toolCalls for a plain reply via the options form', async () => {
+    const { gateway } = setup();
+    const result = await gateway.chat('worker', [{ role: 'user', content: 'hello' }], {});
+    expect(result.finish).toBe('stop');
+    expect(result.toolCalls).toEqual([]);
+    expect(result.content).toBe('echo: hello');
+  });
+
+  it('keeps the legacy positional call returning a plain string', async () => {
+    const { gateway } = setup();
+    const full: string = await gateway.chat('worker', [{ role: 'user', content: 'hello' }]);
+    expect(full).toBe('echo: hello');
+  });
+
   it('releases the stream slot when the caller aborts mid-stream', async () => {
     const { gateway } = setup();
     const ac = new AbortController();

@@ -25,9 +25,28 @@ export interface NodeInfo extends NodeRegistration {
   jobTypes: JobType[];
 }
 
-export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+export interface ToolDef {
+  type: 'tool';
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>; // JSON schema
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string; // JSON text
+}
+
+export type ChatMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string };
+
+export interface ChatResult {
   content: string;
+  toolCalls: ToolCall[];
+  finish: 'stop' | 'tool_calls' | 'length';
 }
 
 export interface JobSpec {

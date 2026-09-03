@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Job } from '@agenthub/shared';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { JobRunner } from '../src/job-runner.js';
@@ -102,5 +105,78 @@ describe('JobRunner', () => {
     const after = await fetchJob(hubUrl, job.id);
     expect(after.status).toBe('queued');
     expect(after.attempts).toBe(1);
+  });
+
+  it('runs a real shell-task through the default executor end to end', async () => {
+    const hubUrl = await startHub();
+    await registerNode(hubUrl, 'n1');
+    const res = await fetch(`${hubUrl}/api/jobs`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'shell-task', tier: 'worker', priority: 'batch',
+        payload: { cmd: ['node', '-e', 'console.log("hi")'] },
+      }),
+    });
+    const job = (await res.json()) as Job;
+
+    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    // No `execute` override: exercises the real default dispatcher -> runShellTask.
+    const runner = new JobRunner({ hub: hubUrl, node: 'n1', types: ['shell-task'], workspaceRoot: root, claimIntervalMs: 50 });
+    runner.start();
+    try {
+      await waitFor(async () => (await fetchJob(hubUrl, job.id)).status === 'done');
+      const full = await (await fetch(`${hubUrl}/api/jobs/${job.id}`)).json() as Job & { logs: { line: string }[] };
+      expect(full.logs.some((l) => l.line === 'out: hi')).toBe(true);
+    } finally {
+      await runner.stop();
+    }
+  });
+
+  it('fails an unsupported job type without requeueing', async () => {
+    const hubUrl = await startHub();
+    await fetch(`${hubUrl}/api/nodes/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'n1', arch: 'arm64', endpoints: [], jobTypes: ['shell-task', 'llm-session'] }),
+    });
+    const res = await fetch(`${hubUrl}/api/jobs`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'llm-session', tier: 'worker', priority: 'batch', payload: {} }),
+    });
+    const job = (await res.json()) as Job;
+
+    const runner = new JobRunner({
+      hub: hubUrl, node: 'n1', types: ['shell-task', 'llm-session'], workspaceRoot: '/tmp', claimIntervalMs: 50,
+    });
+    runner.start();
+    try {
+      await waitFor(async () => (await fetchJob(hubUrl, job.id)).status === 'failed');
+      const after = await fetchJob(hubUrl, job.id);
+      expect(after.error).toBe('unsupported job type');
+      expect(after.attempts).toBe(1);
+    } finally {
+      await runner.stop();
+    }
+  });
+
+  it('the idle 204 poll does not throw or log anything', async () => {
+    const hubUrl = await startHub();
+    await registerNode(hubUrl, 'n1');
+
+    const errors: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => { errors.push(args); };
+
+    const runner = new JobRunner({
+      hub: hubUrl, node: 'n1', types: ['shell-task'], workspaceRoot: '/tmp', claimIntervalMs: 20,
+      execute: async () => ({ exitCode: 0 }),
+    });
+    runner.start();
+    try {
+      await new Promise((r) => setTimeout(r, 150)); // several idle poll intervals, nothing queued
+    } finally {
+      await runner.stop();
+      console.error = originalError;
+    }
+    expect(errors).toEqual([]);
   });
 });

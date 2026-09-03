@@ -53,6 +53,32 @@ describe('runShellTask', () => {
       { workspaceRoot: root, onLine: () => {} },
     );
     expect(result.exitCode).toBeUndefined();
-    expect(result.stderrTail).toContain('timeout');
+    expect(result.timedOut).toBe(true);
   }, 5000);
+
+  it('kills a backgrounded grandchild on timeout, not just the shell', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const lines: string[] = [];
+    const result = await runShellTask(
+      { cmd: ['sh', '-c', 'node -e "setInterval(()=>{},1000)" & echo $!; sleep 100'], timeoutMs: 500 },
+      { workspaceRoot: root, onLine: (l) => lines.push(l) },
+    );
+    expect(result.timedOut).toBe(true);
+
+    const pidLine = lines.find((l) => /^out: \d+$/.test(l));
+    expect(pidLine).toBeDefined();
+    const grandchildPid = Number(pidLine!.slice('out: '.length));
+    expect(() => process.kill(grandchildPid, 0)).toThrow();
+  }, 5000);
+
+  it('does not spawn when the signal is already aborted', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runShellTask(
+      { cmd: ['echo', 'hi'] },
+      { workspaceRoot: root, onLine: () => {}, signal: controller.signal },
+    );
+    expect(result.signal).toBe('aborted');
+  });
 });

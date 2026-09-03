@@ -50,6 +50,8 @@ export interface JobResult {
   stdoutTail?: string;
   stderrTail?: string;
   data?: unknown;
+  signal?: string;
+  timedOut?: boolean;
 }
 
 export interface Job extends JobSpec {

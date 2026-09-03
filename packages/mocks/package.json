@@ -3,9 +3,11 @@
   "version": "0.0.1",
   "type": "module",
   "exports": {
-    ".": "./src/openai-mock.ts"
+    ".": "./src/openai-mock.ts",
+    "./daemon-config": "./src/daemon-config.ts"
   },
   "dependencies": {
+    "@agenthub/shared": "*",
     "fastify": "^5"
   }
 }

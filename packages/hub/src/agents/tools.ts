@@ -5,7 +5,9 @@ import { resolveWorkspace, runShellTask } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
+import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
 import { validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
+import type { AgentLoop } from './loop.js';
 
 const TOOL_RESULT_LIMIT = 8000;
 const TRUNCATION_MARKER = '\n[truncated]';
@@ -339,7 +341,6 @@ const JOB_TYPES = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'] as
 const TIERS = ['orchestrator', 'worker', 'vision', 'video-gen'] as const satisfies readonly Tier[];
 const PRIORITIES = ['interactive', 'project', 'batch'] as const satisfies readonly Priority[];
 
-// spawn_subagent joins this registry in Task 4, once the subagent runner exists.
 export function hubTools(): Tool[] {
   return [
     {
@@ -381,4 +382,49 @@ export function hubTools(): Tool[] {
       },
     },
   ];
+}
+
+// --- delegation -------------------------------------------------------------
+
+const SUBAGENT_TOOL_CALLS = 25;
+const SUBAGENT_RESULT_LIMIT = 4000;
+
+/**
+ * Runs one ephemeral subagent session inline (awaited) on the worker tier, with workspace tools
+ * only, and hands its final report back as the tool result. Parallel fan-out is a later
+ * optimization; the caller's tool budget is what bounds how many of these a turn can start.
+ */
+export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string }): Tool {
+  return {
+    def: {
+      type: 'tool', name: 'spawn_subagent',
+      description: 'Delegate one self-contained task to an ephemeral subagent and get its report back.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: strProp('The whole assignment: what to do, which files, and how it will be judged done.'),
+          role: { type: 'string', enum: [...SUBAGENT_ROLES], description: 'Subagent role; defaults to coder.' },
+        },
+        required: ['task'],
+      },
+    },
+    run: async (args, ctx) => {
+      const task = str(args, 'task');
+      const role = fields(args).role === undefined ? 'coder' : oneOf(args, 'role', SUBAGENT_ROLES);
+      const res = await deps.loop.run({
+        kind: 'subagent',
+        subject: deps.subject,
+        tier: 'worker',
+        system: subagentSystemPrompt(role),
+        user: task,
+        tools: workspaceTools(),
+        ctx: { bundle: ctx.bundle, hub: ctx.hub },
+        maxToolCalls: SUBAGENT_TOOL_CALLS,
+        signal: ctx.signal,
+        onLog: ctx.log,
+      });
+      const text = res.text.trim();
+      return text ? text.slice(0, SUBAGENT_RESULT_LIMIT) : `subagent ${role} ended (${res.outcome}) without a report`;
+    },
+  };
 }

@@ -1,0 +1,17 @@
+# MacBook M4 Pro: ephemeral worker tier (see deploy/macbook/README.md).
+node:
+  name: macbook
+  arch: arm64
+hub: http://macmini.<tailnet>.ts.net:4000
+advertiseHost: macbook.<tailnet>.ts.net
+heartbeatMs: 5000
+serving:
+  - tier: worker
+    # Qwen3.6-27B GGUF, Q4_K_M quant
+    model: Qwen3.6-27B-GGUF
+    port: 8001
+    maxStreams: 2
+    cmd: ["./launch-worker.sh"]
+jobTypes: ["shell-task"]
+workspaceRoot: /Users/<you>/agenthub-workspace
+claimIntervalMs: 1000

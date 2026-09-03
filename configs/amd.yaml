@@ -1,0 +1,17 @@
+# AMD 7900XTX box: worker tier only (see deploy/amd/README.md).
+node:
+  name: amd
+  arch: x64
+hub: http://macmini.<tailnet>.ts.net:4000
+advertiseHost: amd.<tailnet>.ts.net
+heartbeatMs: 5000
+serving:
+  - tier: worker
+    # unsloth/Qwen3.6-35B-A3B-GGUF, UD-Q4_K_XL quant (~23GB, ~65 tok/s)
+    model: unsloth/Qwen3.6-35B-A3B-GGUF
+    port: 8001
+    maxStreams: 4
+    cmd: ["./launch-worker.sh"]
+jobTypes: ["shell-task"]
+workspaceRoot: /home/<you>/agenthub-workspace
+claimIntervalMs: 1000

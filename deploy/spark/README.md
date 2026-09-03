@@ -39,7 +39,15 @@ daemon config makes this a one-line change.
         port: 8002
         maxStreams: 4
         cmd: ["./launch-orchestrator.sh"]
+    jobTypes: ["shell-task", "video-gen"]
+    workspaceRoot: /home/<you>/agenthub-workspace
 
 launch-*.sh wrap the docker commands above with `exec` so SIGTERM reaches
 docker. Memory split (0.5 worker / remainder orchestrator) is a starting
 point — tune on the real box.
+
+`jobTypes` includes `video-gen` because the Spark is the only node with
+ComfyUI + MiniMax-H3 (spec §11) — video jobs only ever land here. `advertiseHost`
+must be the Spark's own tailnet name (see ../tailscale.md), since the hub
+tells the gateway to route agent traffic straight to it — not the control
+node's name, and not `127.0.0.1`.

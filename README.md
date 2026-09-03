@@ -36,3 +36,30 @@ Prod (hub serves the built app itself):
     npm run dev:hub           # then open http://localhost:4000
 
 Real-node setup: deploy/spark/README.md, configs/README.md.
+
+## Cluster (real nodes)
+
+Beyond `npm run dev:node`'s mock daemon, real nodes each run the node
+daemon against their own config over Tailscale (see deploy/tailscale.md):
+deploy/spark/README.md, deploy/amd/README.md, deploy/macbook/README.md,
+deploy/macmini/README.md (control node — runs the hub, no LLM serving).
+
+**Bring a node up:** start its serving process(es), then the daemon:
+
+    npx tsx packages/node-daemon/src/main.ts configs/<node>.yaml
+
+The daemon starts its `serving` processes, registers the node with the hub,
+heartbeats every `heartbeatMs` (default 5s), and — if the config has
+`jobTypes` — starts claiming jobs of those types from the hub's queue. On
+real nodes this normally runs under systemd (Linux) or launchd (macOS); see
+each node's playbook for a unit/plist sketch.
+
+**Take a node down:** `SIGINT`/`SIGTERM` the daemon (`systemctl stop`,
+`launchctl unload`, or Ctrl-C) — it stops the job runner and its serving
+processes, but doesn't tell the hub it's gone. The hub notices only via
+missed heartbeats: after three misses it marks the node offline and
+re-queues any jobs still assigned to it, so they go to another node with
+the required capability, or wait in the queue if none is free. A job
+already claimed and running when its node disappears is not resumed
+in-place — it's requeued and re-run from scratch on whichever node picks
+it up next.

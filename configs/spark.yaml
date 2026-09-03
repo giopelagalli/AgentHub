@@ -1,0 +1,21 @@
+# DGX Spark: worker + orchestrator tiers (see deploy/spark/README.md).
+node:
+  name: spark
+  arch: arm64
+hub: http://macmini.<tailnet>.ts.net:4000
+advertiseHost: spark.<tailnet>.ts.net
+heartbeatMs: 5000
+serving:
+  - tier: worker
+    model: nvidia/Qwen3.6-35B-A3B-NVFP4
+    port: 8001
+    maxStreams: 48
+    cmd: ["./launch-worker.sh"]
+  - tier: orchestrator
+    model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+    port: 8002
+    maxStreams: 4
+    cmd: ["./launch-orchestrator.sh"]
+jobTypes: ["shell-task", "video-gen"]
+workspaceRoot: /home/<you>/agenthub-workspace
+claimIntervalMs: 1000

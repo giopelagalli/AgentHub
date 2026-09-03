@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
@@ -89,7 +89,7 @@ describe('AgentLoop', () => {
     expect(mock.lastRequest().tools).toBeUndefined();
   });
 
-  it('ends with budget-exhausted when the tool budget runs out', async () => {
+  it('ends with budget-exhausted when the tool budget runs out, leaving a replayable transcript', async () => {
     const { loop, transcript, ctx } = await setup([readNotes, readNotes]);
 
     const res = await loop.run({ ...runOpts({ maxToolCalls: 1 }), ctx });
@@ -97,6 +97,16 @@ describe('AgentLoop', () => {
     expect(res.outcome).toBe('budget-exhausted');
     expect(res.toolCalls).toBe(1);
     expect(transcript.sessions()[0].outcome).toBe('budget-exhausted');
+
+    // Every tool_call the model issued must have a matching tool result, including the dropped one.
+    const messages = transcript.messages(res.sessionId);
+    const requested = messages.flatMap((m) => (m.role === 'assistant' ? m.tool_calls ?? [] : []));
+    const answered = messages.flatMap((m) => (m.role === 'tool' ? [m.tool_call_id] : []));
+    expect(requested).toHaveLength(2);
+    expect(answered).toEqual(requested.map((c) => c.id));
+    expect(messages.some((m) => m.role === 'tool' && m.content === 'error: tool budget exhausted')).toBe(true);
+    expect(messages.some((m) => m.role === 'system' && m.content.includes('budget'))).toBe(false);
+    expect(transcript.events(res.sessionId)[0].content).toContain('budget-exhausted');
   });
 
   it('turns a throwing tool into an error result and keeps going', async () => {
@@ -150,12 +160,38 @@ describe('AgentLoop', () => {
     expect(transcript.sessions()[0].outcome).toBe('aborted');
   });
 
-  it('reports a gateway failure as an error and closes the session', async () => {
+  it('aborts mid tool call, killing the running command', async () => {
+    const { loop, transcript, ctx } = await setup([
+      { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'echo $$ > pid.txt; sleep 30'] } }] },
+    ]);
+    const controller = new AbortController();
+    const started = Date.now();
+    setTimeout(() => controller.abort(), 300);
+
+    const res = await loop.run({ ...runOpts({ signal: controller.signal }), ctx });
+
+    expect(res.outcome).toBe('aborted');
+    expect(Date.now() - started).toBeLessThan(6000);
+    expect(transcript.sessions()[0].outcome).toBe('aborted');
+
+    const pgid = Number((await readFile(join(bundle.workspace, 'pid.txt'), 'utf8')).trim());
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      try { process.kill(-pgid, 0); } catch { break; }
+      expect(Date.now()).toBeLessThan(deadline);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  });
+
+  it('reports a gateway failure as an event, not a replayable message', async () => {
     const { loop, transcript, ctx } = await setup([{ content: 'never' }], { serveWorker: false });
 
     const res = await loop.run({ ...runOpts(), ctx });
 
     expect(res.outcome).toBe('error');
     expect(transcript.sessions()[0].outcome).toBe('error');
+    expect(transcript.messages(res.sessionId).map((m) => m.role)).toEqual(['system', 'user']);
+    expect(transcript.events(res.sessionId)).toHaveLength(1);
+    expect(transcript.events(res.sessionId)[0].content).toContain('gateway error');
   });
 });

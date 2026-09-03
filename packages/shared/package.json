@@ -1,1 +1,10 @@
-{ "name": "@agenthub/shared", "version": "0.0.1", "type": "module", "main": "src/index.ts", "exports": { ".": "./src/index.ts" } }
+{
+  "name": "@agenthub/shared",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./shell": "./src/shell-task.ts"
+  }
+}

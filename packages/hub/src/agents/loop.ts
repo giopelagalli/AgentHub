@@ -23,6 +23,8 @@ export interface AgentRunResult {
   text: string;
   toolCalls: number;
   outcome: SessionOutcome;
+  /** The model hit its output limit on the final turn, so `text` is cut short. */
+  truncated: boolean;
 }
 
 /**
@@ -36,7 +38,7 @@ export class AgentLoop {
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier);
-    const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line) };
+    const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal };
     const toolDefs = opts.tools.map((t) => t.def);
 
     const messages: ChatMessage[] = [
@@ -47,10 +49,19 @@ export class AgentLoop {
 
     let toolCalls = 0;
     let text = '';
+    let truncated = false;
 
     const finish = (outcome: SessionOutcome): AgentRunResult => {
       transcript.endSession(sessionId, outcome);
-      return { sessionId, text, toolCalls, outcome };
+      return { sessionId, text, toolCalls, outcome, truncated };
+    };
+
+    // Every tool_call in an assistant message must be answered by a tool message, or the transcript
+    // can't be replayed to a model. Calls we decline to run get an explanatory result instead.
+    const answer = (call: { id: string }, content: string): void => {
+      const toolMessage: ChatMessage = { role: 'tool', tool_call_id: call.id, content };
+      messages.push(toolMessage);
+      transcript.append(sessionId, toolMessage);
     };
 
     for (;;) {
@@ -65,11 +76,12 @@ export class AgentLoop {
         });
       } catch (err) {
         const aborted = opts.signal?.aborted || (err instanceof Error && err.name === 'AbortError');
-        if (!aborted) transcript.append(sessionId, { role: 'system', content: `error: ${(err as Error).message}` });
+        if (!aborted) transcript.appendEvent(sessionId, `gateway error: ${(err as Error).message}`);
         return finish(aborted ? 'aborted' : 'error');
       }
 
       text = result.content;
+      truncated = result.finish === 'length' && result.toolCalls.length === 0;
       const assistant: ChatMessage = {
         role: 'assistant',
         content: result.content || null,
@@ -80,16 +92,19 @@ export class AgentLoop {
 
       if (result.toolCalls.length === 0) return finish('stop');
 
-      for (const call of result.toolCalls) {
+      for (const [i, call] of result.toolCalls.entries()) {
         if (toolCalls >= opts.maxToolCalls) {
-          transcript.append(sessionId, { role: 'system', content: `budget-exhausted: tool call budget of ${opts.maxToolCalls} reached` });
+          for (const dropped of result.toolCalls.slice(i)) answer(dropped, 'error: tool budget exhausted');
+          transcript.appendEvent(sessionId, `budget-exhausted: tool call budget of ${opts.maxToolCalls} reached`);
           return finish('budget-exhausted');
         }
+        // Checked per call, not just per model turn: a long tool (run_shell) can span an abort.
+        if (opts.signal?.aborted) {
+          for (const dropped of result.toolCalls.slice(i)) answer(dropped, 'error: aborted');
+          return finish('aborted');
+        }
         toolCalls++;
-        const content = await runToolCall(opts.tools, call, ctx);
-        const toolMessage: ChatMessage = { role: 'tool', tool_call_id: call.id, content };
-        messages.push(toolMessage);
-        transcript.append(sessionId, toolMessage);
+        answer(call, await runToolCall(opts.tools, call, ctx));
       }
     }
   }

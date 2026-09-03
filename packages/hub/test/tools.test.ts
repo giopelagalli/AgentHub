@@ -32,6 +32,20 @@ afterEach(async () => {
 const call = (tools: Tool[], name: string, args: object): Promise<string> =>
   runToolCall(tools, { id: 'call_0', name, arguments: JSON.stringify(args) }, ctx);
 
+/** Polls until the process group is gone (the SIGKILL escalation is asynchronous). */
+async function groupGone(pgid: number, timeoutMs = 3000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(-pgid, 0);
+    } catch {
+      return true;
+    }
+    if (Date.now() > deadline) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 const briefing = (overrides: Partial<Briefing> = {}): Briefing => ({
   slug: 'demo',
   title: 'Demo',
@@ -78,6 +92,21 @@ describe('workspaceTools', () => {
     expect(out).toContain('exit: 3');
   });
 
+  it('times out a command that leaves a backgrounded grandchild, and kills the group', async () => {
+    const started = Date.now();
+    // `sleep 60 &` inherits the child's stdio, so waiting on pipe close would hang forever.
+    const out = await call(workspaceTools(), 'run_shell', {
+      cmd: ['sh', '-c', 'echo $$ > pid.txt; sleep 60 & sleep 30'],
+      timeoutMs: 1500,
+    });
+
+    expect(out).toMatch(/^error: timed out after 1500ms/);
+    expect(Date.now() - started).toBeLessThan(6000);
+
+    const pgid = Number((await readFile(join(bundle.workspace, 'pid.txt'), 'utf8')).trim());
+    expect(await groupGone(pgid)).toBe(true);
+  });
+
   it('refuses a cwd escaping the workspace', async () => {
     const out = await call(workspaceTools(), 'run_shell', { cmd: ['pwd'], cwd: '../../..' });
     expect(out).toBe('error: cwd escapes workspace');
@@ -117,10 +146,12 @@ describe('bundleTools', () => {
     expect(await bundle.skills()).toEqual([{ name: 'deploy', body: '# Deploy\n' }]);
   });
 
-  it('publishes a valid briefing', async () => {
-    const out = await call(bundleTools(), 'publish_briefing', briefing());
+  it('publishes a valid briefing under the bundle slug, ignoring the model-supplied one', async () => {
+    const out = await call(bundleTools(), 'publish_briefing', { ...briefing({ slug: 'other-project' }), bogus: 'ignored' });
     expect(out.startsWith('error:')).toBe(false);
-    expect(await bundle.latestBriefing()).toMatchObject({ slug: 'demo', summary: 'going well' });
+    const published = await bundle.latestBriefing();
+    expect(published).toMatchObject({ slug: 'demo', summary: 'going well' });
+    expect(published && 'bogus' in published).toBe(false);
   });
 
   it('rejects an invalid briefing', async () => {

@@ -1,8 +1,7 @@
-import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { resolveWorkspace, type JobType, type Priority, type Tier, type ToolCall, type ToolDef } from '@agenthub/shared';
+import type { JobResult, JobType, Priority, Tier, ToolCall, ToolDef } from '@agenthub/shared';
+import { resolveWorkspace, runShellTask } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
@@ -11,7 +10,6 @@ import { validateBriefing, type Briefing, type TaskItem } from '../projects/sche
 const TOOL_RESULT_LIMIT = 8000;
 const TRUNCATION_MARKER = '\n[truncated]';
 const SHELL_TIMEOUT_MS = 60_000;
-const OUTPUT_TAIL = 4000;
 
 export interface HubDeps {
   queue: JobQueue;
@@ -23,6 +21,8 @@ export interface ToolContext {
   hub: HubDeps;
   sessionId: number;
   log(line: string): void;
+  /** Aborts long-running tools (currently `run_shell`) when the owning session is cancelled. */
+  signal?: AbortSignal;
 }
 
 export interface Tool {
@@ -104,6 +104,14 @@ const strProp = (description: string) => ({ type: 'string', description });
 
 // --- workspace tools --------------------------------------------------------
 
+/**
+ * File and shell tools scoped to `<bundle>/workspace`.
+ *
+ * The scoping is *cwd-scoping, not containment*: `resolveWorkspace` is a lexical check on the
+ * requested path (no realpath, so a symlink inside the workspace still points out of it), and a
+ * command the model runs — `sh -c ...` above all — can read and write anything the hub's OS user
+ * can. Real isolation has to come from running these tools under a sandboxed user or container.
+ */
 export function workspaceTools(): Tool[] {
   return [
     {
@@ -157,44 +165,30 @@ export function workspaceTools(): Tool[] {
         },
       },
       run: async (args, ctx) => {
-        const cmd = strArray(args, 'cmd');
-        const cwd = inWorkspace(ctx, optStr(args, 'cwd'));
         const timeoutRaw = fields(args).timeoutMs;
         const timeoutMs = typeof timeoutRaw === 'number' && timeoutRaw > 0 ? timeoutRaw : SHELL_TIMEOUT_MS;
-        return runShell(cmd, cwd, timeoutMs, ctx.log);
+        const result = await runShellTask(
+          { cmd: strArray(args, 'cmd'), cwd: optStr(args, 'cwd'), timeoutMs },
+          // `'.'` as the project segment: the bundle workspace is already project-scoped, so the
+          // sandbox root is the workspace itself.
+          { workspaceRoot: needBundle(ctx).workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
+        );
+        return renderShellResult(result, timeoutMs);
       },
     },
   ];
 }
 
-function runShell(cmd: string[], cwd: string, timeoutMs: number, log: (line: string) => void): Promise<string> {
-  mkdirSync(cwd, { recursive: true });
-  return new Promise((resolve, reject) => {
-    const child = spawn(cmd[0], cmd.slice(1), { cwd });
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
-
-    // Best-effort progress lines: a chunk boundary can split a line, which is fine for a log.
-    const collect = (prefix: 'out' | 'err') => (chunk: Buffer) => {
-      const text = chunk.toString();
-      if (prefix === 'out') stdout = (stdout + text).slice(-OUTPUT_TAIL);
-      else stderr = (stderr + text).slice(-OUTPUT_TAIL);
-      for (const line of text.split('\n')) if (line.trim()) log(`${prefix}: ${line}`);
-    };
-    child.stdout.on('data', collect('out'));
-    child.stderr.on('data', collect('err'));
-
-    child.on('error', (err) => { clearTimeout(timer); reject(err); });
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-      const lines = [timedOut ? `timed out after ${timeoutMs}ms` : `exit: ${code ?? `killed (${signal})`}`];
-      if (stdout.trim()) lines.push(`stdout:\n${stdout.trimEnd()}`);
-      if (stderr.trim()) lines.push(`stderr:\n${stderr.trimEnd()}`);
-      resolve(lines.join('\n'));
-    });
-  });
+function renderShellResult(result: JobResult, timeoutMs: number): string {
+  const head = result.timedOut
+    ? `error: timed out after ${timeoutMs}ms`
+    : result.signal === 'aborted'
+      ? 'error: aborted'
+      : `exit: ${result.exitCode ?? `killed (${result.signal})`}`;
+  const lines = [head];
+  if (result.stdoutTail?.trim()) lines.push(`stdout:\n${result.stdoutTail.trimEnd()}`);
+  if (result.stderrTail?.trim()) lines.push(`stderr:\n${result.stderrTail.trimEnd()}`);
+  return lines.join('\n');
 }
 
 // --- bundle tools -----------------------------------------------------------
@@ -302,7 +296,7 @@ export function bundleTools(): Tool[] {
         parameters: {
           type: 'object',
           properties: {
-            slug: strProp('Project slug.'), title: strProp('Project title.'),
+            title: strProp('Project title.'),
             status: { type: 'string', enum: ['active', 'paused', 'blocked', 'done'] },
             priority: { type: 'string', enum: ['interactive', 'project', 'batch'] },
             summary: strProp('At most 600 characters.'),
@@ -311,12 +305,25 @@ export function bundleTools(): Tool[] {
             nextSteps: { type: 'array', items: { type: 'string' } },
             updatedAt: { type: 'number', description: 'Epoch ms; defaults to now.' },
           },
-          required: ['slug', 'title', 'status', 'priority', 'summary', 'progress', 'blockers', 'nextSteps'],
+          required: ['title', 'status', 'priority', 'summary', 'progress', 'blockers', 'nextSteps'],
         },
       },
       run: async (args, ctx) => {
         const bundle = needBundle(ctx);
-        const briefing = { updatedAt: Date.now(), ...fields(args) };
+        const f = fields(args);
+        // Only the schema's own keys make it through, and the slug comes from the manifest rather
+        // than the model — a briefing filed under another project's slug would mislead the master.
+        const briefing = {
+          slug: (await bundle.manifest()).slug,
+          title: f.title,
+          status: f.status,
+          priority: f.priority,
+          summary: f.summary,
+          progress: f.progress,
+          blockers: f.blockers,
+          nextSteps: f.nextSteps,
+          updatedAt: typeof f.updatedAt === 'number' ? f.updatedAt : Date.now(),
+        };
         validateBriefing(briefing);
         await bundle.publishBriefing(briefing as Briefing);
         await bundle.commit('agent: publish briefing');

@@ -48,12 +48,27 @@ export class Transcript {
       .run(sessionId, msg.role, msg.content ?? '', toolCallJson, now);
   }
 
+  /**
+   * Records something that happened *to* the session (a gateway failure, a spent budget) rather than
+   * a turn in the conversation. Stored with role `event` so `messages()` — whose output is fed back
+   * to a model — never picks it up.
+   */
+  appendEvent(sessionId: number, content: string, now = Date.now()): void {
+    this.db.prepare(`INSERT INTO messages (session_id, role, content, created_at) VALUES (?, 'event', ?, ?)`)
+      .run(sessionId, content, now);
+  }
+
+  events(sessionId: number): { content: string; at: number }[] {
+    return this.db.prepare(`SELECT content, created_at AS at FROM messages WHERE session_id=? AND role='event' ORDER BY id`)
+      .all(sessionId) as { content: string; at: number }[];
+  }
+
   endSession(id: number, outcome: SessionOutcome, now = Date.now()): void {
     this.db.prepare(`UPDATE sessions SET ended_at=?, outcome=? WHERE id=?`).run(now, outcome, id);
   }
 
   messages(sessionId: number): ChatMessage[] {
-    const rows = this.db.prepare(`SELECT role, content, tool_call_json FROM messages WHERE session_id=? ORDER BY id`)
+    const rows = this.db.prepare(`SELECT role, content, tool_call_json FROM messages WHERE session_id=? AND role<>'event' ORDER BY id`)
       .all(sessionId) as MessageRow[];
     return rows.map((r): ChatMessage => {
       if (r.role === 'assistant') {

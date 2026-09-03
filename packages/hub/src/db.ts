@@ -76,21 +76,28 @@ function relaxMessagesAgentId(db: Db): void {
   const agentId = (db.pragma('table_info(messages)') as { name: string; notnull: number }[])
     .find((c) => c.name === 'agent_id');
   if (!agentId || agentId.notnull === 0) return;
-  db.exec(`
-    BEGIN;
-    CREATE TABLE messages_new (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      agent_id INTEGER REFERENCES agents(id),
-      role TEXT NOT NULL,
-      content TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-    INSERT INTO messages_new (id, agent_id, role, content, created_at)
-      SELECT id, agent_id, role, content, created_at FROM messages;
-    DROP TABLE messages;
-    ALTER TABLE messages_new RENAME TO messages;
-    COMMIT;
-  `);
+  // foreign_keys must be toggled outside a transaction (SQLite ignores it inside one), so the pragma
+  // brackets the transaction rather than living in it.
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE messages_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          agent_id INTEGER REFERENCES agents(id),
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        INSERT INTO messages_new (id, agent_id, role, content, created_at)
+          SELECT id, agent_id, role, content, created_at FROM messages;
+        DROP TABLE messages;
+        ALTER TABLE messages_new RENAME TO messages;
+      `);
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
 }
 
 export function openDb(path: string): Db {

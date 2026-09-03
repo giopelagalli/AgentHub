@@ -15,12 +15,14 @@ export interface NodeRegistration {
   name: string;
   arch: string;
   endpoints: ServingEndpoint[];
+  jobTypes?: JobType[];
 }
 
 export interface NodeInfo extends NodeRegistration {
   id: number;
   status: 'online' | 'offline';
   lastHeartbeat: number;
+  jobTypes: JobType[];
 }
 
 export interface ChatMessage {
@@ -36,12 +38,36 @@ export interface JobSpec {
   payload: unknown;
 }
 
+export interface ShellTaskPayload {
+  cmd: string[];
+  cwd?: string;
+  timeoutMs?: number;
+  env?: Record<string, string>;
+}
+
+export interface JobResult {
+  exitCode?: number;
+  stdoutTail?: string;
+  stderrTail?: string;
+  data?: unknown;
+}
+
 export interface Job extends JobSpec {
   id: number;
   status: JobStatus;
   nodeId: number | null;
   createdAt: number;
   updatedAt: number;
+  attempts: number;
+  result: JobResult | null;
+  error: string | null;
+}
+
+export interface JobLogLine {
+  jobId: number;
+  seq: number;
+  line: string;
+  at: number;
 }
 
 export function comparePriority(a: Pick<JobSpec, 'priority'>, b: Pick<JobSpec, 'priority'>): number {

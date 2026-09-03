@@ -12,6 +12,7 @@ const hubState: HubState = {
       status: 'online',
       lastHeartbeat: 1,
       endpoints: [{ tier: 'worker', url: 'http://127.0.0.1:8102', model: 'mock-model', maxStreams: 8 }],
+      jobTypes: [],
     },
   ],
   agents: [{ id: 7, name: 'scout', tier: 'worker', systemPrompt: 's' }],

@@ -30,4 +30,16 @@ describe('NodeRegistry', () => {
     expect(registry.online(2600).map(n => n.name)).toEqual(['mb']);
     expect(registry.heartbeat('ghost', 2500)).toBe(false);
   });
+
+  it('round-trips jobTypes on registration', () => {
+    const a = registry.register({ ...reg('spark'), jobTypes: ['shell-task'] }, 100);
+    expect(a.jobTypes).toEqual(['shell-task']);
+    expect(registry.byName('spark')?.jobTypes).toEqual(['shell-task']);
+  });
+
+  it('defaults jobTypes to [] when not provided', () => {
+    const a = registry.register(reg('mb'), 100);
+    expect(a.jobTypes).toEqual([]);
+    expect(registry.byName('mb')?.jobTypes).toEqual([]);
+  });
 });

@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
-import { PRIORITY_RANK, type Job, type JobSpec, type JobStatus, type JobType, type Priority } from '@agenthub/shared';
+import { PRIORITY_RANK, type Job, type JobResult, type JobSpec, type JobStatus, type JobType, type Priority } from '@agenthub/shared';
 
-interface Row { id: number; type: JobType; tier: Job['tier']; priority: number; project: string | null; payload_json: string; status: JobStatus; node_id: number | null; created_at: number; updated_at: number; }
+interface Row { id: number; type: JobType; tier: Job['tier']; priority: number; project: string | null; payload_json: string; status: JobStatus; node_id: number | null; created_at: number; updated_at: number; attempts: number; result_json: string | null; error: string | null; }
 
 const RANK_TO_PRIORITY = Object.fromEntries(Object.entries(PRIORITY_RANK).map(([k, v]) => [v, k])) as Record<number, Priority>;
 
@@ -9,6 +9,7 @@ const toJob = (r: Row): Job => ({
   id: r.id, type: r.type, tier: r.tier, priority: RANK_TO_PRIORITY[r.priority],
   project: r.project ?? undefined, payload: JSON.parse(r.payload_json),
   status: r.status, nodeId: r.node_id, createdAt: r.created_at, updatedAt: r.updated_at,
+  attempts: r.attempts, result: r.result_json ? (JSON.parse(r.result_json) as JobResult) : null, error: r.error,
 });
 
 export class JobQueue {

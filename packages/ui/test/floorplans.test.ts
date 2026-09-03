@@ -16,7 +16,7 @@ const SCREEN_W = GRID_COLS * TILE_SIZE;
 const SCREEN_H = GRID_ROWS * TILE_SIZE;
 
 function node(name: string, status: NodeInfo['status']): NodeInfo {
-  return { id: 1, name, arch: 'arm64', status, lastHeartbeat: 0, endpoints: [] };
+  return { id: 1, name, arch: 'arm64', status, lastHeartbeat: 0, endpoints: [], jobTypes: [] };
 }
 
 function uiState(hub: Partial<HubState> | null, busy: number[] = []): UiState {

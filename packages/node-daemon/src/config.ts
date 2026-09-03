@@ -1,9 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
-import type { Tier } from '@agenthub/shared';
+import type { JobType, Tier } from '@agenthub/shared';
 
 export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; }
-export interface DaemonConfig { node: { name: string; arch: string }; hub: string; advertiseHost?: string; heartbeatMs?: number; serving: ServingConfig[]; }
+export interface DaemonConfig {
+  node: { name: string; arch: string };
+  hub: string;
+  advertiseHost?: string;
+  heartbeatMs?: number;
+  serving: ServingConfig[];
+  jobTypes?: JobType[];
+  workspaceRoot?: string;
+  claimIntervalMs?: number;
+}
 
 export function loadConfig(path: string): DaemonConfig {
   const raw = load(readFileSync(path, 'utf8')) as Partial<DaemonConfig> | undefined;

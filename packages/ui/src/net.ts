@@ -118,6 +118,10 @@ export function connect(store: Store): void {
     current = socket;
     socket.addEventListener('open', () => {
       stopFallback();
+      // A fresh connect replays busy state from scratch; drop anything stale
+      // from before it, so a busy agent that finished while we were down
+      // doesn't stay stuck busy forever.
+      store.dispatch({ type: 'busy-reset' });
       store.dispatch({ type: 'connection', status: 'live' });
     });
     socket.addEventListener('message', (event) => handleWsMessage(store, String(event.data)));

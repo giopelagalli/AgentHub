@@ -11,6 +11,7 @@ export interface UiState {
 export type StoreEvent =
   | { type: 'hub-state'; state: HubState }
   | { type: 'agent-busy'; agentId: number; busy: boolean }
+  | { type: 'busy-reset' }
   | { type: 'set-floor'; floor: FloorId }
   | { type: 'connection'; status: UiState['connection'] };
 
@@ -37,6 +38,9 @@ export class Store {
         this.state = { ...this.state, busy };
         break;
       }
+      case 'busy-reset':
+        this.state = { ...this.state, busy: new Set() };
+        break;
       case 'set-floor':
         this.state = { ...this.state, floor: event.floor };
         break;

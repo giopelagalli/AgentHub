@@ -39,6 +39,17 @@ describe('Store', () => {
     expect(store.getState().busy.has(5)).toBe(false);
   });
 
+  it('busy-reset clears busy without touching the rest of the state', () => {
+    const store = new Store();
+    store.dispatch({ type: 'agent-busy', agentId: 1, busy: true });
+    store.dispatch({ type: 'agent-busy', agentId: 2, busy: true });
+    store.dispatch({ type: 'set-floor', floor: 'ph' });
+    store.dispatch({ type: 'busy-reset' });
+    const s = store.getState();
+    expect(s.busy.size).toBe(0);
+    expect(s.floor).toBe('ph');
+  });
+
   it('notifies subscribers on every dispatch, and unsubscribe stops notifications', () => {
     const store = new Store();
     let count = 0;

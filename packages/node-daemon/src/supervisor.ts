@@ -3,6 +3,13 @@ import type { ServingConfig } from './config.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const KILL_ESCALATION_MS = 3000;
+
+function killGroup(child: ChildProcess, sig: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try { process.kill(-child.pid, sig); } catch { /* group already gone (ESRCH) */ }
+}
+
 export class Supervisor {
   private children: ChildProcess[] = [];
   private stopping = false;
@@ -13,7 +20,10 @@ export class Supervisor {
     const spawnErrors: Error[] = [];
     for (const s of this.serving) {
       const [cmd, ...args] = s.cmd;
-      const child = spawn(cmd, args, { stdio: 'inherit' });
+      // detached: true makes the child a process-group leader (setsid), so its pid doubles as its
+      // group id — matches job-runner/shell-task's discipline, letting stopAll below kill a whole
+      // serving tree (e.g. an `npx` wrapper and the process it execs) via a negative-pid signal.
+      const child = spawn(cmd, args, { stdio: 'inherit', detached: true });
       child.on('error', (err) => { spawnErrors.push(err); });
       child.on('exit', () => {
         if (!this.stopping) this.onChildExit?.(s);
@@ -45,8 +55,8 @@ export class Supervisor {
     await Promise.all(this.children.map((child) => new Promise<void>((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) return resolve();
       child.once('exit', () => resolve());
-      child.kill('SIGTERM');
-      setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL'); }, 3000).unref();
+      killGroup(child, 'SIGTERM');
+      setTimeout(() => { if (child.exitCode === null) killGroup(child, 'SIGKILL'); }, KILL_ESCALATION_MS).unref();
     })));
     this.children = [];
     this.stopping = false;

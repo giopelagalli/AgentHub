@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -12,6 +12,26 @@ import { Supervisor } from '../src/supervisor.js';
 const MOCK_SERVE = join(process.cwd(), 'packages/mocks/src/serve.ts');
 // run tsx in-process (no npx wrapper) so the spawned child's pid is the actual server process
 const TSX_CLI = join(process.cwd(), 'node_modules/tsx/dist/cli.mjs');
+
+const dirs: string[] = [];
+function tmpDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-'));
+  dirs.push(dir);
+  return dir;
+}
+
+async function waitForProcessGone(pid: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return; // ESRCH: the process is gone
+    }
+    if (Date.now() > deadline) throw new Error(`process ${pid} still alive after ${timeoutMs}ms`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 
 function pidListeningOnPort(port: number): number {
   const out = execSync(`lsof -ti tcp:${port} -sTCP:LISTEN`).toString().trim();
@@ -32,11 +52,15 @@ function getEphemeralPort(): Promise<number> {
 }
 
 let hub: Hub; let daemon: Daemon;
-afterEach(async () => { await daemon?.stop(); await hub?.stop(); });
+afterEach(async () => {
+  await daemon?.stop(); await hub?.stop();
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  dirs.length = 0;
+});
 
 describe('node daemon', () => {
   it('loadConfig validates required fields', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ah-'));
+    const dir = tmpDir();
     const bad = join(dir, 'bad.yaml');
     writeFileSync(bad, 'node:\n  name: x\n');
     expect(() => loadConfig(bad)).toThrow(/daemon config/);
@@ -48,7 +72,7 @@ describe('node daemon', () => {
     const hubPort = (hub.app.server.address() as { port: number }).port;
     const servePort = await getEphemeralPort();
 
-    const dir = mkdtempSync(join(tmpdir(), 'ah-'));
+    const dir = tmpDir();
     const cfgPath = join(dir, 'daemon.yaml');
     writeFileSync(cfgPath, [
       'node:', '  name: dev-node', '  arch: arm64',
@@ -124,4 +148,96 @@ describe('node daemon', () => {
       await supervisor.stopAll();
     }
   }, 15000);
+
+  it('stop() waits out the SIGKILL escalation so a SIGTERM-trapping grandchild is reaped before it resolves', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+    const servePort = await getEphemeralPort();
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    const workspaceRoot = join(dir, 'workspace');
+    writeFileSync(cfgPath, [
+      'node:', '  name: shutdown-node', '  arch: arm64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'heartbeatMs: 500',
+      'jobTypes: ["shell-task"]',
+      `workspaceRoot: ${workspaceRoot}`,
+      'claimIntervalMs: 50',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', `    port: ${servePort}`, '    maxStreams: 4',
+      `    cmd: ["npx", "tsx", "${MOCK_SERVE}", "${servePort}"]`,
+    ].join('\n'));
+
+    daemon = new Daemon(loadConfig(cfgPath));
+    await daemon.start();
+
+    const jobRes = await fetch(`http://127.0.0.1:${hubPort}/api/jobs`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'shell-task', tier: 'worker', priority: 'batch',
+        payload: { cmd: ['sh', '-c', 'node -e "process.on(\'SIGTERM\',()=>{});setInterval(()=>{},1000)" & echo $!; sleep 100'] },
+      }),
+    });
+    const job = (await jobRes.json()) as { id: number };
+
+    let grandchildPid: number | undefined;
+    const claimDeadline = Date.now() + 5000;
+    while (grandchildPid === undefined && Date.now() < claimDeadline) {
+      const j = (await (await fetch(`http://127.0.0.1:${hubPort}/api/jobs/${job.id}`)).json()) as { logs: { line: string }[] };
+      const pidLine = j.logs.find((l) => /^out: \d+$/.test(l.line));
+      if (pidLine) grandchildPid = Number(pidLine.line.slice('out: '.length));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(grandchildPid).toBeDefined();
+
+    const t0 = Date.now();
+    await daemon.stop();
+    expect(Date.now() - t0).toBeLessThanOrEqual(7000);
+
+    await waitForProcessGone(grandchildPid!, 500); // already gone by the time stop() resolved
+  }, 20000);
+
+  it('re-registers with a fresh hub after a hub restart (heartbeat 404)', async () => {
+    let hubA: Hub | undefined;
+    let hubB: Hub | undefined;
+    try {
+      hubA = createHub({ staleMs: 60000 });
+      await hubA.app.listen({ port: 0, host: '127.0.0.1' });
+      const port = (hubA.app.server.address() as { port: number }).port;
+      const hubUrl = `http://127.0.0.1:${port}`;
+      const servePort = await getEphemeralPort();
+
+      const dir = tmpDir();
+      const cfgPath = join(dir, 'daemon.yaml');
+      writeFileSync(cfgPath, [
+        'node:', '  name: resilient-node', '  arch: arm64',
+        `hub: ${hubUrl}`,
+        'heartbeatMs: 150',
+        'serving:',
+        '  - tier: worker', '    model: mock-model', `    port: ${servePort}`, '    maxStreams: 4',
+        `    cmd: ["npx", "tsx", "${MOCK_SERVE}", "${servePort}"]`,
+      ].join('\n'));
+
+      daemon = new Daemon(loadConfig(cfgPath));
+      await daemon.start();
+      expect(hubA.registry.byName('resilient-node')?.status).toBe('online');
+
+      await hubA.stop();
+
+      hubB = createHub({ staleMs: 60000 });
+      await hubB.app.listen({ port, host: '127.0.0.1' });
+
+      const deadline = Date.now() + 3000; // ~3 heartbeats at 150ms, plus margin
+      let seen = false;
+      while (Date.now() < deadline) {
+        if (hubB.registry.byName('resilient-node')?.status === 'online') { seen = true; break; }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(seen).toBe(true);
+    } finally {
+      await hubB?.stop();
+    }
+  }, 20000);
 });

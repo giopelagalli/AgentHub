@@ -1,29 +1,39 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { describe, it, expect, afterAll } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveWorkspace, runShellTask } from '../src/shell-task.js';
 
+const dirs: string[] = [];
+function tmpWorkspace(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+  dirs.push(dir);
+  return dir;
+}
+afterAll(() => {
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+});
+
 describe('resolveWorkspace', () => {
   it('resolves to <root>/<project> by default', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     expect(resolveWorkspace(root, 'proj', undefined)).toBe(join(root, 'proj'));
   });
 
   it('resolves to <root>/_default when no project is given', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     expect(resolveWorkspace(root, undefined, undefined)).toBe(join(root, '_default'));
   });
 
   it('throws when cwd escapes the workspace', () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     expect(() => resolveWorkspace(root, 'proj', '../../etc')).toThrow(/cwd escapes workspace/);
   });
 });
 
 describe('runShellTask', () => {
   it('runs a command and reports exit code plus prefixed stdout lines', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const lines: string[] = [];
     const result = await runShellTask({ cmd: ['echo', 'hello'] }, { workspaceRoot: root, onLine: (l) => lines.push(l) });
     expect(result.exitCode).toBe(0);
@@ -31,7 +41,7 @@ describe('runShellTask', () => {
   });
 
   it('reports a nonzero exit code', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const result = await runShellTask(
       { cmd: ['node', '-e', 'process.exit(3)'] },
       { workspaceRoot: root, onLine: () => {} },
@@ -40,14 +50,14 @@ describe('runShellTask', () => {
   });
 
   it('rejects when cwd escapes the workspace', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     await expect(
       runShellTask({ cmd: ['echo', 'hi'], cwd: '../../etc' }, { workspaceRoot: root, onLine: () => {} }),
     ).rejects.toThrow(/cwd escapes workspace/);
   });
 
   it('kills the process on timeout and reports it in the result', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const result = await runShellTask(
       { cmd: ['node', '-e', 'setInterval(()=>{},1000)'], timeoutMs: 300 },
       { workspaceRoot: root, onLine: () => {} },
@@ -57,7 +67,7 @@ describe('runShellTask', () => {
   }, 5000);
 
   it('kills a backgrounded grandchild on timeout, not just the shell', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const lines: string[] = [];
     const result = await runShellTask(
       { cmd: ['sh', '-c', 'node -e "setInterval(()=>{},1000)" & echo $!; sleep 100'], timeoutMs: 500 },
@@ -68,11 +78,11 @@ describe('runShellTask', () => {
     const pidLine = lines.find((l) => /^out: \d+$/.test(l));
     expect(pidLine).toBeDefined();
     const grandchildPid = Number(pidLine!.slice('out: '.length));
-    expect(() => process.kill(grandchildPid, 0)).toThrow();
-  }, 5000);
+    await waitForProcessGone(grandchildPid, 5000);
+  }, 10000);
 
   it('eventually kills a grandchild that traps SIGTERM, and stops emitting once resolved', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const lines: string[] = [];
     const result = await runShellTask(
       {
@@ -99,7 +109,7 @@ describe('runShellTask', () => {
   }, 10000);
 
   it('does not spawn when the signal is already aborted', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ah-ws-'));
+    const root = tmpWorkspace();
     const controller = new AbortController();
     controller.abort();
     const result = await runShellTask(

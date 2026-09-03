@@ -119,9 +119,17 @@ export async function runShellTask(
       const drainTimer = setTimeout(() => {
         stdoutSplitter.flush();
         stderrSplitter.flush();
-        // Eager follow-up SIGKILL for the timeout/abort paths: don't wait out the full escalation
-        // window when we already know the run didn't end on its own.
-        if (timedOut || aborted) killGroup('SIGKILL');
+        if (timedOut || aborted) {
+          // Eager follow-up SIGKILL for the timeout/abort paths: don't wait out the full escalation
+          // window when we already know the run didn't end on its own.
+          killGroup('SIGKILL');
+        } else {
+          // Clean exit of the direct child doesn't mean the group is empty — a backgrounded
+          // grandchild (`x & sleep 100`, npm scripts, `make -j`) can outlive it. SIGTERM the group
+          // (harmless if it's already empty: killGroup swallows ESRCH) with the usual SIGKILL
+          // escalation as a backstop.
+          terminate();
+        }
         resolved = true;
         child.stdout.off('data', onStdoutData);
         child.stderr.off('data', onStderrData);

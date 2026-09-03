@@ -7,6 +7,7 @@ if (!existsSync(uiDist)) console.log(`[hub] no UI build at ${uiDist}; serving AP
 
 const hub = createHub({
   dbPath: process.env.HUB_DB ?? 'data/hub.db',
+  projectsRoot: process.env.PROJECTS_ROOT ?? 'data/projects',
   uiDist,
 });
 const port = Number(process.env.PORT ?? 4000);

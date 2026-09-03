@@ -20,7 +20,8 @@ export interface HubDeps {
 
 export interface ToolContext {
   bundle?: ProjectBundle;
-  hub: HubDeps;
+  /** Absent for sessions that get no hub tools at all — the master's briefing run, for one. */
+  hub?: HubDeps;
   sessionId: number;
   log(line: string): void;
   /** Aborts long-running tools (currently `run_shell`) when the owning session is cancelled. */
@@ -94,6 +95,11 @@ function oneOf<T extends string>(args: unknown, key: string, allowed: readonly T
 function needBundle(ctx: ToolContext): ProjectBundle {
   if (!ctx.bundle) throw new Error('no project bundle in this session');
   return ctx.bundle;
+}
+
+function needHub(ctx: ToolContext): HubDeps {
+  if (!ctx.hub) throw new Error('no hub in this session');
+  return ctx.hub;
 }
 
 // Workspace paths resolve inside `<bundle>/workspace`; `'.'` stands in for the daemon's per-project
@@ -359,7 +365,7 @@ export function hubTools(): Tool[] {
         },
       },
       run: async (args, ctx) => {
-        const job = ctx.hub.queue.enqueue({
+        const job = needHub(ctx).queue.enqueue({
           type: oneOf(args, 'type', JOB_TYPES),
           tier: oneOf(args, 'tier', TIERS),
           priority: oneOf(args, 'priority', PRIORITIES),
@@ -375,7 +381,7 @@ export function hubTools(): Tool[] {
         parameters: { type: 'object', properties: {}, required: [] },
       },
       run: async (_args, ctx) => {
-        const nodes = ctx.hub.nodes.online().map((n) => ({
+        const nodes = needHub(ctx).nodes.online().map((n) => ({
           name: n.name, arch: n.arch, tiers: n.endpoints.map((e) => e.tier), jobTypes: n.jobTypes,
         }));
         return nodes.length ? JSON.stringify(nodes, null, 2) : '(no nodes online)';

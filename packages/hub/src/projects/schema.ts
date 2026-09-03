@@ -1,4 +1,7 @@
-import type { Priority } from '@agenthub/shared';
+import type { Priority, ProjectStatus } from '@agenthub/shared';
+
+// The manifest shape lives in @agenthub/shared because HubState carries it to the UI.
+export type { ProjectManifest as Manifest, ProjectStatus } from '@agenthub/shared';
 
 export const SLUG_RE = /^[a-z0-9-]{1,40}$/;
 
@@ -6,21 +9,7 @@ export function validateSlug(slug: string): asserts slug is string {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new Error(`invalid slug: ${JSON.stringify(slug)}`);
 }
 
-export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';
 export type TaskStatus = 'backlog' | 'in-progress' | 'done' | 'blocked';
-
-export interface Manifest {
-  schema: 1;
-  slug: string;
-  title: string;
-  status: ProjectStatus;
-  priority: Priority;
-  intent: string;
-  links: string[];
-  createdAt: number;
-  updatedAt: number;
-  index: string[]; // relative paths of bundle files
-}
 
 export interface TaskItem {
   id: string;

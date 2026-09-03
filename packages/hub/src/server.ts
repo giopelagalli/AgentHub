@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { HubState, JobResult, JobSpec, JobType, NodeRegistration, Priority, Tier } from '@agenthub/shared';
+import type { HubState, JobResult, JobSpec, JobType, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
@@ -10,15 +10,33 @@ import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
 import { ModelGateway } from './gateway.js';
 import { AgentRuntime } from './agents.js';
+import { AgentLoop } from './agents/loop.js';
+import { Transcript } from './agents/transcript.js';
+import { ProjectService } from './projects/service.js';
+import { MasterOrchestrator } from './projects/master.js';
+import { SLUG_RE } from './projects/schema.js';
 import { registerWs } from './ws.js';
 
-export interface Hub { app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway; runtime: AgentRuntime; stop(): Promise<void>; }
+export interface Hub {
+  app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
+  runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
+  stop(): Promise<void>;
+}
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 
-export function createHub(opts: { dbPath?: string; staleMs?: number; sweepIntervalMs?: number; uiDist?: string } = {}): Hub {
+export interface HubOptions {
+  dbPath?: string;
+  staleMs?: number;
+  sweepIntervalMs?: number;
+  uiDist?: string;
+  projectsRoot?: string;
+  tickIntervalMs?: number;
+}
+
+export function createHub(opts: HubOptions = {}): Hub {
   const dbPath = opts.dbPath ?? ':memory:';
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const db = openDb(dbPath);
@@ -27,22 +45,46 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   const jobLogs = new JobLogs(db);
   const gateway = new ModelGateway(registry);
   const runtime = new AgentRuntime(db, gateway);
+  const transcript = new Transcript(db);
+  const loop = new AgentLoop({ gateway, transcript });
+  const projects = new ProjectService({
+    root: opts.projectsRoot ?? 'data/projects',
+    loop, gateway, queue, registry, transcript,
+    ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
+  });
+  const master = new MasterOrchestrator({ service: projects, loop });
   const app = Fastify();
 
   if (opts.uiDist && existsSync(opts.uiDist)) {
     app.register(fastifyStatic, { root: opts.uiDist });
   }
 
+  // `getState` is synchronous (the WS broadcast path), so the manifest list is cached and refreshed
+  // whenever a project changes rather than read from disk per frame.
+  let projectList: ProjectManifest[] = [];
+
   const getState = (): HubState => ({
     nodes: registry.all(),
     agents: runtime.listAgents(),
     jobs: queue.list(),
     streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
+    projects: projectList,
   });
 
   // In-flight busy agents, so a socket that connects mid-stream can be caught up.
   const busyAgents = new Set<number>();
   const { broadcastState, broadcast } = registerWs(app, getState, () => [...busyAgents]);
+
+  const refreshProjects = async (): Promise<void> => {
+    projectList = await projects.list();
+    broadcastState();
+  };
+  // Scheduled turns change projects with no HTTP request behind them to trigger a broadcast.
+  projects.onBriefing(() => { void refreshProjects(); });
+  projects.start();
+  void refreshProjects();
+
+  const projectExists = (slug: string): Promise<boolean> => projects.get(slug).then(() => true, () => false);
 
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
@@ -75,6 +117,7 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.get('/api/state', async () => {
     sweepAndRequeue();
+    projectList = await projects.list();
     return getState();
   });
 
@@ -188,8 +231,101 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     return reply;
   });
 
+  // --- projects ---------------------------------------------------------------
+
+  app.get('/api/projects', async () => projects.list());
+
+  app.post('/api/projects', async (req, reply) => {
+    const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority }> | undefined;
+    if (!body || typeof body.slug !== 'string' || !SLUG_RE.test(body.slug)
+      || typeof body.title !== 'string' || !body.title
+      || typeof body.intent !== 'string' || !body.intent
+      || (body.priority !== undefined && !PRIORITIES.includes(body.priority))) {
+      return reply.code(400).send({ error: 'invalid project' });
+    }
+    if (await projectExists(body.slug)) return reply.code(409).send({ error: 'project already exists' });
+    const manifest = await projects.create({
+      slug: body.slug, title: body.title, intent: body.intent,
+      ...(body.priority ? { priority: body.priority } : {}),
+    });
+    await refreshProjects();
+    return reply.code(201).send(manifest);
+  });
+
+  app.get('/api/projects/:slug', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await projects.get(slug).catch(() => null);
+    if (!bundle) return reply.code(404).send({ error: 'unknown project' });
+    return {
+      manifest: await bundle.manifest(),
+      briefing: await bundle.latestBriefing(),
+      tasks: (await bundle.tasks()).tasks,
+    };
+  });
+
+  const lifecycle: Record<string, (slug: string) => Promise<ProjectManifest>> = {
+    pause: (slug) => projects.pause(slug),
+    resume: (slug) => projects.resume(slug),
+    archive: (slug) => projects.archive(slug),
+  };
+  for (const [action, apply] of Object.entries(lifecycle)) {
+    app.post(`/api/projects/:slug/${action}`, async (req, reply) => {
+      const { slug } = req.params as { slug: string };
+      if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+      const manifest = await apply(slug);
+      await refreshProjects();
+      return manifest;
+    });
+  }
+
+  app.post('/api/projects/:slug/priority', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = req.body as Partial<{ priority: Priority }> | undefined;
+    if (!body || body.priority === undefined || !PRIORITIES.includes(body.priority)) {
+      return reply.code(400).send({ error: 'invalid priority' });
+    }
+    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    const manifest = await projects.setPriority(slug, body.priority);
+    await refreshProjects();
+    return manifest;
+  });
+
+  app.post('/api/projects/:slug/turn', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = req.body as Partial<{ instruction: string }> | undefined;
+    if (body?.instruction !== undefined && typeof body.instruction !== 'string') {
+      return reply.code(400).send({ error: 'invalid instruction' });
+    }
+    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    const briefing = await projects.runTurn(slug, body?.instruction);
+    await refreshProjects();
+    return briefing;
+  });
+
+  app.get('/api/projects/:slug/transcript', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    return transcript.sessions({ subject: slug }).map((session) => ({
+      ...session,
+      messages: transcript.messages(session.id),
+      events: transcript.events(session.id),
+    }));
+  });
+
+  app.get('/api/briefings', async () => projects.briefings());
+
+  app.post('/api/master/brief', async () => master.dailyBriefing());
+
+  app.post('/api/master/command', async (req, reply) => {
+    const body = req.body as Partial<{ text: string }> | undefined;
+    if (!body || typeof body.text !== 'string' || !body.text) return reply.code(400).send({ error: 'invalid command' });
+    const result = await master.command(body.text);
+    await refreshProjects();
+    return result;
+  });
+
   return {
-    app, db, registry, queue, gateway, runtime,
-    async stop() { clearInterval(sweeper); await app.close(); db.close(); },
+    app, db, registry, queue, gateway, runtime, transcript, projects, master,
+    async stop() { clearInterval(sweeper); await projects.stop(); await app.close(); db.close(); },
   };
 }

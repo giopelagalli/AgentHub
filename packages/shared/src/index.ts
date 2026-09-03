@@ -95,11 +95,29 @@ export function comparePriority(a: Pick<JobSpec, 'priority'>, b: Pick<JobSpec, '
   return PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
 }
 
+export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';
+
+/** A project bundle's `manifest.yaml`. Lives here because `HubState` puts it on the wire. */
+export interface ProjectManifest {
+  schema: 1;
+  slug: string;
+  title: string;
+  status: ProjectStatus;
+  priority: Priority;
+  intent: string;
+  links: string[];
+  createdAt: number;
+  updatedAt: number;
+  index: string[]; // relative paths of bundle files
+}
+
 export interface HubState {
   nodes: NodeInfo[];
   agents: { id: number; name: string; tier: Tier; systemPrompt: string }[];
   jobs: Job[];
   streams: Record<string, number>;
+  /** Optional so a hub (or a UI) built before project bundles still satisfies the type. */
+  projects?: ProjectManifest[];
 }
 
 export type WsMessage =

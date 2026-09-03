@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { HubState, JobResult, JobSpec, JobType, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
@@ -14,7 +14,8 @@ import { AgentLoop } from './agents/loop.js';
 import { Transcript } from './agents/transcript.js';
 import { ProjectService } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
-import { SLUG_RE } from './projects/schema.js';
+import type { ProjectBundle } from './projects/bundle.js';
+import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
 import { registerWs } from './ws.js';
 
 export interface Hub {
@@ -75,16 +76,33 @@ export function createHub(opts: HubOptions = {}): Hub {
   const busyAgents = new Set<number>();
   const { broadcastState, broadcast } = registerWs(app, getState, () => [...busyAgents]);
 
-  const refreshProjects = async (): Promise<void> => {
-    projectList = await projects.list();
-    broadcastState();
+  // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
+  const refreshes = new Set<Promise<void>>();
+  const refreshProjects = (): Promise<void> => {
+    const refresh: Promise<void> = (async () => { projectList = await projects.list(); broadcastState(); })()
+      .catch((err) => { app.log.error(`failed to refresh projects: ${(err as Error).message}`); })
+      .finally(() => { refreshes.delete(refresh); });
+    refreshes.add(refresh);
+    return refresh;
   };
   // Scheduled turns change projects with no HTTP request behind them to trigger a broadcast.
   projects.onBriefing(() => { void refreshProjects(); });
   projects.start();
   void refreshProjects();
 
-  const projectExists = (slug: string): Promise<boolean> => projects.get(slug).then(() => true, () => false);
+  /**
+   * Resolves a `:slug` route param. A slug is a path segment, so a malformed one is a 400 and never
+   * reaches the filesystem; an unknown project is a 404. Returns null once it has sent the reply.
+   */
+  const resolveProject = async (slug: string, reply: FastifyReply): Promise<ProjectBundle | null> => {
+    try {
+      return await projects.get(slug);
+    } catch (err) {
+      reply.code(err instanceof InvalidSlugError ? 400 : 404)
+        .send({ error: err instanceof InvalidSlugError ? 'invalid slug' : 'unknown project' });
+      return null;
+    }
+  };
 
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
@@ -243,7 +261,8 @@ export function createHub(opts: HubOptions = {}): Hub {
       || (body.priority !== undefined && !PRIORITIES.includes(body.priority))) {
       return reply.code(400).send({ error: 'invalid project' });
     }
-    if (await projectExists(body.slug)) return reply.code(409).send({ error: 'project already exists' });
+    const duplicate = await projects.get(body.slug).then(() => true, () => false);
+    if (duplicate) return reply.code(409).send({ error: 'project already exists' });
     const manifest = await projects.create({
       slug: body.slug, title: body.title, intent: body.intent,
       ...(body.priority ? { priority: body.priority } : {}),
@@ -254,8 +273,8 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.get('/api/projects/:slug', async (req, reply) => {
     const { slug } = req.params as { slug: string };
-    const bundle = await projects.get(slug).catch(() => null);
-    if (!bundle) return reply.code(404).send({ error: 'unknown project' });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
     return {
       manifest: await bundle.manifest(),
       briefing: await bundle.latestBriefing(),
@@ -271,7 +290,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   for (const [action, apply] of Object.entries(lifecycle)) {
     app.post(`/api/projects/:slug/${action}`, async (req, reply) => {
       const { slug } = req.params as { slug: string };
-      if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+      if (!(await resolveProject(slug, reply))) return reply;
       const manifest = await apply(slug);
       await refreshProjects();
       return manifest;
@@ -284,7 +303,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (!body || body.priority === undefined || !PRIORITIES.includes(body.priority)) {
       return reply.code(400).send({ error: 'invalid priority' });
     }
-    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    if (!(await resolveProject(slug, reply))) return reply;
     const manifest = await projects.setPriority(slug, body.priority);
     await refreshProjects();
     return manifest;
@@ -296,7 +315,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (body?.instruction !== undefined && typeof body.instruction !== 'string') {
       return reply.code(400).send({ error: 'invalid instruction' });
     }
-    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    if (!(await resolveProject(slug, reply))) return reply;
     const briefing = await projects.runTurn(slug, body?.instruction);
     await refreshProjects();
     return briefing;
@@ -304,7 +323,7 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.get('/api/projects/:slug/transcript', async (req, reply) => {
     const { slug } = req.params as { slug: string };
-    if (!(await projectExists(slug))) return reply.code(404).send({ error: 'unknown project' });
+    if (!(await resolveProject(slug, reply))) return reply;
     return transcript.sessions({ subject: slug }).map((session) => ({
       ...session,
       messages: transcript.messages(session.id),
@@ -326,6 +345,12 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   return {
     app, db, registry, queue, gateway, runtime, transcript, projects, master,
-    async stop() { clearInterval(sweeper); await projects.stop(); await app.close(); db.close(); },
+    async stop() {
+      clearInterval(sweeper);
+      await projects.stop();
+      await Promise.all([...refreshes]);
+      await app.close();
+      db.close();
+    },
   };
 }

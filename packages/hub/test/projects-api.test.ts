@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
@@ -149,5 +149,45 @@ describe('projects API', () => {
     expect((await app().inject({ method: 'GET', url: '/api/projects/ghost' })).statusCode).toBe(404);
     expect((await app().inject({ method: 'POST', url: '/api/projects/ghost/pause' })).statusCode).toBe(404);
     expect((await app().inject({ method: 'POST', url: '/api/projects/ghost/turn', payload: {} })).statusCode).toBe(404);
+  });
+
+  it('400s a traversing slug without touching anything outside the projects root', async () => {
+    await setup();
+    // A decoy bundle a sibling of the projects root, reachable as `..%2Foutside%2Fdecoy`.
+    const outside = join(root!, '..', `outside-${Date.now()}`);
+    const decoyDir = join(outside, 'decoy');
+    await mkdir(decoyDir, { recursive: true });
+    const decoy = join(decoyDir, 'manifest.yaml');
+    const original = [
+      'schema: 1', 'slug: decoy', 'title: Decoy', 'status: active', 'priority: project',
+      'intent: do not touch', 'links: []', 'createdAt: 1', 'updatedAt: 1', 'index: []', '',
+    ].join('\n');
+    await writeFile(decoy, original, 'utf8');
+
+    try {
+      const traversal = `..%2F${outside.split('/').pop()}%2Fdecoy`;
+      for (const url of [
+        `/api/projects/${traversal}`,
+        `/api/projects/${traversal}/transcript`,
+      ]) {
+        expect((await app().inject({ method: 'GET', url })).statusCode).toBe(400);
+      }
+      for (const url of [
+        `/api/projects/${traversal}/pause`,
+        `/api/projects/${traversal}/resume`,
+        `/api/projects/${traversal}/archive`,
+        `/api/projects/${traversal}/turn`,
+      ]) {
+        expect((await app().inject({ method: 'POST', url, payload: {} })).statusCode).toBe(400);
+      }
+      expect((await app().inject({
+        method: 'POST', url: `/api/projects/${traversal}/priority`, payload: { priority: 'batch' },
+      })).statusCode).toBe(400);
+
+      expect(await readFile(decoy, 'utf8')).toBe(original);
+      expect((await app().inject({ method: 'GET', url: '/api/projects' })).json()).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

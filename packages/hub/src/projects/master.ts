@@ -46,7 +46,13 @@ const SLUG_PARAM = { type: 'object', properties: { slug: strProp('Project slug.'
  * command actually did, and returns one line of confirmation — never project context.
  */
 function masterTools(service: ProjectService, actions: string[]): Tool[] {
-  const track = <T>(name: string, run: () => Promise<T>): Promise<T> => { actions.push(name); return run(); };
+  // Recorded only once the tool has actually succeeded: a rejected call (unknown slug, bad
+  // priority) comes back to the model as `error: …` and changed nothing, so it is not an action.
+  const track = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const result = await run();
+    actions.push(name);
+    return result;
+  };
   return [
     {
       def: {

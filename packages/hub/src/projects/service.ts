@@ -8,7 +8,7 @@ import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { ProjectBundle } from './bundle.js';
 import { ProjectOrchestrator } from './orchestrator.js';
-import type { Briefing, Manifest, ProjectStatus, TaskItem } from './schema.js';
+import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
 
 const DEFAULT_TICK_MS = 15 * 60_000;
 
@@ -76,7 +76,13 @@ export class ProjectService {
     return ProjectBundle.list(this.deps.root);
   }
 
+  /**
+   * The single gate between a caller-supplied slug and the filesystem: the slug becomes a path
+   * segment in `ProjectBundle.open`, so an unvalidated one (`..%2Fetc%2Fx` off an HTTP route) would
+   * read and write bundles outside the projects root.
+   */
   async get(slug: string): Promise<ProjectBundle> {
+    validateSlug(slug);
     const cached = this.bundles.get(slug);
     if (cached) return cached;
     const bundle = await ProjectBundle.open(this.deps.root, slug);
@@ -186,7 +192,8 @@ export class ProjectService {
       } finally {
         this.ticking = false;
       }
-    })();
+      // Nothing awaits a timer-fired tick, and `stop()` must never reject on its behalf.
+    })().catch((err) => { console.error('[projects] scheduler tick failed:', err); });
     await this.tickInFlight;
   }
 

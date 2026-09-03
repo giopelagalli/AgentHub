@@ -142,13 +142,34 @@ describe('MasterOrchestrator', () => {
       { toolCalls: [{ name: 'pause_project', arguments: { slug: 'demo' } }] },
       { content: 'Paused demo.' },
     ]);
-    await h.projects.create({ slug: 'demo', title: 'Demo', intent: 'x' });
+    await h.projects.create({ slug: 'demo', title: 'Demo', intent: 'secret-owner-intent' });
 
     const res = await h.app.inject({ method: 'POST', url: '/api/master/command', payload: { text: 'pause demo' } });
     expect(res.statusCode).toBe(200);
     expect(res.json().actions).toContain('pause_project');
     expect(res.json().text).toBe('Paused demo.');
     expect((await (await h.projects.get('demo')).manifest()).status).toBe('paused');
+
+    // The command prompt carries a roster (slug, title, status, priority) — never the owner's intent.
+    const sent = mock!.lastRequest().messages as { role: string; content: string }[];
+    expect(sent[0].role).toBe('system');
+    expect(sent[0].content).toContain('demo');
+    expect(sent[0].content).not.toContain('secret-owner-intent');
+  });
+
+  it('reports no action when the tool the model called failed', async () => {
+    const h = await setup([
+      { toolCalls: [{ name: 'pause_project', arguments: { slug: 'ghost' } }] },
+      { content: 'I could not find a project called ghost.' },
+    ]);
+    await h.projects.create({ slug: 'demo', title: 'Demo', intent: 'x' });
+
+    const res = await h.app.inject({ method: 'POST', url: '/api/master/command', payload: { text: 'pause ghost' } });
+
+    expect(res.json().actions).toEqual([]);
+    const sent = mock!.lastRequest().messages as { role: string; content: string }[];
+    expect(sent.find((m) => m.role === 'tool')?.content).toMatch(/^error:/);
+    expect((await (await h.projects.get('demo')).manifest()).status).toBe('active');
   });
 
   it('rejects a command without text', async () => {

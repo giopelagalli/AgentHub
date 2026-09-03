@@ -5,8 +5,20 @@ export type { ProjectManifest as Manifest, ProjectStatus } from '@agenthub/share
 
 export const SLUG_RE = /^[a-z0-9-]{1,40}$/;
 
+/**
+ * A slug that can't name a bundle directory. Typed because a slug is a path segment: callers that
+ * take one from the network must answer "malformed" rather than "not found", and must never let it
+ * reach `join(root, slug)`.
+ */
+export class InvalidSlugError extends Error {
+  constructor(slug: unknown) {
+    super(`invalid slug: ${JSON.stringify(slug)}`);
+    this.name = 'InvalidSlugError';
+  }
+}
+
 export function validateSlug(slug: string): asserts slug is string {
-  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new Error(`invalid slug: ${JSON.stringify(slug)}`);
+  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new InvalidSlugError(slug);
 }
 
 export type TaskStatus = 'backlog' | 'in-progress' | 'done' | 'blocked';

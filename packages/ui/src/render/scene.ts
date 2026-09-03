@@ -2,7 +2,7 @@ import { SPRITES } from '../art/sprites.js';
 import type { FloorId } from '../floors.js';
 import type { UiState } from '../store.js';
 import { drawSprite, drawTilemap } from './draw.js';
-import { dynamicFurniture, FLOORPLANS } from './floorplans.js';
+import { dynamicFurniture, planFor } from './floorplans.js';
 
 /**
  * Ambience is a pure function of the 8fps tick and the sprite's own x, so
@@ -50,7 +50,7 @@ export function renderFloor(
   tick: number,
   elevatorFrame?: number,
 ): void {
-  const plan = FLOORPLANS[floorId];
+  const plan = planFor(floorId, state);
   drawTilemap(ctx, plan.tilemap, plan.legend);
 
   for (const item of [...plan.furniture, ...dynamicFurniture(floorId, state)]) {

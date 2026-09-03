@@ -1,5 +1,5 @@
 import type { HubState } from '@agenthub/shared';
-import type { FloorId } from './floors.js';
+import { floorsFor, type FloorId } from './floors.js';
 
 export interface UiState {
   hub: HubState | null;
@@ -28,7 +28,12 @@ export class Store {
       case 'hub-state': {
         const agentIds = new Set(event.state.agents.map((a) => a.id));
         const busy = new Set([...this.state.busy].filter((id) => agentIds.has(id)));
-        this.state = { ...this.state, hub: event.state, busy };
+        // A project floor vanishes once its project is done (or gone); riding
+        // it out from underneath the viewer would strand them, so drop back
+        // to the lobby instead.
+        const stillExists = floorsFor({ hub: event.state }).some((f) => f.id === this.state.floor);
+        const floor = stillExists ? this.state.floor : 'f1';
+        this.state = { ...this.state, hub: event.state, busy, floor };
         break;
       }
       case 'agent-busy': {

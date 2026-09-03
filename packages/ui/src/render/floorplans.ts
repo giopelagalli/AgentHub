@@ -1,5 +1,5 @@
 import type { Tier } from '@agenthub/shared';
-import type { FloorId } from '../floors.js';
+import type { FloorId, StaticFloorId } from '../floors.js';
 import type { UiState } from '../store.js';
 
 export const GRID_COLS = 20;
@@ -88,7 +88,7 @@ const GAUGE_PITCH = 32;
 const GAUGE_Y = 24;
 const GAUGE_SEGMENTS = 4;
 
-export const FLOORPLANS: Record<FloorId, FloorPlan> = {
+export const FLOORPLANS: Record<StaticFloorId, FloorPlan> = {
   // B1 — dark steel plant room, two aisles of racks and an ops console.
   b1: {
     tilemap: [
@@ -192,81 +192,6 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
     hotspots: [elevatorHotspot],
   },
 
-  // 3F — furnished sample project: corner office, four cubicles, task board.
-  f3: {
-    tilemap: [
-      TOP,
-      WALL,
-      BASE,
-      OFFICE,
-      OFFICE,
-      OFFICE_DOOR,
-      OFFICE,
-      OFFICE_BOTTOM,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-    ],
-    legend: { ...PAINTED, P: 'partitionSide', f: 'carpet' },
-    furniture: [
-      elevator,
-      { sprite: 'taskboard', x: 96, y: 20 },
-      { sprite: 'agentTyping', x: 224, y: 76, anim: 'typing' },
-      { sprite: 'execDesk', x: 208, y: 88 },
-      { sprite: 'monitor', x: 244, y: 80, anim: 'flicker' },
-      { sprite: 'plant', x: 284, y: 56 },
-      ...SUBAGENT_XS.flatMap((x) => workstation(x, 176, 'typing')),
-      { sprite: 'plant', x: 24, y: 248 },
-      { sprite: 'plant', x: 284, y: 248 },
-    ],
-    hotspots: [
-      elevatorHotspot,
-      { id: 'sample:board', x: 96, y: 20, w: 32, h: 18 },
-      { id: 'sample:orch', x: 208, y: 76, w: 48, h: 32 },
-      ...SUBAGENT_XS.map(
-        (x, i): Hotspot => ({ id: `sample:sub${i + 1}`, x, y: 164, w: 32, h: 24 }),
-      ),
-    ],
-  },
-
-  // 4F — bare screed, a FOR LEASE sign and one failing strip light.
-  f4: {
-    tilemap: [
-      TOP,
-      WALL,
-      BASE,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-      OPEN,
-    ],
-    legend: { ...PAINTED, f: 'floorBare' },
-    furniture: [
-      elevator,
-      { sprite: 'ceilingLight', x: 144, y: 72, anim: 'vacant' },
-      { sprite: 'forLease', x: 144, y: 128 },
-    ],
-    hotspots: [elevatorHotspot],
-  },
-
   // PH — polished stone, gilded desk, briefing board, night skyline window.
   ph: {
     tilemap: [
@@ -319,6 +244,71 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
   },
 };
 
+// A project floor reuses the former 3F sample layout verbatim: corner
+// office, up to four subagent cubicles, wall task board.
+const PROJECT_STATIONS = 4;
+
+/**
+ * A furnished project floor for `slug`: orchestrator office, task board, and
+ * subagent cubicles. `state` isn't read today — `HubState.projects` carries
+ * only the manifest (no per-project task/session count), so the station
+ * count is pinned at the full `PROJECT_STATIONS`; once a live count is on the
+ * wire this is the one place to plug in `min(PROJECT_STATIONS, count)`.
+ */
+export function projectFloorPlan(slug: string, _state: UiState): FloorPlan {
+  return {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OFFICE,
+      OFFICE,
+      OFFICE_DOOR,
+      OFFICE,
+      OFFICE_BOTTOM,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, P: 'partitionSide', f: 'carpet' },
+    furniture: [
+      elevator,
+      { sprite: 'taskboard', x: 96, y: 20 },
+      { sprite: 'directoryBoard', x: 144, y: 20 },
+      { sprite: 'agentTyping', x: 224, y: 76, anim: 'typing' },
+      { sprite: 'execDesk', x: 208, y: 88 },
+      { sprite: 'monitor', x: 244, y: 80, anim: 'flicker' },
+      { sprite: 'plant', x: 284, y: 56 },
+      ...SUBAGENT_XS.slice(0, PROJECT_STATIONS).flatMap((x) => workstation(x, 176, 'typing')),
+      { sprite: 'plant', x: 24, y: 248 },
+      { sprite: 'plant', x: 284, y: 248 },
+    ],
+    hotspots: [
+      elevatorHotspot,
+      { id: `project:board:${slug}`, x: 96, y: 20, w: 32, h: 18 },
+      { id: `project:sign:${slug}`, x: 144, y: 20, w: 24, h: 18 },
+      { id: `project:orch:${slug}`, x: 208, y: 76, w: 48, h: 32 },
+    ],
+  };
+}
+
+function isProjectFloor(id: FloorId): id is `p:${string}` {
+  return id.startsWith('p:');
+}
+
+/** Resolves any floor id to its plan — static lookup, or a generated project floor. */
+export function planFor(floorId: FloorId, state: UiState): FloorPlan {
+  if (isProjectFloor(floorId)) return projectFloorPlan(floorId.slice(2), state);
+  return FLOORPLANS[floorId];
+}
+
 /**
  * The live half of a floor: one rack per registered node and the tier gauges on
  * B1, one staffed workstation per API agent on 2F. Nothing is baked into
@@ -362,7 +352,7 @@ export function dynamicFurniture(floorId: FloorId, state: UiState): Furniture[] 
 
 /** Static hotspots plus the ones the live floors grow; used for hit-testing. */
 export function hotspotsFor(floorId: FloorId, state: UiState): Hotspot[] {
-  const plan = FLOORPLANS[floorId];
+  const plan = planFor(floorId, state);
   const hub = state.hub;
   if (!hub) return plan.hotspots;
 

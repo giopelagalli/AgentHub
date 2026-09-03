@@ -66,10 +66,35 @@ describe('Store', () => {
 
   it('set-floor and connection update state', () => {
     const store = new Store();
-    store.dispatch({ type: 'set-floor', floor: 'f3' });
+    store.dispatch({ type: 'set-floor', floor: 'ph' });
     store.dispatch({ type: 'connection', status: 'polling' });
     const s = store.getState();
-    expect(s.floor).toBe('f3');
+    expect(s.floor).toBe('ph');
     expect(s.connection).toBe('polling');
+  });
+
+  it('hub-state keeps a still-live project floor selected', () => {
+    const store = new Store();
+    store.dispatch({ type: 'set-floor', floor: 'p:acme' });
+    store.dispatch({
+      type: 'hub-state',
+      state: {
+        ...fabricateHubState([]),
+        projects: [
+          {
+            schema: 1, slug: 'acme', title: 'Acme', status: 'active', priority: 'project',
+            intent: '', links: [], createdAt: 0, updatedAt: 0, index: [],
+          },
+        ],
+      },
+    });
+    expect(store.getState().floor).toBe('p:acme');
+  });
+
+  it('hub-state falls back to f1 when the selected project floor disappears', () => {
+    const store = new Store();
+    store.dispatch({ type: 'set-floor', floor: 'p:acme' });
+    store.dispatch({ type: 'hub-state', state: fabricateHubState([]) });
+    expect(store.getState().floor).toBe('f1');
   });
 });

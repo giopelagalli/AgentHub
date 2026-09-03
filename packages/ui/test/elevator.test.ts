@@ -69,13 +69,13 @@ describe('Elevator', () => {
 
   it('ignores input while the doors are moving', () => {
     const { elevator, store } = setup();
-    elevator.choose('f4');
+    elevator.choose('b1');
     elevator.open();
     elevator.choose('ph');
     elevator.cancel();
-    expect(elevator.state).toEqual({ kind: 'doorsClosing', target: 'f4', ticks: 0 });
+    expect(elevator.state).toEqual({ kind: 'doorsClosing', target: 'b1', ticks: 0 });
     for (let i = 0; i < DOOR_TICKS * 2; i++) elevator.tick();
-    expect(store.getState().floor).toBe('f4');
+    expect(store.getState().floor).toBe('b1');
     expect(elevator.state).toEqual({ kind: 'idle' });
   });
 
@@ -92,7 +92,7 @@ describe('Elevator', () => {
   it('reports every state change to the listener', () => {
     const { elevator, seen } = setup();
     elevator.open();
-    elevator.choose('f3');
+    elevator.choose('ph');
     for (let i = 0; i < DOOR_TICKS * 2; i++) elevator.tick();
     expect(seen.map((s) => s.kind)).toEqual([
       'menuOpen',

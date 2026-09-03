@@ -1,12 +1,14 @@
-import { FLOORS, type FloorId } from '../floors.js';
+import type { FloorDef, FloorId } from '../floors.js';
 
 /**
  * The elevator's floor menu: top floor first, like the buttons in the car.
  * Picking a floor only reports it — the caller's FSM decides what happens
- * next and closes the menu.
+ * next and closes the menu. `floors` is the live list (`floorsFor(state)`),
+ * so project floors appear and disappear as projects come and go.
  */
 export function openElevatorMenu(
   host: HTMLElement,
+  floors: FloorDef[],
   current: FloorId,
   onChoose: (floor: FloorId) => void,
 ): () => void {
@@ -19,7 +21,7 @@ export function openElevatorMenu(
 
   const list = document.createElement('ul');
   list.className = 'gb-menu';
-  for (const floor of [...FLOORS].reverse()) {
+  for (const floor of [...floors].reverse()) {
     const item = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';

@@ -1,6 +1,8 @@
 import type { NodeInfo } from '@agenthub/shared';
 
-const COLUMNS = ['Tier', 'Model', 'Endpoint', 'Active', 'Max'] as const;
+// "Active" is cluster-wide per-tier stream count, not this node's own load —
+// the header says so, since it renders under this one node's name.
+const COLUMNS = ['Tier', 'Model', 'Endpoint', 'Active (cluster)', 'Max'] as const;
 
 /** Rack detail: what this node serves, and how busy each tier is right now. */
 export function openNodeInfo(

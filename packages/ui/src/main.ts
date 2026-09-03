@@ -148,8 +148,10 @@ window.addEventListener('keydown', (event) => {
     else closeTopPanel();
     return;
   }
-  // Shortcuts stay out of the way of the chat box and of an open text screen.
-  if (typingInAnInput() || dialogIsOpen()) return;
+  // Shortcuts stay out of the way of the chat box, an open text screen, any
+  // informational panel (chat/queue/nodeinfo), and the elevator's own menu —
+  // riding the elevator underneath one of those would strand it.
+  if (typingInAnInput() || dialogIsOpen() || panels.length > 0 || elevator.state.kind !== 'idle') return;
   // Number keys are shortcuts, not teleports: they ride the elevator too.
   const floor = FLOORS[Number(event.key) - 1];
   if (floor) elevator.choose(floor.id);

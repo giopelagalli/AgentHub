@@ -51,4 +51,35 @@ describe('hub websocket', () => {
     await busyOn; await busyOff;
     ws.close();
   });
+
+  it('catches up a socket that connects mid-stream with the agent-busy it missed', async () => {
+    const mockUrl = `http://127.0.0.1:${(mock.server.address() as { port: number }).port}`;
+    const agent = await (await fetch(`${base}/api/agents`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'slow', tier: 'worker', systemPrompt: 's' }) })).json();
+    await fetch(`${base}/api/nodes/register`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'slow-node', arch: 'x64', endpoints: [{ tier: 'worker', url: mockUrl, model: 'mock-model', maxStreams: 4 }] }) });
+
+    // Many tokens at 5ms/token gives a wide window for the late socket to join
+    // mid-stream without racing the reply's completion.
+    const slowText = Array(30).fill('word').join(' ');
+    const chatDone = fetch(`${base}/api/agents/${agent.id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: slowText }) });
+
+    // Give the chat a moment to start streaming before the late socket joins.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const late = new WebSocket(wsUrl);
+    // Both listeners must be attached before either message can arrive: the
+    // server sends state and the busy catch-up back to back on connect, so
+    // awaiting one before registering the other risks missing the second.
+    const statePromise = nextMessage(late, (m) => m.type === 'state');
+    const caughtUpPromise = nextMessage(
+      late,
+      (m) => m.type === 'agent-busy' && m.agentId === agent.id && m.busy === true,
+    );
+    expect((await statePromise).state).toBeDefined();
+    expect((await caughtUpPromise).busy).toBe(true);
+
+    late.close();
+    await chatDone;
+  });
 });

@@ -35,7 +35,9 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
   });
 
-  const { broadcastState, broadcast } = registerWs(app, getState);
+  // In-flight busy agents, so a socket that connects mid-stream can be caught up.
+  const busyAgents = new Set<number>();
+  const { broadcastState, broadcast } = registerWs(app, getState, () => [...busyAgents]);
 
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
@@ -84,6 +86,7 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     const ac = new AbortController();
     reply.raw.on('close', () => ac.abort());
     broadcast({ type: 'agent-busy', agentId: id, busy: true });
+    busyAgents.add(id);
     try {
       const full = await runtime.send(id, text, (token) => {
         reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`);
@@ -92,6 +95,7 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
     } catch (err) {
       reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
     } finally {
+      busyAgents.delete(id);
       broadcast({ type: 'agent-busy', agentId: id, busy: false });
     }
     reply.raw.end();

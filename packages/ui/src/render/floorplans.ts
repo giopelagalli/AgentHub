@@ -54,7 +54,7 @@ const STEEL = { T: 'wallTop', W: 'wallFaceDark', B: 'wallBaseDark', S: 'wallSide
 // one shaft; Task 4 hangs the elevator panel off this hotspot.
 const ELEVATOR_X = 32;
 const ELEVATOR_Y = 16;
-const elevator: Furniture = { sprite: 'elevator', x: ELEVATOR_X, y: ELEVATOR_Y, anim: 'elevator' };
+const elevator: Furniture = { sprite: 'elevator', x: ELEVATOR_X, y: ELEVATOR_Y };
 const elevatorHotspot: Hotspot = { id: 'elevator', x: ELEVATOR_X, y: ELEVATOR_Y, w: 32, h: 32 };
 
 /** Desk with a robot seated behind it and a monitor standing on the near edge. */

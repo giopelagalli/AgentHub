@@ -1,7 +1,8 @@
 import './panels/panels.css';
 import { PALETTE } from './art/palette.js';
+import { SPRITES } from './art/sprites.js';
 import { badgeLabel } from './badge.js';
-import { Elevator } from './elevator.js';
+import { Elevator, elevatorFrame } from './elevator.js';
 import { bindPointer } from './engine/input.js';
 import { startLoop } from './engine/loop.js';
 import { Screen } from './engine/screen.js';
@@ -170,8 +171,11 @@ startLoop(
   () => {
     const state = store.getState();
     const ride = elevator.state;
-    const elevatorFrame =
-      ride.kind === 'doorsClosing' || ride.kind === 'doorsOpening' ? ride.ticks : undefined;
-    renderFloor(screen.ctx, state.floor, state, tick, elevatorFrame);
+    const doors = elevatorFrame(
+      ride.kind,
+      'ticks' in ride ? ride.ticks : 0,
+      SPRITES.elevator.length,
+    );
+    renderFloor(screen.ctx, state.floor, state, tick, doors);
   },
 );

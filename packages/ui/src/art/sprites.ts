@@ -87,9 +87,54 @@ function gaugeFrame(lit: number): SpriteDef {
   };
 }
 
+const ELEVATOR_LEGEND = {
+  'D': 'steelDark', 's': 'steel', 'S': 'steelLit', 'k': 'ink', 'm': 'mid', 'a': 'accentAmber',
+  'C': 'cab', 'c': 'cabDark',
+};
+
+// Header: floor indicator in a lit bezel. Constant across the door frames.
+const ELEVATOR_HEAD = [
+  'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+  'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
+  'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
+  'DSSkkkaaaakkkkmmmmkkkkmmmmkkkSSD',
+  'DSSkkkaaaakkkkmmmmkkkkmmmmkkkSSD',
+  'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
+  'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
+  'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
+];
+
+/** Cab interior, row by row: shadowed ceiling, back wall, handrail, floor. */
+function cabRow(y: number, width: number): string {
+  if (y === 19) return 'D'.repeat(width);
+  const dark = y <= 9 || y === 20 || y >= 27;
+  return (dark ? 'c' : 'C').repeat(width);
+}
+
+/**
+ * Elevator doors. `open` is how far each panel has slid into its wall pocket,
+ * in pixels: 0 is shut, 11 leaves a sliver of each panel and the cab wide open.
+ * A single glint row crosses both panels so they read as one plane. 32x32
+ */
+function elevatorDoors(open: number): SpriteDef {
+  const rows = [...ELEVATOR_HEAD];
+  for (let y = ELEVATOR_HEAD.length; y < 30; y++) {
+    // Leading (inner) edge of each panel; the cab shows between them.
+    const leftEdge = 14 - open;
+    const rightEdge = 17 + open;
+    const fill = y === 12 ? 'S' : 's';
+    const left = `S${fill.repeat(leftEdge - 3)}D`;
+    const right = `S${fill.repeat(28 - rightEdge)}`;
+    const cab = `k${cabRow(y, 2 * open)}k`;
+    rows.push(`DD${left}${cab}${right}DDD`);
+  }
+  rows.push('D'.repeat(32), 'D'.repeat(32));
+  return { legend: ELEVATOR_LEGEND, rows };
+}
+
 /**
  * Every entry is a frame list, so animated and static art share one shape:
- * `SPRITES.desk` is a single frame, `SPRITES.elevator` is three.
+ * `SPRITES.desk` is a single frame, `SPRITES.elevator` is four.
  * Frame selection lives in the scene renderer, keyed to the 8fps tick.
  */
 export const SPRITES: Record<string, SpriteDef[]> = {
@@ -239,120 +284,8 @@ export const SPRITES: Record<string, SpriteDef[]> = {
   rackOffline: [{ legend: { ...RACK_LEGEND, 'e': 'accentRed' }, rows: RACK_ROWS_A }],
   // Per-tier stream gauge; frame index is the number of active streams. 23x8
   gauge: [gaugeFrame(0), gaugeFrame(1), gaugeFrame(2), gaugeFrame(3), gaugeFrame(4)],
-  // Elevator doors; three frames sweep the indicator and a door glint. 32x32
-  elevator: [
-    {
-      legend: { 'D': 'steelDark', 's': 'steel', 'S': 'steelLit', 'k': 'ink', 'm': 'mid', 'a': 'accentAmber' },
-      rows: [
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSkkkaaaakkkkmmmmkkkkmmmmkkkSSD',
-        'DSSkkkaaaakkkkmmmmkkkkmmmmkkkSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSSSSSSSSSSSSDkkSSSSSSSSSSSSDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-      ],
-    },
-    {
-      legend: { 'D': 'steelDark', 's': 'steel', 'S': 'steelLit', 'k': 'ink', 'm': 'mid', 'a': 'accentAmber' },
-      rows: [
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSkkkmmmmkkkkaaaakkkkmmmmkkkSSD',
-        'DSSkkkmmmmkkkkaaaakkkkmmmmkkkSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSSSSSSSSSSSSDkkSSSSSSSSSSSSDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-      ],
-    },
-    {
-      legend: { 'D': 'steelDark', 's': 'steel', 'S': 'steelLit', 'k': 'ink', 'm': 'mid', 'a': 'accentAmber' },
-      rows: [
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSkkkmmmmkkkkmmmmkkkkaaaakkkSSD',
-        'DSSkkkmmmmkkkkmmmmkkkkaaaakkkSSD',
-        'DSSkkkkkkkkkkkkkkkkkkkkkkkkkkSSD',
-        'DSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSSSSSSSSSSSSDkkSSSSSSSSSSSSDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDSsssssssssssDkkSsssssssssssDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-        'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD',
-      ],
-    },
-  ],
+  // Elevator doors: four frames part from shut to wide open. 32x32
+  elevator: [elevatorDoors(0), elevatorDoors(4), elevatorDoors(8), elevatorDoors(11)],
   // Lobby reception counter with a brass placard. 48x14
   reception: [
     {

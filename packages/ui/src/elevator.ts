@@ -4,6 +4,18 @@ import type { Store } from './store.js';
 /** Ticks (at 8/s) the doors spend closing, and again opening. */
 export const DOOR_TICKS = 6;
 
+/**
+ * Door sprite frame for the current phase. The sprite's frames run shut → open,
+ * so the closing phase plays them in reverse and the opening phase forwards;
+ * every other phase rests on frame 0, doors shut.
+ */
+export function elevatorFrame(phase: ElevatorState['kind'], ticks: number, frameCount: number): number {
+  if (phase !== 'doorsClosing' && phase !== 'doorsOpening') return 0;
+  const last = frameCount - 1;
+  const step = Math.min(Math.floor((ticks * frameCount) / DOOR_TICKS), last);
+  return phase === 'doorsOpening' ? step : last - step;
+}
+
 export type ElevatorState =
   | { kind: 'idle' }
   | { kind: 'menuOpen' }

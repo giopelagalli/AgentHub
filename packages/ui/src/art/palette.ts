@@ -14,6 +14,9 @@ export const PALETTE: Record<string, string> = {
   steelDark: '#333e42',
   steel: '#5c6b70',
   steelLit: '#8e9fa3',
+  // Elevator cab seen past the open doors: back wall, then its deep shadow.
+  cab: '#1d262a',
+  cabDark: '#0e1315',
   // Warm timber ramp: desks, reception, boards, planters.
   woodDark: '#523f24',
   wood: '#8a6a3c',

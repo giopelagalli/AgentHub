@@ -22,8 +22,6 @@ function frameFor(anim: string | undefined, tick: number, frames: number, x: num
     // than blink in unison (x/16 would land them all on the same parity).
     case 'led':
       return (Math.floor(tick / 2) + Math.floor(x / 32)) % frames;
-    case 'elevator':
-      return Math.floor(tick / 4) % frames;
     case 'twinkle':
       return (Math.floor(tick / 3) + Math.floor(x / 8)) % frames;
     default:
@@ -42,7 +40,7 @@ function bobFor(anim: string | undefined, tick: number, x: number): number {
  * (painter's algorithm — a robot is listed before the desk it sits behind).
  * Live nodes and agents are appended by `dynamicFurniture`.
  *
- * `elevatorFrame` overrides the doors' idle shimmer while the car is moving.
+ * `elevatorFrame` drives the doors; omitted, they stay shut.
  */
 export function renderFloor(
   ctx: CanvasRenderingContext2D,
@@ -57,7 +55,7 @@ export function renderFloor(
   for (const item of [...plan.furniture, ...dynamicFurniture(floorId, state)]) {
     const frames = SPRITES[item.sprite];
     if (!frames) continue;
-    const pinned = item.sprite === 'elevator' ? elevatorFrame : item.frame;
+    const pinned = item.sprite === 'elevator' ? (elevatorFrame ?? 0) : item.frame;
     const frame = pinned ?? frameFor(item.anim, tick, frames.length, item.x);
     drawSprite(ctx, frames, item.x, item.y + bobFor(item.anim, tick, item.x), frame);
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DOOR_TICKS, Elevator, type ElevatorState } from '../src/elevator.js';
+import { DOOR_TICKS, Elevator, elevatorFrame, type ElevatorState } from '../src/elevator.js';
 import { Store } from '../src/store.js';
 
 function setup() {
@@ -100,5 +100,34 @@ describe('Elevator', () => {
       'doorsOpening',
       'idle',
     ]);
+  });
+});
+
+describe('elevatorFrame', () => {
+  const FRAMES = 4;
+
+  it('rests on the shut frame when nobody is riding', () => {
+    expect(elevatorFrame('idle', 0, FRAMES)).toBe(0);
+    expect(elevatorFrame('menuOpen', 0, FRAMES)).toBe(0);
+  });
+
+  it('runs open → shut while the doors close', () => {
+    expect(elevatorFrame('doorsClosing', 0, FRAMES)).toBe(FRAMES - 1);
+    expect(elevatorFrame('doorsClosing', DOOR_TICKS - 1, FRAMES)).toBe(0);
+  });
+
+  it('runs shut → open while the doors open', () => {
+    expect(elevatorFrame('doorsOpening', 0, FRAMES)).toBe(0);
+    expect(elevatorFrame('doorsOpening', DOOR_TICKS - 1, FRAMES)).toBe(FRAMES - 1);
+  });
+
+  it('never leaves the frame range', () => {
+    for (let ticks = 0; ticks < DOOR_TICKS; ticks++) {
+      for (const phase of ['doorsClosing', 'doorsOpening'] as const) {
+        const frame = elevatorFrame(phase, ticks, FRAMES);
+        expect(frame).toBeGreaterThanOrEqual(0);
+        expect(frame).toBeLessThan(FRAMES);
+      }
+    }
   });
 });

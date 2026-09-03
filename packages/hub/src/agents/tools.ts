@@ -311,7 +311,6 @@ export function bundleTools(): Tool[] {
             progress: { type: 'object', properties: { done: { type: 'number' }, total: { type: 'number' } }, required: ['done', 'total'] },
             blockers: { type: 'array', items: { type: 'string' } },
             nextSteps: { type: 'array', items: { type: 'string' } },
-            updatedAt: { type: 'number', description: 'Epoch ms; defaults to now.' },
           },
           required: ['title', 'status', 'priority', 'summary', 'progress', 'blockers', 'nextSteps'],
         },
@@ -319,8 +318,9 @@ export function bundleTools(): Tool[] {
       run: async (args, ctx) => {
         const bundle = needBundle(ctx);
         const f = fields(args);
-        // Only the schema's own keys make it through, and the slug comes from the manifest rather
-        // than the model — a briefing filed under another project's slug would mislead the master.
+        // Only the schema's own keys make it through; `slug` and `updatedAt` are filled in here
+        // rather than by the model — a briefing filed under another project's slug, or stamped with
+        // a time the model chose, would mislead the master.
         const briefing = {
           slug: (await bundle.manifest()).slug,
           title: f.title,
@@ -330,7 +330,7 @@ export function bundleTools(): Tool[] {
           progress: f.progress,
           blockers: f.blockers,
           nextSteps: f.nextSteps,
-          updatedAt: typeof f.updatedAt === 'number' ? f.updatedAt : Date.now(),
+          updatedAt: Date.now(),
         };
         validateBriefing(briefing);
         await bundle.publishBriefing(briefing as Briefing);
@@ -424,13 +424,17 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string }): T
         system: subagentSystemPrompt(role),
         user: task,
         tools: workspaceTools(),
-        ctx: { bundle: ctx.bundle, hub: ctx.hub },
+        // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
+        ctx: { bundle: ctx.bundle },
         maxToolCalls: SUBAGENT_TOOL_CALLS,
         signal: ctx.signal,
         onLog: ctx.log,
       });
       const text = res.text.trim();
-      return text ? text.slice(0, SUBAGENT_RESULT_LIMIT) : `subagent ${role} ended (${res.outcome}) without a report`;
+      if (!text) return `subagent ${role} ended (${res.outcome}) without a report`;
+      return text.length <= SUBAGENT_RESULT_LIMIT
+        ? text
+        : text.slice(0, SUBAGENT_RESULT_LIMIT - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
     },
   };
 }

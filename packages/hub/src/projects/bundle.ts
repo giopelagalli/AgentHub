@@ -231,11 +231,7 @@ export class ProjectBundle {
     }
   }
 
-  /**
-   * Stages the whole bundle and commits it. No-op when nothing changed, unless `allowEmpty` — an
-   * orchestrator turn marks its boundary in the history whether or not it touched the bundle.
-   */
-  async commit(message: string, opts: { allowEmpty?: boolean } = {}): Promise<void> {
+  async commit(message: string): Promise<void> {
     const index = await walkFiles(this.dir);
     const m = await this.manifest();
     m.index = index.sort();
@@ -243,8 +239,8 @@ export class ProjectBundle {
 
     await this.git.add(['-A']);
     const status = await this.git.status();
-    if (status.staged.length === 0 && !opts.allowEmpty) return;
-    await this.git.commit(message, opts.allowEmpty ? ['--allow-empty'] : []);
+    if (status.staged.length === 0) return;
+    await this.git.commit(message);
   }
 
   async contextPack(): Promise<string> {

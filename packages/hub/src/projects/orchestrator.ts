@@ -11,6 +11,10 @@ import type { Briefing, Manifest, TaskItem } from './schema.js';
 const ORCHESTRATOR_TOOL_CALLS = 12;
 const SUMMARY_LIMIT = 600;
 const SYNTHESIZED_NEXT_STEPS = 5;
+const COMMIT_LABEL_LIMIT = 60;
+
+/** The one-line tail of a turn's commit subject. */
+const label = (summary: string): string => summary.replace(/\s+/g, ' ').trim().slice(0, COMMIT_LABEL_LIMIT);
 
 const DEFAULT_INSTRUCTION = [
   'Take the next turn on this project.',
@@ -39,7 +43,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry } = this.deps;
+    const { bundle, loop, queue, registry, transcript } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
 
@@ -59,19 +63,22 @@ export class ProjectOrchestrator {
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
     });
+    const n = ++this.turns;
 
-    // The master reads briefings and nothing else, so a turn always leaves one behind — even when
-    // the model forgot to publish, ran out of budget, or died mid-turn.
+    // `publish_briefing` commits its own write, so the published path needs nothing further here.
     const published = await bundle.latestBriefing();
-    let briefing = published;
-    if (!briefing || briefing.updatedAt === before?.updatedAt) {
-      briefing = await this.synthesize(manifest, result.text);
-      await bundle.publishBriefing(briefing);
-    }
+    if (published && published.updatedAt !== before?.updatedAt) return published;
 
-    this.turns++;
-    // Empty when the turn changed nothing: the marker commit is the turn boundary in bundle history.
-    await bundle.commit(`agent: turn ${this.turns}`, { allowEmpty: true });
+    const endedEarly = result.outcome === 'aborted' || result.outcome === 'error';
+    if (endedEarly) transcript.appendEvent(result.sessionId, `turn ${n} ended ${result.outcome} without a briefing`);
+    // An interrupted turn only saw part of the project. Overwriting the last good briefing with
+    // whatever it managed to say would tell the master *less* than it already knows.
+    if (endedEarly && before) return before;
+
+    // Otherwise the master still needs a report: synthesize one from the board and what was said.
+    const briefing = await this.synthesize(manifest, result.text);
+    await bundle.publishBriefing(briefing);
+    await bundle.commit(`agent: turn ${n} — ${label(briefing.summary)}`);
     return briefing;
   }
 

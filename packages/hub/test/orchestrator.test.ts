@@ -13,6 +13,7 @@ import { ProjectBundle } from '../src/projects/bundle.js';
 import { ProjectOrchestrator } from '../src/projects/orchestrator.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
+import { workspaceTools } from '../src/agents/tools.js';
 
 let root: string;
 let bundle: ProjectBundle;
@@ -80,7 +81,8 @@ const publishStep = (over: Record<string, unknown> = {}): ScriptStep => ({
   }],
 });
 
-const subjects = async (dir: string): Promise<string[]> =>
+/** Commit subjects, newest first. */
+const commits = async (dir: string): Promise<string[]> =>
   (await simpleGit(dir).log()).all.map((c) => c.message);
 
 describe('ProjectOrchestrator', () => {
@@ -96,7 +98,8 @@ describe('ProjectOrchestrator', () => {
     });
     expect(existsSync(join(bundle.dir, 'briefings', 'latest.json'))).toBe(true);
     expect(await bundle.latestBriefing()).toMatchObject({ summary: 'model-written summary' });
-    expect(await subjects(bundle.dir)).toContain('agent: turn 1');
+    // The publish tool commits its own write; the turn adds nothing on top of it.
+    expect((await commits(bundle.dir))[0]).toMatch(/^agent:/);
   });
 
   it('synthesizes a briefing from tasks.yaml when the model never publishes one', async () => {
@@ -119,10 +122,34 @@ describe('ProjectOrchestrator', () => {
     expect(briefing.summary.length).toBeLessThanOrEqual(600);
     expect(briefing.nextSteps).toEqual(['wire the loop', 'write the docs']);
     expect(await bundle.latestBriefing()).toMatchObject({ progress: { done: 1, total: 3 } });
+    // The synthesized publish is what the turn commits, labelled with the turn and its summary.
+    expect((await commits(bundle.dir))[0]).toBe('agent: turn 1 — I reviewed the board and did nothing else.');
+  });
+
+  it('keeps the last good briefing when a turn is aborted', async () => {
+    const { orchestrator, transcript } = await setup([
+      publishStep(),
+      { content: 'published' },
+      { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'sleep 30'] } }] },
+    ]);
+    const first = await orchestrator.turn();
+    const commitsBefore = await commits(bundle.dir);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+
+    const second = await orchestrator.turn({ signal: controller.signal });
+
+    expect(second).toEqual(first);
+    expect(await bundle.latestBriefing()).toEqual(first);
+    expect(await commits(bundle.dir)).toEqual(commitsBefore);
+
+    const aborted = transcript.sessions({ kind: 'orchestrator' })[1];
+    expect(aborted.outcome).toBe('aborted');
+    expect(transcript.events(aborted.id).map((e) => e.content).join('\n')).toContain('turn 2 ended aborted');
   });
 
   it('runs spawn_subagent inline on the worker tier and feeds its text back as the tool result', async () => {
-    const { orchestrator, transcript } = await setup(
+    const { orchestrator, transcript, worker } = await setup(
       [
         { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'summarize the repo', role: 'researcher' } }] },
         publishStep(),
@@ -145,6 +172,8 @@ describe('ProjectOrchestrator', () => {
     const workerMessages = transcript.messages(subagentSessions[0].id);
     expect(workerMessages[1]).toMatchObject({ role: 'user', content: 'summarize the repo' });
     expect(workerMessages[0].content).toContain('researcher');
+    const offered = (worker.lastRequest().tools as { name: string }[]).map((t) => t.name);
+    expect(offered).toEqual(workspaceTools().map((t) => t.def.name));
   });
 
   it('rehydrates a restarted orchestrator from the bundle, not the transcript', async () => {

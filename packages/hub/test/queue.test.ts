@@ -24,35 +24,35 @@ describe('JobQueue', () => {
   it('complete and fail transitions', () => {
     const j = q.enqueue(spec('project'));
     q.claim(['shell-task'], 1);
-    q.complete(j.id);
+    q.complete(j.id, 1);
     expect(q.list('done')).toHaveLength(1);
     const k = q.enqueue(spec('project'));
     q.claim(['shell-task'], 1);
-    q.fail(k.id, { requeue: true });
+    q.fail(k.id, 1, { requeue: true });
     expect(q.list('queued')[0].nodeId).toBeNull();
   });
 
   it('requeueForNode returns running jobs of a dead node to the queue', () => {
     q.enqueue(spec('project')); q.enqueue(spec('project'));
     q.claim(['shell-task'], 5); q.claim(['shell-task'], 5);
-    expect(q.requeueForNode(5)).toBe(2);
+    expect(q.requeueForNode(5)).toEqual({ requeued: 2, failed: [] });
     expect(q.list('queued')).toHaveLength(2);
-    expect(q.requeueForNode(5)).toBe(0);
+    expect(q.requeueForNode(5)).toEqual({ requeued: 0, failed: [] });
   });
 
   it('claim increments attempts each time', () => {
     const j = q.enqueue(spec('project'));
     expect(q.claim(['shell-task'], 1)?.attempts).toBe(1);
-    q.fail(j.id, { requeue: true });
+    q.fail(j.id, 1, { requeue: true });
     expect(q.claim(['shell-task'], 1)?.attempts).toBe(2);
   });
 
   it('fail with requeue true on attempts >= 3 marks failed with exact error', () => {
     const j = q.enqueue(spec('project'));
-    q.claim(['shell-task'], 1); q.fail(j.id, { requeue: true }); // attempts 1 -> queued
-    q.claim(['shell-task'], 1); q.fail(j.id, { requeue: true }); // attempts 2 -> queued
+    q.claim(['shell-task'], 1); q.fail(j.id, 1, { requeue: true }); // attempts 1 -> queued
+    q.claim(['shell-task'], 1); q.fail(j.id, 1, { requeue: true }); // attempts 2 -> queued
     q.claim(['shell-task'], 1); // attempts 3
-    q.fail(j.id, { requeue: true });
+    q.fail(j.id, 1, { requeue: true });
     const failed = q.get(j.id)!;
     expect(failed.status).toBe('failed');
     expect(failed.error).toBe('max attempts exceeded');
@@ -61,7 +61,7 @@ describe('JobQueue', () => {
   it('fail without requeue marks failed immediately with the given error', () => {
     const j = q.enqueue(spec('project'));
     q.claim(['shell-task'], 1);
-    q.fail(j.id, { error: 'boom' });
+    q.fail(j.id, 1, { error: 'boom' });
     const failed = q.get(j.id)!;
     expect(failed.status).toBe('failed');
     expect(failed.error).toBe('boom');
@@ -70,7 +70,7 @@ describe('JobQueue', () => {
   it('complete stores the result', () => {
     const j = q.enqueue(spec('project'));
     q.claim(['shell-task'], 1);
-    q.complete(j.id, { exitCode: 0, stdoutTail: 'hi' });
+    q.complete(j.id, 1, { exitCode: 0, stdoutTail: 'hi' });
     const done = q.get(j.id)!;
     expect(done.status).toBe('done');
     expect(done.result).toEqual({ exitCode: 0, stdoutTail: 'hi' });
@@ -84,10 +84,28 @@ describe('JobQueue', () => {
     q.claim(['shell-task'], 5); q.claim(['shell-task'], 5); // both attempts 2
     q.requeueForNode(5);
     q.claim(['shell-task'], 5); q.claim(['shell-task'], 5); // both attempts 3
-    const n = q.requeueForNode(5);
-    expect(n).toBe(0);
+    const { requeued, failed } = q.requeueForNode(5);
+    expect(requeued).toBe(0);
+    expect(failed.sort()).toEqual([j.id, k.id].sort());
     expect(q.get(j.id)!.status).toBe('failed');
     expect(q.get(j.id)!.error).toBe('max attempts exceeded');
+    expect(q.get(k.id)!.status).toBe('failed');
+  });
+
+  it('complete/fail are fenced to the current running node and report whether they applied', () => {
+    const j = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1); // running under node 1
+    expect(q.complete(j.id, 2, { exitCode: 0 })).toBe(false); // wrong node
+    expect(q.get(j.id)!.status).toBe('running');
+    expect(q.get(j.id)!.result).toBeNull();
+    expect(q.complete(j.id, 1, { exitCode: 0 })).toBe(true); // right node
+    expect(q.get(j.id)!.status).toBe('done');
+
+    const k = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1);
+    expect(q.fail(k.id, 2, { error: 'nope' })).toBe(false); // wrong node
+    expect(q.get(k.id)!.status).toBe('running');
+    expect(q.fail(k.id, 1, { error: 'yes' })).toBe(true); // right node
     expect(q.get(k.id)!.status).toBe('failed');
   });
 });

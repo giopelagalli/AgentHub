@@ -39,37 +39,50 @@ export class JobQueue {
     return claim();
   }
 
-  complete(id: number, result?: JobResult, now = Date.now()): void {
-    this.db.prepare(`UPDATE jobs SET status='done', result_json=?, updated_at=? WHERE id=?`)
-      .run(result ? JSON.stringify(result) : null, now, id);
+  // Conditional on the job still being 'running' under nodeId: a report from a node that has since
+  // been requeued to another runner (see requeueForNode) is fenced out instead of clobbering the
+  // real runner's state. Returns whether the update actually applied.
+  complete(id: number, nodeId: number, result?: JobResult, now = Date.now()): boolean {
+    const res = this.db.prepare(`UPDATE jobs SET status='done', result_json=?, updated_at=? WHERE id=? AND status='running' AND node_id=?`)
+      .run(result ? JSON.stringify(result) : null, now, id, nodeId);
+    return res.changes > 0;
   }
 
-  fail(id: number, opts: { requeue?: boolean; error?: string } = {}, now = Date.now()): void {
-    if (opts.requeue) {
-      const job = this.get(id)!;
-      if (job.attempts >= MAX_ATTEMPTS) {
-        this.db.prepare(`UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?`).run(MAX_ATTEMPTS_ERROR, now, id);
+  // Same fencing as complete(): only a node that is still the current runner of record may report
+  // failure for the job.
+  fail(id: number, nodeId: number, opts: { requeue?: boolean; error?: string } = {}, now = Date.now()): boolean {
+    const run = this.db.transaction((): boolean => {
+      const job = this.get(id);
+      if (!job || job.status !== 'running' || job.nodeId !== nodeId) return false;
+      if (opts.requeue) {
+        if (job.attempts >= MAX_ATTEMPTS) {
+          this.db.prepare(`UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?`).run(MAX_ATTEMPTS_ERROR, now, id);
+        } else {
+          this.db.prepare(`UPDATE jobs SET status='queued', node_id=NULL, updated_at=? WHERE id=?`).run(now, id);
+        }
       } else {
-        this.db.prepare(`UPDATE jobs SET status='queued', node_id=NULL, updated_at=? WHERE id=?`).run(now, id);
+        this.db.prepare(`UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?`).run(opts.error ?? null, now, id);
       }
-    } else {
-      this.db.prepare(`UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?`).run(opts.error ?? null, now, id);
-    }
+      return true;
+    });
+    return run();
   }
 
-  requeueForNode(nodeId: number, now = Date.now()): number {
+  requeueForNode(nodeId: number, now = Date.now()): { requeued: number; failed: number[] } {
     const running = this.db.prepare(`SELECT id FROM jobs WHERE status='running' AND node_id=?`).all(nodeId) as { id: number }[];
     let requeued = 0;
+    const failed: number[] = [];
     for (const { id } of running) {
       const job = this.get(id)!;
       if (job.attempts >= MAX_ATTEMPTS) {
         this.db.prepare(`UPDATE jobs SET status='failed', error=?, updated_at=? WHERE id=?`).run(MAX_ATTEMPTS_ERROR, now, id);
+        failed.push(id);
       } else {
         this.db.prepare(`UPDATE jobs SET status='queued', node_id=NULL, updated_at=? WHERE id=?`).run(now, id);
         requeued++;
       }
     }
-    return requeued;
+    return { requeued, failed };
   }
 
   list(status?: JobStatus): Job[] {

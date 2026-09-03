@@ -22,6 +22,9 @@ export interface JobRunnerOptions {
   workspaceRoot: string;
   claimIntervalMs: number;
   execute?: Execute;
+  // Called each time the hub returns 404 from /api/jobs/claim (it doesn't know this node) — lets the
+  // daemon re-register itself after e.g. a hub restart.
+  onNodeNotFound?: () => void;
 }
 
 export class JobRunner {
@@ -73,6 +76,17 @@ export class JobRunner {
     }
   }
 
+  // Waits (bounded by timeoutMs) for the poll loop to actually settle — i.e. for the aborted
+  // executor's own promise to resolve, which for a real shell-task means its process group has been
+  // signaled and, if it didn't die from SIGTERM, the SIGKILL escalation has fired. stop() itself
+  // deliberately doesn't wait for this (see its comment); callers that need the process to actually
+  // be gone before proceeding (e.g. Daemon.stop() before the daemon process exits) should await this
+  // separately after stop().
+  async waitForIdle(timeoutMs: number): Promise<void> {
+    if (!this.loopPromise) return;
+    await Promise.race([this.loopPromise, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+  }
+
   private async loop(): Promise<void> {
     while (!this.stopping) {
       if (this.inFlightJobId === undefined) {
@@ -103,6 +117,7 @@ export class JobRunner {
           this.warned404 = true;
           console.error('[job-runner] hub doesn\'t know this node yet');
         }
+        this.opts.onNodeNotFound?.();
         return null;
       }
       if (!res.ok) return null; // other hub errors (5xx); retry next tick
@@ -192,13 +207,13 @@ export class JobRunner {
 
   private reportComplete(jobId: number, result: JobResult): Promise<void> {
     return this.reportWithRetry(() => fetch(`${this.opts.hub}/api/jobs/${jobId}/complete`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ result }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ result, node: this.opts.node }),
     }));
   }
 
   private reportFail(jobId: number, error: string, requeue: boolean): Promise<void> {
     return this.reportWithRetry(() => fetch(`${this.opts.hub}/api/jobs/${jobId}/fail`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error, requeue }),
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error, requeue, node: this.opts.node }),
     }));
   }
 
@@ -207,6 +222,14 @@ export class JobRunner {
       try {
         const res = await send();
         if (res.ok) return;
+        if (res.status === 409) {
+          // The hub already reassigned this job to another runner (our report arrived late, e.g.
+          // after a sweep requeue). Don't retry — that would just fence again — and stop the local
+          // execution instead of letting it keep running unsupervised.
+          console.error('[job-runner] job report rejected: not the current runner (409)');
+          this.currentAbort?.abort();
+          return;
+        }
       } catch { /* retry */ }
       if (attempt < 3) await sleep(500);
     }

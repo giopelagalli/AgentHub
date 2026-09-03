@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS job_logs (
   line TEXT NOT NULL,
   at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_job_logs_job_seq ON job_logs(job_id, seq);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */

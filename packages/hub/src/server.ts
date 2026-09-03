@@ -46,8 +46,9 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
-      const n = queue.requeueForNode(node.id);
-      if (n) app.log.info(`requeued ${n} jobs from offline node ${node.name}`);
+      const { requeued, failed } = queue.requeueForNode(node.id);
+      if (requeued) app.log.info(`requeued ${requeued} jobs from offline node ${node.name}`);
+      for (const jobId of failed) jobLogs.append(jobId, `[hub] max attempts exceeded after node ${node.name} went offline`);
     }
   };
 
@@ -78,24 +79,32 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
   });
 
   app.post('/api/jobs', async (req, reply) => {
-    const spec = req.body as JobSpec;
+    const spec = req.body as Partial<JobSpec> | undefined;
+    if (!spec || spec.type === undefined || spec.tier === undefined || spec.priority === undefined || spec.payload === undefined) {
+      return reply.code(400).send({ error: 'invalid job spec' });
+    }
     if (!JOB_TYPES.includes(spec.type) || !TIERS.includes(spec.tier) || !PRIORITIES.includes(spec.priority)) {
       return reply.code(400).send({ error: 'invalid job spec' });
     }
-    const job = queue.enqueue(spec);
+    const job = queue.enqueue(spec as JobSpec);
     broadcastState();
     return reply.code(201).send(job);
   });
 
   app.get('/api/jobs/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
+    const { afterSeq } = req.query as { afterSeq?: string };
     const job = queue.get(id);
     if (!job) return reply.code(404).send({ error: 'unknown job' });
-    return { ...job, logs: jobLogs.list(id) };
+    return { ...job, logs: jobLogs.list(id, afterSeq !== undefined ? Number(afterSeq) : undefined) };
   });
 
   app.post('/api/jobs/claim', async (req, reply) => {
-    const { node, types } = req.body as { node: string; types: JobType[] };
+    const body = req.body as Partial<{ node: string; types: JobType[] }> | undefined;
+    if (!body || typeof body.node !== 'string' || !body.node || !Array.isArray(body.types)) {
+      return reply.code(400).send({ error: 'invalid claim request' });
+    }
+    const { node, types } = body as { node: string; types: JobType[] };
     const info = registry.byName(node);
     if (!info) return reply.code(404).send({ error: 'unknown node' });
     if (!types.every((t) => info.jobTypes.includes(t))) return reply.code(403).send({ error: 'node cannot run requested job types' });
@@ -113,18 +122,22 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.post('/api/jobs/:id/complete', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { result } = req.body as { result?: JobResult };
+    const { result, node } = req.body as { result?: JobResult; node?: string };
     if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
-    queue.complete(id, result);
+    const info = node ? registry.byName(node) : null;
+    if (!info) return reply.code(404).send({ error: 'unknown node' });
+    if (!queue.complete(id, info.id, result)) return reply.code(409).send({ error: 'not the current runner' });
     broadcastState();
     return queue.get(id);
   });
 
   app.post('/api/jobs/:id/fail', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { error, requeue } = req.body as { error: string; requeue?: boolean };
+    const { error, requeue, node } = req.body as { error: string; requeue?: boolean; node?: string };
     if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
-    queue.fail(id, { requeue, error });
+    const info = node ? registry.byName(node) : null;
+    if (!info) return reply.code(404).send({ error: 'unknown node' });
+    if (!queue.fail(id, info.id, { requeue, error })) return reply.code(409).send({ error: 'not the current runner' });
     broadcastState();
     return queue.get(id);
   });

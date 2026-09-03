@@ -157,6 +157,7 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       elevatorHotspot,
       { id: 'jobboard', x: 68, y: 196, w: 24, h: 28 },
       { id: 'directory', x: 238, y: 16, w: 28, h: 22 },
+      { id: 'reception', x: 136, y: 136, w: 48, h: 14 },
     ],
   },
 
@@ -314,7 +315,7 @@ export const FLOORPLANS: Record<FloorId, FloorPlan> = {
       { sprite: 'floorLamp', x: 120, y: 184 },
       { sprite: 'plant', x: 232, y: 240 },
     ],
-    hotspots: [elevatorHotspot],
+    hotspots: [elevatorHotspot, { id: 'briefing', x: 96, y: 18, w: 32, h: 20 }],
   },
 };
 

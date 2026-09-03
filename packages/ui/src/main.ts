@@ -95,6 +95,14 @@ async function greetAgent(agent: { id: number; name: string }): Promise<void> {
   dismissChat = openPanel(openChat(document.body, agent));
 }
 
+// Signboards: a dialog with nothing to choose but Close.
+const SIGNS: Record<string, [string, string]> = {
+  'sample:board': ['SAMPLE PROJECT FLOOR', 'Project floors arrive in Phase 3.'],
+  'sample:orch': ['SAMPLE ORCHESTRATOR', 'A real one moves in with Phase 3.'],
+  reception: ['RECEPTION', 'Assistant — arriving Phase 4.'],
+  briefing: ['BRIEFING BOARD', 'First briefing: Phase 3.'],
+};
+
 bindPointer(screen.canvas, (x, y) => {
   if (elevator.state.kind !== 'idle' || dialogIsOpen()) return;
   const state = store.getState();
@@ -110,6 +118,10 @@ bindPointer(screen.canvas, (x, y) => {
   }
   if (spot.id === 'jobboard') {
     openPanel(openQueuePanel(document.body, state));
+    return;
+  }
+  if (spot.id in SIGNS) {
+    void openDialog(app, SIGNS[spot.id], [{ id: 'close', label: 'Close' }]);
     return;
   }
   if (spot.id.startsWith('rack:')) {

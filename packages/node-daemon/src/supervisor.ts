@@ -5,6 +5,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const KILL_ESCALATION_MS = 3000;
 
+function groupAlive(child: ChildProcess): boolean {
+  if (child.pid === undefined) return false;
+  try { process.kill(-child.pid, 0); return true; } catch { return false; }
+}
+
 function killGroup(child: ChildProcess, sig: NodeJS.Signals): void {
   if (child.pid === undefined) return;
   try { process.kill(-child.pid, sig); } catch { /* group already gone (ESRCH) */ }
@@ -54,9 +59,16 @@ export class Supervisor {
     this.stopping = true;
     await Promise.all(this.children.map((child) => new Promise<void>((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) return resolve();
-      child.once('exit', () => resolve());
+      // A SIGTERM'd child reports exitCode === null (its exit is signal-driven, not code-driven), so
+      // checking exitCode alone can't tell us the escalation is moot — clear the timer explicitly
+      // once 'exit' fires, and re-probe the group (its pgid could be recycled by an unrelated
+      // process by the time the timer would run) before ever escalating to SIGKILL.
+      const killTimer = setTimeout(() => {
+        if (groupAlive(child)) killGroup(child, 'SIGKILL');
+      }, KILL_ESCALATION_MS);
+      killTimer.unref();
+      child.once('exit', () => { clearTimeout(killTimer); resolve(); });
       killGroup(child, 'SIGTERM');
-      setTimeout(() => { if (child.exitCode === null) killGroup(child, 'SIGKILL'); }, KILL_ESCALATION_MS).unref();
     })));
     this.children = [];
     this.stopping = false;

@@ -84,7 +84,10 @@ export class JobRunner {
   // separately after stop().
   async waitForIdle(timeoutMs: number): Promise<void> {
     if (!this.loopPromise) return;
-    await Promise.race([this.loopPromise, new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
+    let timer: NodeJS.Timeout;
+    const timeout = new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref?.(); });
+    await Promise.race([this.loopPromise, timeout]);
+    clearTimeout(timer!);
   }
 
   private async loop(): Promise<void> {

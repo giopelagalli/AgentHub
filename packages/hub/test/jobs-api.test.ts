@@ -149,6 +149,55 @@ describe('jobs API', () => {
     expect(badTypes.statusCode).toBe(400);
   });
 
+  it('complete/fail/log return 400 for a missing or invalid body', async () => {
+    const created = (await hub.app.inject({
+      method: 'POST', url: '/api/jobs',
+      payload: { type: 'shell-task', tier: 'worker', priority: 'batch', payload: {} },
+    })).json();
+
+    const completeNoBody = await hub.app.inject({ method: 'POST', url: `/api/jobs/${created.id}/complete` });
+    expect(completeNoBody.statusCode).toBe(400);
+    const completeBadNode = await hub.app.inject({
+      method: 'POST', url: `/api/jobs/${created.id}/complete`, payload: { node: 42 },
+    });
+    expect(completeBadNode.statusCode).toBe(400);
+
+    const failNoBody = await hub.app.inject({ method: 'POST', url: `/api/jobs/${created.id}/fail` });
+    expect(failNoBody.statusCode).toBe(400);
+    const failMissingError = await hub.app.inject({
+      method: 'POST', url: `/api/jobs/${created.id}/fail`, payload: { node: 'worker-1' },
+    });
+    expect(failMissingError.statusCode).toBe(400);
+    const failBadRequeue = await hub.app.inject({
+      method: 'POST', url: `/api/jobs/${created.id}/fail`, payload: { error: 'x', requeue: 'yes' },
+    });
+    expect(failBadRequeue.statusCode).toBe(400);
+
+    const logNoBody = await hub.app.inject({ method: 'POST', url: `/api/jobs/${created.id}/log` });
+    expect(logNoBody.statusCode).toBe(400);
+    const logBadLine = await hub.app.inject({
+      method: 'POST', url: `/api/jobs/${created.id}/log`, payload: { line: 123 },
+    });
+    expect(logBadLine.statusCode).toBe(400);
+  });
+
+  it('GET /api/jobs/:id returns 400 for a malformed afterSeq', async () => {
+    const created = (await hub.app.inject({
+      method: 'POST', url: '/api/jobs',
+      payload: { type: 'shell-task', tier: 'worker', priority: 'batch', payload: {} },
+    })).json();
+
+    const notANumber = await hub.app.inject({ method: 'GET', url: `/api/jobs/${created.id}?afterSeq=abc` });
+    expect(notANumber.statusCode).toBe(400);
+    const negative = await hub.app.inject({ method: 'GET', url: `/api/jobs/${created.id}?afterSeq=-1` });
+    expect(negative.statusCode).toBe(400);
+    const notAnInteger = await hub.app.inject({ method: 'GET', url: `/api/jobs/${created.id}?afterSeq=1.5` });
+    expect(notAnInteger.statusCode).toBe(400);
+
+    const ok = await hub.app.inject({ method: 'GET', url: `/api/jobs/${created.id}?afterSeq=0` });
+    expect(ok.statusCode).toBe(200);
+  });
+
   it('complete/fail return 404 for an unknown or missing node', async () => {
     const created = (await hub.app.inject({
       method: 'POST', url: '/api/jobs',

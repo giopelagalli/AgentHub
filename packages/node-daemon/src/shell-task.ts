@@ -64,15 +64,27 @@ export async function runShellTask(
 
     const timeoutMs = payload.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+    // Whether the process group still has any members. Used before arming/firing a SIGKILL so we
+    // never signal a pgid that has since been recycled by an unrelated process — pids (and thus
+    // group ids, since detached:true makes this child's pid double as its pgid) get reused once
+    // freed, and enough time can pass between "we decided to kill this group" and "we actually send
+    // the signal" for that to happen.
+    function groupAlive(): boolean {
+      if (child.pid === undefined) return false;
+      try { process.kill(-child.pid, 0); return true; } catch { return false; }
+    }
+
     function killGroup(sig: NodeJS.Signals): void {
       if (child.pid === undefined) return;
+      if (sig === 'SIGKILL' && !groupAlive()) return; // re-probe right before escalating
       try { process.kill(-child.pid, sig); } catch { /* group already gone (ESRCH) */ }
     }
 
     // SIGTERM the whole group first. A grandchild that traps SIGTERM (unlike the direct child, which
     // we can observe via 'exit') can outlive it, so the SIGKILL escalation is scheduled independently
     // of the direct child's own lifecycle — it fires on its own timer regardless of whether 'exit' has
-    // already happened — and is unref'd so it can't itself keep the process alive.
+    // already happened — and is unref'd so it can't itself keep the process alive. killGroup's own
+    // re-probe (above) covers the case where the group died on its own before the timer fires.
     function terminate(): void {
       killGroup('SIGTERM');
       const killTimer = setTimeout(() => killGroup('SIGKILL'), KILL_ESCALATION_MS);
@@ -123,11 +135,12 @@ export async function runShellTask(
           // Eager follow-up SIGKILL for the timeout/abort paths: don't wait out the full escalation
           // window when we already know the run didn't end on its own.
           killGroup('SIGKILL');
-        } else {
+        } else if (groupAlive()) {
           // Clean exit of the direct child doesn't mean the group is empty — a backgrounded
-          // grandchild (`x & sleep 100`, npm scripts, `make -j`) can outlive it. SIGTERM the group
-          // (harmless if it's already empty: killGroup swallows ESRCH) with the usual SIGKILL
-          // escalation as a backstop.
+          // grandchild (`x & sleep 100`, npm scripts, `make -j`) can outlive it. Only signal (and
+          // only arm the SIGKILL escalation) when the probe shows the group still has members — the
+          // common case is a fully clean exit with nothing left, and arming a 5s kill timer against
+          // an empty group risks it firing against a since-recycled, unrelated pgid.
           terminate();
         }
         resolved = true;

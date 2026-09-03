@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -146,6 +146,29 @@ describe('node daemon', () => {
       expect(exited).toMatchObject({ port });
     } finally {
       await supervisor.stopAll();
+    }
+  }, 15000);
+
+  it('stopAll clears the escalation timer once a child exits gracefully (no late SIGKILL)', async () => {
+    const port = await getEphemeralPort();
+    const cfg = { tier: 'worker' as const, model: 'mock-model', port, maxStreams: 4, cmd: ['node', TSX_CLI, MOCK_SERVE, String(port)] };
+    const supervisor = new Supervisor([cfg]);
+    // Real timers for startup: the health-check poll inside startAll relies on real setTimeout.
+    await supervisor.startAll(10000);
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const killSpy = vi.spyOn(process, 'kill');
+    try {
+      // The mock server has no SIGTERM handler, so Node's default disposition kills it immediately —
+      // a real ('exit') event, unaffected by the JS-level fake timers above — which should clear the
+      // 3s escalation timer stopAll armed for it.
+      await supervisor.stopAll();
+      await vi.advanceTimersByTimeAsync(4000); // past KILL_ESCALATION_MS (3000) with margin
+      const sigkillCalls = killSpy.mock.calls.filter(([, sig]) => sig === 'SIGKILL');
+      expect(sigkillCalls).toEqual([]);
+    } finally {
+      killSpy.mockRestore();
+      vi.useRealTimers();
     }
   }, 15000);
 

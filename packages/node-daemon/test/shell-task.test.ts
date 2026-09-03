@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -107,6 +107,23 @@ describe('runShellTask', () => {
     await new Promise((r) => setTimeout(r, 1000));
     expect(lines.length).toBe(countAtResolve);
   }, 10000);
+
+  it('does not signal the process group on a clean exit that leaves nothing behind', async () => {
+    const root = tmpWorkspace();
+    const killSpy = vi.spyOn(process, 'kill');
+    try {
+      const result = await runShellTask({ cmd: ['echo', 'hi'] }, { workspaceRoot: root, onLine: () => {} });
+      expect(result.exitCode).toBe(0);
+      // Give the drain timer (and, if one were wrongly armed, the escalation timer) a moment to run.
+      await new Promise((r) => setTimeout(r, 300));
+      // A signal-0 probe (groupAlive) is expected and fine; SIGTERM/SIGKILL must never fire when the
+      // clean-exit probe found the group already empty.
+      const signalCalls = killSpy.mock.calls.filter(([, sig]) => sig === 'SIGTERM' || sig === 'SIGKILL');
+      expect(signalCalls).toEqual([]);
+    } finally {
+      killSpy.mockRestore();
+    }
+  });
 
   it('does not spawn when the signal is already aborted', async () => {
     const root = tmpWorkspace();

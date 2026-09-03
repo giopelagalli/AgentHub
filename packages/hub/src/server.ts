@@ -93,10 +93,15 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.get('/api/jobs/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { afterSeq } = req.query as { afterSeq?: string };
+    const { afterSeq: afterSeqRaw } = req.query as { afterSeq?: string };
+    let afterSeq: number | undefined;
+    if (afterSeqRaw !== undefined) {
+      afterSeq = Number(afterSeqRaw);
+      if (!Number.isInteger(afterSeq) || afterSeq < 0) return reply.code(400).send({ error: 'invalid afterSeq' });
+    }
     const job = queue.get(id);
     if (!job) return reply.code(404).send({ error: 'unknown job' });
-    return { ...job, logs: jobLogs.list(id, afterSeq !== undefined ? Number(afterSeq) : undefined) };
+    return { ...job, logs: jobLogs.list(id, afterSeq) };
   });
 
   app.post('/api/jobs/claim', async (req, reply) => {
@@ -115,14 +120,19 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.post('/api/jobs/:id/log', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { line } = req.body as { line: string };
+    const body = req.body as Partial<{ line: string }> | undefined;
+    if (!body || typeof body.line !== 'string') return reply.code(400).send({ error: 'invalid log request' });
     if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
-    return jobLogs.append(id, line);
+    return jobLogs.append(id, body.line);
   });
 
   app.post('/api/jobs/:id/complete', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { result, node } = req.body as { result?: JobResult; node?: string };
+    const body = req.body as Partial<{ result: JobResult; node: string }> | undefined;
+    if (!body || (body.node !== undefined && typeof body.node !== 'string')) {
+      return reply.code(400).send({ error: 'invalid complete request' });
+    }
+    const { result, node } = body;
     if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
     const info = node ? registry.byName(node) : null;
     if (!info) return reply.code(404).send({ error: 'unknown node' });
@@ -133,7 +143,13 @@ export function createHub(opts: { dbPath?: string; staleMs?: number; sweepInterv
 
   app.post('/api/jobs/:id/fail', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { error, requeue, node } = req.body as { error: string; requeue?: boolean; node?: string };
+    const body = req.body as Partial<{ error: string; requeue: boolean; node: string }> | undefined;
+    if (!body || typeof body.error !== 'string'
+      || (body.node !== undefined && typeof body.node !== 'string')
+      || (body.requeue !== undefined && typeof body.requeue !== 'boolean')) {
+      return reply.code(400).send({ error: 'invalid fail request' });
+    }
+    const { error, requeue, node } = body;
     if (!queue.get(id)) return reply.code(404).send({ error: 'unknown job' });
     const info = node ? registry.byName(node) : null;
     if (!info) return reply.code(404).send({ error: 'unknown node' });

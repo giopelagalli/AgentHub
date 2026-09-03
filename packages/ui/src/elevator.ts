@@ -7,7 +7,7 @@ export const DOOR_TICKS = 6;
 /**
  * Door sprite frame for the current phase. The sprite's frames run shut → open,
  * so the closing phase plays them in reverse and the opening phase forwards;
- * every other phase rests on frame 0, doors shut.
+ * every other phase rests on the last frame, doors open (a waiting car).
  */
 export function elevatorFrame(phase: ElevatorState['kind'], ticks: number, frameCount: number): number {
   const last = frameCount - 1;

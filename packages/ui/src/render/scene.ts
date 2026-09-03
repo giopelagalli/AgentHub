@@ -40,7 +40,8 @@ function bobFor(anim: string | undefined, tick: number, x: number): number {
  * (painter's algorithm — a robot is listed before the desk it sits behind).
  * Live nodes and agents are appended by `dynamicFurniture`.
  *
- * `elevatorFrame` drives the doors; omitted, they stay shut.
+ * `elevatorFrame` drives the doors (main.ts computes it every render via
+ * `elevatorFrame()`); only callers that omit it — tests — get shut doors.
  */
 export function renderFloor(
   ctx: CanvasRenderingContext2D,

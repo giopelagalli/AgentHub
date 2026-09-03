@@ -10,8 +10,9 @@ export const DOOR_TICKS = 6;
  * every other phase rests on frame 0, doors shut.
  */
 export function elevatorFrame(phase: ElevatorState['kind'], ticks: number, frameCount: number): number {
-  if (phase !== 'doorsClosing' && phase !== 'doorsOpening') return 0;
   const last = frameCount - 1;
+  // A waiting elevator stands open, so close → swap → open never pops.
+  if (phase !== 'doorsClosing' && phase !== 'doorsOpening') return last;
   const step = Math.min(Math.floor((ticks * frameCount) / DOOR_TICKS), last);
   return phase === 'doorsOpening' ? step : last - step;
 }

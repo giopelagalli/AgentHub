@@ -106,9 +106,9 @@ describe('Elevator', () => {
 describe('elevatorFrame', () => {
   const FRAMES = 4;
 
-  it('rests on the shut frame when nobody is riding', () => {
-    expect(elevatorFrame('idle', 0, FRAMES)).toBe(0);
-    expect(elevatorFrame('menuOpen', 0, FRAMES)).toBe(0);
+  it('rests on the open frame when nobody is riding', () => {
+    expect(elevatorFrame('idle', 0, FRAMES)).toBe(FRAMES - 1);
+    expect(elevatorFrame('menuOpen', 0, FRAMES)).toBe(FRAMES - 1);
   });
 
   it('runs open → shut while the doors close', () => {

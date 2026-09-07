@@ -277,6 +277,8 @@ describe('CommandRouter', () => {
 
     await port.simulateCallback(OWNER, 'proj:pause:demo');
 
+    // Answered before the work was attempted, so the owner's button stops spinning either way.
+    expect(port.answered).toHaveLength(1);
     expect(port.sent).toHaveLength(1);
     expect(port.sent[0]!.msg.text).toBe('Something went wrong handling that — see hub logs.');
 

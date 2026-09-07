@@ -65,9 +65,11 @@ export class CommandRouter {
     port.onCallback(async (c) => {
       if (c.chatId !== ownerChatId) return;
       try {
-        const msgs = await this.handleCallback(c.data);
+        // Answered before the work it acknowledges: Telegram gives a callback query a few seconds
+        // before it expires, and the owner's button spins until then — but the work behind a
+        // `proj:turn` is a whole project turn, far longer than that window.
         await port.answerCallback(c.callbackId);
-        for (const msg of msgs) await port.send(c.chatId, msg);
+        for (const msg of await this.handleCallback(c.data)) await port.send(c.chatId, msg);
       } catch (err) {
         console.error('[telegram] callback handler error', err);
         await port.send(c.chatId, { text: HANDLER_ERROR_TEXT });

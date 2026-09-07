@@ -8,6 +8,7 @@
     "@fastify/websocket": "^11.3.0",
     "better-sqlite3": "^11",
     "fastify": "^5",
+    "grammy": "^1.46.0",
     "js-yaml": "^5.4.1",
     "simple-git": "^3.36.0"
   },

@@ -61,6 +61,12 @@ CREATE TABLE IF NOT EXISTS job_logs (
   at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_job_logs_job_seq ON job_logs(job_id, seq);
+-- One row per node whose GPU a video job currently holds (spec §4.3). In-memory state alone would
+-- strand a node on its \`video\` profile across a hub restart, with nothing left to release it.
+CREATE TABLE IF NOT EXISTS video_slots (
+  node_name TEXT PRIMARY KEY,
+  job_id INTEGER NOT NULL
+);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */

@@ -7,6 +7,12 @@ import type { TelegramPort } from './port.js';
 
 const DEDUPE_MS = 30 * 60_000;
 
+/**
+ * Telegram's bot API caps an upload at 50MB. Anything close to it is reported by path instead of
+ * being pushed at the API and failing where nobody sees it.
+ */
+export const MAX_VIDEO_BYTES = 48 * 1024 * 1024;
+
 /** The pseudo-project `/video` jobs are filed under, so their clips go back to the owner's chat. */
 export const TELEGRAM_PROJECT = '_telegram';
 
@@ -22,14 +28,21 @@ export interface AlertEvents {
   onJobSettled(cb: (job: Job) => void): void;
 }
 
+/** A stored clip: where it is, how big, and how to read it — the size decides whether it is sent. */
+export interface VideoArtifact {
+  path: string;
+  size: number;
+  read(): Promise<Buffer>;
+}
+
 export interface AlertsDeps {
   port: TelegramPort;
   ownerChatId: string;
   registry: NodeRegistry;
   service: ProjectService;
   clock: Clock;
-  /** Reads a finished video job's mp4 from where the hub stored it; null when it isn't there. */
-  videoArtifact: (job: Job) => Promise<Buffer | null>;
+  /** Locates a finished video job's mp4 where the hub stored it; null when it isn't there. */
+  videoArtifact: (job: Job) => Promise<VideoArtifact | null>;
 }
 
 /**
@@ -73,16 +86,21 @@ export class Alerts {
       await this.send(`video:${job.id}`, `🎬 video job #${job.id} failed: ${job.error ?? 'unknown error'}`);
       return;
     }
-    const video = await this.deps.videoArtifact(job);
+    const artifact = await this.deps.videoArtifact(job);
     const key = `video:${job.id}`;
-    if (!video) {
+    if (!artifact) {
       await this.send(key, `🎬 video job #${job.id} finished but its file is missing`);
+      return;
+    }
+    if (artifact.size > MAX_VIDEO_BYTES) {
+      const mb = Math.round(artifact.size / (1024 * 1024));
+      await this.send(key, `🎬 video job #${job.id} finished but is too large to send (${mb}MB); it's at ${artifact.path}`);
       return;
     }
     const now = this.deps.clock.now();
     this.lastSent.set(key, now);
     const prompt = (job.payload as { prompt?: string } | undefined)?.prompt ?? '';
-    await this.deps.port.send(this.deps.ownerChatId, { text: `🎬 video job #${job.id}: ${prompt}`, video });
+    await this.deps.port.send(this.deps.ownerChatId, { text: `🎬 video job #${job.id}: ${prompt}`, video: await artifact.read() });
   }
 
   private async send(key: string, text: string): Promise<void> {

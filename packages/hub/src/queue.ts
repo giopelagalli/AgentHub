@@ -68,6 +68,20 @@ export class JobQueue {
     return run();
   }
 
+  /**
+   * Hands a claimed job straight back to the queue without spending the attempt. Used when the hub
+   * itself could not set the node up to run it (the video exclusivity swap failed): the node never
+   * saw the job, so counting the claim's attempt would retire it after three quick claims.
+   * Fenced like complete()/fail(): only the current runner of record can give the job back.
+   */
+  unclaim(id: number, nodeId: number, now = Date.now()): boolean {
+    const res = this.db.prepare(`
+      UPDATE jobs SET status='queued', node_id=NULL, attempts=MAX(attempts-1, 0), updated_at=?
+      WHERE id=? AND status='running' AND node_id=?
+    `).run(now, id, nodeId);
+    return res.changes > 0;
+  }
+
   requeueForNode(nodeId: number, now = Date.now()): { requeued: number; failed: number[] } {
     const running = this.db.prepare(`SELECT id FROM jobs WHERE status='running' AND node_id=?`).all(nodeId) as { id: number }[];
     let requeued = 0;

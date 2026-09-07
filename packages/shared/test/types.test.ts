@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PRIORITY_RANK, comparePriority } from '../src/index.js';
+import { PRIORITY_RANK, comparePriority, parseVideoPayload, videoPayloadFrom } from '../src/index.js';
 import type { Job, JobLogLine, JobResult, JobSpec, NodeInfo, NodeRegistration, ShellTaskPayload } from '../src/index.js';
 
 describe('shared types', () => {
@@ -40,5 +40,23 @@ describe('shared types', () => {
   it('JobLogLine shape', () => {
     const line: JobLogLine = { jobId: 1, seq: 0, line: 'hello', at: 0 };
     expect(line.line).toBe('hello');
+  });
+});
+
+describe('video payload parsing', () => {
+  const base = { prompt: 'a heron', mode: 't2v', durationSec: 6, aspect: '16:9', resolution: '768p' } as const;
+
+  it('strips everything outside the schema', () => {
+    expect(parseVideoPayload({ ...base, project: 'reel', seed: 7, imagePath: undefined }))
+      .toEqual(base);
+    expect(parseVideoPayload({ ...base, mode: 'i2v', imagePath: 'ref.png', extra: 'x' }))
+      .toEqual({ ...base, mode: 'i2v', imagePath: 'ref.png' });
+  });
+
+  it('reads an explicit undefined as "not given" and fills the default', () => {
+    expect(videoPayloadFrom({ prompt: 'a heron', mode: undefined, durationSec: undefined }))
+      .toEqual(base);
+    expect(videoPayloadFrom({ prompt: 'a heron', durationSec: 12 })).toEqual({ ...base, durationSec: 12 });
+    expect(videoPayloadFrom({ prompt: '' })).toBeNull();
   });
 });

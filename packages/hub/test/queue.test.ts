@@ -108,4 +108,15 @@ describe('JobQueue', () => {
     expect(q.fail(k.id, 1, { error: 'yes' })).toBe(true); // right node
     expect(q.get(k.id)!.status).toBe('failed');
   });
+
+  it('unclaim returns a job to the queue without spending the attempt', () => {
+    const j = q.enqueue(spec('project'));
+    q.claim(['shell-task'], 1);
+    expect(q.get(j.id)!.attempts).toBe(1);
+
+    expect(q.unclaim(j.id, 2)).toBe(false); // fenced to the current runner
+    expect(q.unclaim(j.id, 1)).toBe(true);
+    expect(q.get(j.id)).toMatchObject({ status: 'queued', nodeId: null, attempts: 0 });
+    expect(q.unclaim(j.id, 1)).toBe(false); // not running any more
+  });
 });

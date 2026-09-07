@@ -4,7 +4,7 @@ import type { NodeRegistration } from '@agenthub/shared';
 import { openDb, type Db } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
-import { ResourceManager, VideoSlotBusyError } from '../src/resources.js';
+import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from '../src/resources.js';
 
 const TOKEN = 'daemon-secret';
 
@@ -15,20 +15,24 @@ interface FakeControl {
   calls: string[];
   auth: (string | undefined)[];
   fail: boolean;
+  /** What GET /control/profile reports the node is running. */
+  live: string | null;
 }
 
 let control: FakeControl | undefined;
 
 async function startControl(): Promise<FakeControl> {
   const app = Fastify();
-  const state: FakeControl = { app, url: '', calls: [], auth: [], fail: false };
+  const state: FakeControl = { app, url: '', calls: [], auth: [], fail: false, live: 'llm' };
   app.post('/control/profile', async (req, reply) => {
     const { name } = req.body as { name: string };
     state.auth.push(req.headers.authorization);
     if (state.fail) return reply.code(502).send({ error: 'switch failed' });
     state.calls.push(name);
+    state.live = name;
     return { profile: name, entries: [] };
   });
+  app.get('/control/profile', async () => ({ profile: state.live, entries: [] }));
   await app.listen({ port: 0, host: '127.0.0.1' });
   state.url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
   control = state;
@@ -159,5 +163,71 @@ describe('ResourceManager', () => {
     });
     expect(fake.calls).toEqual([]);
     expect(gateway.parkedKeys()).toEqual([]);
+  });
+
+  it('serializes a release against an in-flight acquire', async () => {
+    const fake = await startControl();
+    let streams = 1;
+    const { manager, gateway } = setup(fake.url);
+    Object.assign(gateway, { activeStreamsOn: () => streams });
+
+    // The offline sweep's release lands while the acquire is still draining. Un-serialized it would
+    // switch to llm first and leave the node on the video profile with nothing holding the slot.
+    const acquiring = manager.acquire('spark', 9);
+    const releasing = manager.release('spark', 9);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.calls).toEqual([]);
+
+    streams = 0;
+    await Promise.all([acquiring, releasing]);
+    expect(fake.calls).toEqual(['video', 'llm']);
+    expect(gateway.parkedKeys()).toEqual([]);
+    expect(manager.busy('spark')).toBe(false);
+  });
+
+  it('rebuilds held slots from the store, dropping the ones whose job is gone', async () => {
+    const fake = await startControl();
+    const { db, registry, gateway } = setup(fake.url);
+    const store = sqliteSlotStore(db);
+    store.save('spark', 11);
+    store.save('gone', 12);
+
+    // What a restarted hub does with the rows the previous process left behind.
+    const restarted = new ResourceManager({ registry, gateway, store, log: () => {} });
+    restarted.restore((jobId) => jobId === 11);
+
+    expect(restarted.holder('spark')).toBe(11);
+    expect(restarted.busy('gone')).toBe(false);
+    expect(gateway.parkedKeys()).toEqual(['spark|worker|http://127.0.0.1:8001']);
+    expect(store.load()).toEqual([{ node: 'spark', jobId: 11 }]);
+  });
+
+  it('puts a node stranded on the video profile back on llm', async () => {
+    const fake = await startControl();
+    fake.live = 'video';
+    const { manager } = setup(fake.url);
+
+    await manager.reconcile('spark');
+    expect(fake.calls).toEqual(['llm']);
+    // Once per node per hub lifetime, so a heartbeat every second doesn't re-poll the daemon.
+    await manager.reconcile('spark');
+    expect(fake.calls).toEqual(['llm']);
+    await manager.reconcile('spark', true);
+    expect(fake.calls).toEqual(['llm']);
+  });
+
+  it('re-applies the video profile to a node that holds a slot but reports llm', async () => {
+    const fake = await startControl();
+    const { db, registry, gateway } = setup(fake.url);
+    const store = sqliteSlotStore(db);
+    store.save('spark', 13);
+
+    const restarted = new ResourceManager({ registry, gateway, store, daemonToken: TOKEN, log: () => {} });
+    restarted.restore(() => true);
+    gateway.unpark('spark'); // as if only the profile, not the parking, had been lost
+
+    await restarted.reconcile('spark');
+    expect(fake.calls).toEqual(['video']);
+    expect(gateway.parkedKeys()).toEqual(['spark|worker|http://127.0.0.1:8001']);
   });
 });

@@ -260,7 +260,9 @@ export class JobRunner {
     }
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
-        const res = await fetch(`${this.opts.hub}/api/jobs/${jobId}/artifact`, {
+        // The hub only accepts the clip from the node the job is actually running on.
+        const url = `${this.opts.hub}/api/jobs/${jobId}/artifact?node=${encodeURIComponent(this.opts.node)}`;
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/octet-stream', ...this.opts.authHeaders },
           body: new Uint8Array(bytes),

@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
@@ -11,7 +11,7 @@ import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
 import { ModelGateway } from './gateway.js';
-import { ResourceManager, VideoSlotBusyError } from './resources.js';
+import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript } from './agents/transcript.js';
@@ -28,7 +28,7 @@ import { MemoryStore } from './assistant/memory.js';
 import { Planner, type PlannerList } from './assistant/planner.js';
 import { assistantTools } from './assistant/tools.js';
 import { externalTools, ToolAudit, AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT, type ExternalOptions } from './external/index.js';
-import { Alerts, TELEGRAM_PROJECT, type AlertEvents } from './telegram/alerts.js';
+import { Alerts, TELEGRAM_PROJECT, type AlertEvents, type VideoArtifact } from './telegram/alerts.js';
 import type { TelegramPort } from './telegram/port.js';
 import { CommandRouter } from './telegram/router.js';
 import { Scheduler, SystemClock, type Clock } from './telegram/scheduler.js';
@@ -102,6 +102,8 @@ export interface HubOptions {
   auth?: AuthOptions;
   /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
   external?: ExternalOptions;
+  /** Video slot knobs: how long a node is passed over after a failed swap, and the clock that times it. */
+  video?: { cooldownMs?: number; now?: () => number };
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -138,8 +140,17 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
   const master = new MasterOrchestrator({ service: projects, loop });
   const resources = new ResourceManager({
-    registry, gateway,
+    registry, gateway, store: sqliteSlotStore(db),
     ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
+    ...(opts.video?.cooldownMs !== undefined ? { cooldownMs: opts.video.cooldownMs } : {}),
+    ...(opts.video?.now ? { now: opts.video.now } : {}),
+  });
+  // A hub that died mid-video comes back owing the node its serving: the slots it was holding are
+  // read back here, and whatever the node's live profile turns out to be is reconciled on its next
+  // registration or heartbeat.
+  resources.restore((jobId) => {
+    const job = queue.get(jobId);
+    return job?.type === 'video-gen' && job.status === 'running';
   });
   const app = Fastify();
 
@@ -288,9 +299,12 @@ export function createHub(opts: HubOptions = {}): Hub {
     return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', `${job.id}.mp4`);
   };
 
-  const readVideoArtifact = async (job: Job): Promise<Buffer | null> => {
+  /** What the Telegram alert needs to decide between sending the clip and just naming its path. */
+  const videoArtifactInfo = async (job: Job): Promise<VideoArtifact | null> => {
+    const path = await videoArtifactPath(job);
     try {
-      return await readFile(await videoArtifactPath(job));
+      const { size } = await stat(path);
+      return { path, size, read: () => readFile(path) };
     } catch {
       return null;
     }
@@ -369,6 +383,10 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.post('/api/nodes/register', async (req) => {
     const result = registry.register(req.body as NodeRegistration);
+    // A registration is also how a daemon comes back from its own restart, so the profile the node
+    // is actually serving is re-checked against the slot the hub thinks it holds. Fire-and-forget:
+    // `reconcile` never rejects, and a slow control server must not hold up the registration.
+    void resources.reconcile(result.name, true);
     broadcastState();
     return result;
   });
@@ -376,6 +394,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.post('/api/nodes/:name/heartbeat', async (req, reply) => {
     const { name } = req.params as { name: string };
     if (!registry.heartbeat(name)) return reply.code(404).send({ ok: false });
+    // Only the first heartbeat per node does anything: it covers the hub having restarted under a
+    // node that never re-registered.
+    void resources.reconcile(name);
     broadcastState();
     return { ok: true };
   });
@@ -430,7 +451,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     // triggers the exclusivity swap, so swapping a node that cannot render would park its serving
     // for nothing, and claiming a second clip while the first runs would only cost the job an
     // attempt before being handed straight back.
-    const takesVideo = info.video && !resources.busy(info.name);
+    const takesVideo = info.video && !resources.busy(info.name) && !resources.cooling(info.name);
     const claimable = takesVideo ? types : types.filter((t) => t !== 'video-gen');
     if (!claimable.length) return reply.code(204).send();
     const job = queue.claim(claimable, info.id);
@@ -443,7 +464,12 @@ export function createHub(opts: HubOptions = {}): Hub {
         await resources.acquire(info.name, job.id);
       } catch (err) {
         jobLogs.append(job.id, `[hub] video slot unavailable on ${info.name}: ${(err as Error).message}`);
-        queue.fail(job.id, info.id, { requeue: true });
+        // The node never saw the job, so the claim's attempt is handed back rather than spent —
+        // three quick claims against a down control server would otherwise retire the job. A swap
+        // that failed for an infrastructure reason (as opposed to the slot simply being taken) also
+        // backs this node off video work for a while, so the retries don't spin.
+        queue.unclaim(job.id, info.id);
+        if (!(err instanceof VideoSlotBusyError)) resources.coolDown(info.name);
         broadcastState();
         return reply.code(err instanceof VideoSlotBusyError ? 204 : 503).send();
       }
@@ -510,6 +536,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     const job = queue.get(id);
     if (!job) return reply.code(404).send({ error: 'unknown job' });
     if (job.type !== 'video-gen') return reply.code(400).send({ error: 'job type has no artifact' });
+    // Only the node the job is running on may write its clip, and only while it is still the runner
+    // of record: a late upload from a node whose job was requeued elsewhere would otherwise
+    // overwrite the real runner's output.
+    const { node } = req.query as { node?: string };
+    const uploader = node ? registry.byName(node) : null;
+    if (!uploader || job.status !== 'running' || job.nodeId !== uploader.id) {
+      return reply.code(409).send({ error: 'not the current runner' });
+    }
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.length === 0) return reply.code(400).send({ error: 'empty artifact' });
     const path = await videoArtifactPath(job);
@@ -768,7 +802,7 @@ export function createHub(opts: HubOptions = {}): Hub {
       await port.start();
       router.start();
       scheduler.start();
-      const alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock, videoArtifact: readVideoArtifact });
+      const alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock, videoArtifact: videoArtifactInfo });
       alerts.attach(hubEvents);
       handle.port = port;
       handle.router = router;

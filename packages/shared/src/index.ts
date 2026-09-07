@@ -192,7 +192,13 @@ export function parseVideoPayload(raw: unknown): VideoPayload | null {
   if (p.imagePath !== undefined && typeof p.imagePath !== 'string') return null;
   // i2v/ref2v animate a source image — without one there's nothing to animate.
   if ((p.mode === 'i2v' || p.mode === 'ref2v') && !p.imagePath) return null;
-  return p as VideoPayload;
+  // Rebuilt field by field rather than handed back as-is: whatever else the caller put in the
+  // object (a stray `project`, a hand-written extra key) must not ride along into the job payload
+  // and out to the daemon.
+  return {
+    prompt: p.prompt, mode: p.mode, durationSec: p.durationSec, aspect: p.aspect, resolution: p.resolution,
+    ...(p.imagePath !== undefined ? { imagePath: p.imagePath } : {}),
+  };
 }
 
 /**
@@ -202,5 +208,8 @@ export function parseVideoPayload(raw: unknown): VideoPayload | null {
  */
 export function videoPayloadFrom(raw: unknown): VideoPayload | null {
   if (!raw || typeof raw !== 'object') return null;
-  return parseVideoPayload({ ...VIDEO_DEFAULTS, ...(raw as Record<string, unknown>) });
+  // Explicit `undefined` reads as "didn't say" — a spread would otherwise let it blank out a
+  // default and fail validation on a field the caller never meant to set.
+  const given = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([, v]) => v !== undefined));
+  return parseVideoPayload({ ...VIDEO_DEFAULTS, ...given });
 }

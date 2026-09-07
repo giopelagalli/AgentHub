@@ -6,6 +6,7 @@ import type { ProjectService } from '../projects/service.js';
 import type { ConfirmationGate } from './confirm.js';
 import type { MemoryStore, NoteType } from './memory.js';
 import type { Planner, PlannerList } from './planner.js';
+import { SLUG_RE } from '../projects/schema.js';
 
 const NOTE_TYPES = ['person', 'preference', 'routine', 'goal', 'fact', 'reference'] as const satisfies readonly NoteType[];
 const LISTS = ['goals', 'todo', 'backlog'] as const satisfies readonly PlannerList[];
@@ -233,11 +234,15 @@ export function assistantTools(deps: AssistantToolDeps): Tool[] {
       },
       run: async (args) => {
         const { project, ...rest } = fields(args);
+        // Validated here and not only in POST /api/video: the slug becomes a path segment of the
+        // bundle the clip is written to.
+        const slug = optStr({ project }, 'project');
+        if (slug !== undefined && !SLUG_RE.test(slug)) throw new Error(`project must match ${SLUG_RE.source}`);
         const payload = videoPayloadFrom(rest);
         if (!payload) throw new Error('invalid video payload');
         const job = jobs.enqueue({
           type: 'video-gen', tier: 'video-gen', priority: 'batch', payload,
-          ...(typeof project === 'string' && project ? { project } : {}),
+          ...(slug ? { project: slug } : {}),
         });
         return `queued video job ${job.id}`;
       },

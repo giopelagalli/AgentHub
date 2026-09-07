@@ -236,13 +236,17 @@ describe('telegram wiring failures leave the assistant usable', () => {
 
 describe('telegram wiring', () => {
   it('serves the owner and ignores everyone else', async () => {
-    const { port } = await setup();
+    const { hub: h, port } = await setup();
+
+    const { router } = await h.assistant();
 
     await port.simulateMessage(OWNER, '/help');
+    await router!.idle();
     expect(port.sent).toHaveLength(1);
     expect(port.sent[0].msg.text).toContain('/brief');
 
     await port.simulateMessage('someone-else', '/help');
+    await router!.idle();
     expect(port.sent).toHaveLength(1);
   });
 

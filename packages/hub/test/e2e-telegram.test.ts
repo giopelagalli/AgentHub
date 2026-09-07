@@ -82,6 +82,21 @@ interface Harness {
   clock: ManualClock;
 }
 
+/**
+ * Delivers a message and waits for the router's detached per-chat chain to drain — the transport
+ * hands an update off and returns, so `simulateMessage` resolving does not mean the reply is out.
+ */
+async function deliver(port: FakeTelegramPort, chatId: string, text: string): Promise<void> {
+  await port.simulateMessage(chatId, text);
+  await (await hub!.assistant()).router!.idle();
+}
+
+/** `deliver`, for a button press. */
+async function press(port: FakeTelegramPort, chatId: string, data: string): Promise<void> {
+  await port.simulateCallback(chatId, data);
+  await (await hub!.assistant()).router!.idle();
+}
+
 async function setup(script: ScriptStep[] = [], opts: { staleMs?: number } = {}): Promise<Harness> {
   projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-e2e-telegram-projects-'));
   memoryRoot = await mkdtemp(join(tmpdir(), 'agenthub-e2e-telegram-memory-'));
@@ -150,7 +165,7 @@ describe('phase 4 acceptance: telegram control and scheduled briefing', () => {
     ]);
 
     // --- /new creates a project and, once the background first turn finishes, reports it -------
-    await port.simulateMessage(OWNER, '/new Website refresh: rebuild the landing page');
+    await deliver(port, OWNER, '/new Website refresh: rebuild the landing page');
     expect(port.sent).toHaveLength(1);
     expect(port.sent[0]!.msg.text).toContain('website-refresh');
 
@@ -161,11 +176,11 @@ describe('phase 4 acceptance: telegram control and scheduled briefing', () => {
     expect(manifest.title).toBe('Website refresh');
 
     // --- a non-owner chat is invisible to the bot ------------------------------------------------
-    await port.simulateMessage(STRANGER, '/brief');
+    await deliver(port, STRANGER, '/brief');
     expect(port.sent).toHaveLength(2);
 
     // --- free text that teaches the assistant something durable calls remember() ------------------
-    await port.simulateMessage(OWNER, 'remember that I prefer morning meetings');
+    await deliver(port, OWNER, 'remember that I prefer morning meetings');
     expect(port.sent).toHaveLength(3);
     const handle = await h.assistant();
     const index = await handle.memory.index();
@@ -173,7 +188,7 @@ describe('phase 4 acceptance: telegram control and scheduled briefing', () => {
     expect(await handle.memory.indexText()).toContain('Morning meetings');
 
     // --- an outward action is proposed, not run, until the owner presses Confirm ------------------
-    await port.simulateMessage(OWNER, 'post that update for me');
+    await deliver(port, OWNER, 'post that update for me');
     expect(port.sent).toHaveLength(4);
     const proposal = port.sent[3]!;
     const confirmButton = proposal.msg.buttons?.flat().find((b) => b.data.startsWith('confirm:'));
@@ -181,14 +196,14 @@ describe('phase 4 acceptance: telegram control and scheduled briefing', () => {
     const pendingId = confirmButton!.data.slice('confirm:'.length);
     expect(handle.gate.pending().map((p) => p.id)).toContain(pendingId);
 
-    await port.simulateCallback(OWNER, confirmButton!.data);
+    await press(port, OWNER, confirmButton!.data);
     expect(handle.gate.pending().map((p) => p.id)).not.toContain(pendingId);
     expect(port.sent[port.sent.length - 1]!.msg.text).toBe('sent: ship the landing page update');
 
     // --- /todo add + /todo list --------------------------------------------------------------------
-    await port.simulateMessage(OWNER, '/todo add call the bank');
+    await deliver(port, OWNER, '/todo add call the bank');
     expect(port.sent[port.sent.length - 1]!.msg.text).toBe('Todo:\n1. [ ] call the bank');
-    await port.simulateMessage(OWNER, '/todo');
+    await deliver(port, OWNER, '/todo');
     expect(port.sent[port.sent.length - 1]!.msg.text).toBe('Todo:\n1. [ ] call the bank');
 
     // --- advancing the fake clock to BRIEFING_TIME fires exactly one scheduled briefing -----------

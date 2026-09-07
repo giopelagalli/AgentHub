@@ -47,6 +47,9 @@ export interface CommandRouterDeps {
  * that reads real updates off the port, drops anything not from the owner, and sends the replies.
  */
 export class CommandRouter {
+  /** One promise chain per chat: see `dispatch`. */
+  private chains = new Map<string, Promise<void>>();
+
   constructor(private deps: CommandRouterDeps) {}
 
   start(): void {
@@ -55,26 +58,60 @@ export class CommandRouter {
     // bot down or leave the owner without a reply — log it and tell them, then keep serving.
     port.onMessage(async (m) => {
       if (m.chatId !== ownerChatId) return;
-      try {
-        for (const msg of await this.handle(m.text)) await port.send(m.chatId, msg);
-      } catch (err) {
-        console.error('[telegram] message handler error', err);
-        await port.send(m.chatId, { text: HANDLER_ERROR_TEXT });
-      }
+      this.dispatch(m.chatId, async () => {
+        try {
+          for (const msg of await this.handle(m.text)) await port.send(m.chatId, msg);
+        } catch (err) {
+          console.error('[telegram] message handler error', err);
+          await port.send(m.chatId, { text: HANDLER_ERROR_TEXT });
+        }
+      });
     });
     port.onCallback(async (c) => {
       if (c.chatId !== ownerChatId) return;
-      try {
-        // Answered before the work it acknowledges: Telegram gives a callback query a few seconds
-        // before it expires, and the owner's button spins until then — but the work behind a
-        // `proj:turn` is a whole project turn, far longer than that window.
-        await port.answerCallback(c.callbackId);
-        for (const msg of await this.handleCallback(c.data)) await port.send(c.chatId, msg);
-      } catch (err) {
-        console.error('[telegram] callback handler error', err);
-        await port.send(c.chatId, { text: HANDLER_ERROR_TEXT });
-      }
+      this.dispatch(c.chatId, async () => {
+        try {
+          // Answered before the work it acknowledges: Telegram gives a callback query a few seconds
+          // before it expires, and the owner's button spins until then — but the work behind a
+          // `proj:turn` is a whole project turn, far longer than that window.
+          await port.answerCallback(c.callbackId);
+          for (const msg of await this.handleCallback(c.data)) await port.send(c.chatId, msg);
+        } catch (err) {
+          console.error('[telegram] callback handler error', err);
+          await port.send(c.chatId, { text: HANDLER_ERROR_TEXT });
+        }
+      });
     });
+  }
+
+  /**
+   * Resolves once every dispatched handler has finished. Tests use it to observe the replies a
+   * handler chain produced; nothing in production waits on it.
+   */
+  async idle(): Promise<void> {
+    while (this.chains.size) await Promise.all([...this.chains.values()]);
+  }
+
+  /**
+   * Runs `work` detached from the update that triggered it, but after everything already queued
+   * for that chat.
+   *
+   * grammY delivers updates sequentially: it does not fetch the next one until the handler for the
+   * current one has resolved. A `/brief`, an assistant reply or a `proj:turn` is a whole model
+   * session, so awaiting it inline left the bot deaf for as long as that took. Returning
+   * immediately and queueing the work keeps the transport responsive while preserving the order
+   * the owner sent things in — their second message still runs after their first, and its reply
+   * still arrives second.
+   */
+  private dispatch(chatId: string, work: () => Promise<void>): void {
+    const prev = this.chains.get(chatId) ?? Promise.resolve();
+    // Nothing awaits this chain, so it must never reject: a failing error-reply send (the one case
+    // `work`'s own try/catch cannot cover) ends here as a log line.
+    const next: Promise<void> = prev
+      .then(work)
+      .catch((err) => console.error('[telegram] dispatch failed', err))
+      .then(() => { if (this.chains.get(chatId) === next) this.chains.delete(chatId); });
+    this.chains.set(chatId, next);
   }
 
   /** Routes one incoming text message to its command (or the assistant) and returns the reply/replies. */

@@ -184,7 +184,9 @@ export function createHub(opts: HubOptions = {}): Hub {
         videoRunning: () => queue.list().some((j) => j.type === 'video-gen' && j.status === 'running'),
       })
     : null;
-  const app = Fastify();
+  // `trustProxy` off by default: `X-Forwarded-*` is attacker-controlled unless a proxy this hub
+  // actually sits behind is the only thing that can reach it.
+  const app = Fastify(opts.auth?.trustProxy !== undefined ? { trustProxy: opts.auth.trustProxy } : {});
 
   // Finished clips arrive as raw bytes on POST /api/jobs/:id/artifact; Fastify's 1MB default body
   // limit is per-parser, so this one carries its own.

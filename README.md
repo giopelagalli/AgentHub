@@ -122,7 +122,9 @@ Commands:
       ... done <n>                tick off item n
     /new <title>: <intent>       start a new project; replies again once its first turn lands
     /nodes                       cluster health
-    /video, /controlnode         coming in Phase 6
+    /video <prompt>              queue a clip; it arrives as a video message when it renders
+    /controlnode [name]          list control-node candidates, or move the hub to one
+                                 (Confirm/Cancel — it stops the hub on this machine)
 
 Anything else is sent to the assistant, which can read/search memory, edit
 the planner, and manage projects. An outward-facing action (posting to X) never
@@ -136,9 +138,9 @@ see `deploy/telegram.md`.
 
 ## External APIs & outbound policy
 
-Agents have **no generic fetch tool**. Exactly three named tools can leave the
-owner's machines, and nothing else in an agent's belt makes a network call —
-the policy is enforced by construction, not by a filter:
+Agents have **no generic fetch tool**. Four named tools across three services
+are the only HTTP calls an agent's belt can make: no agent tool makes an
+unaudited HTTP call, enforced by construction rather than by a filter.
 
     grok_query(prompt)              POST api.x.ai/v1/chat/completions
     post_to_x(text)                 POST api.x.com/2/tweets       (owner-confirmed)
@@ -146,7 +148,14 @@ the policy is enforced by construction, not by a filter:
     web_search(query, n?)           api.search.brave.com or api.tavily.com
 
 `post_to_x` is outward: it proposes through the confirmation gate and returns
-`pending confirmation <id>`; nothing is posted until the owner confirms.
+`pending confirmation <id>`; nothing is posted until the owner confirms
+(`POST /api/assistant/pending/:id/confirm`, or the Telegram Confirm button).
+Posting also needs an X *user-context* token — a hand-pasted OAuth2 one expires
+in ~2h; see `deploy/external-apis.md`.
+
+`run_shell` is the residual hole: it runs commands in a project workspace, and
+a command can open its own socket where the audit log can't see it. Sandbox it
+at the OS/network level if that matters — it is not closable in the tool belt.
 
 The hub's own non-agent outbound traffic is Telegram (bot API, owner chat
 only); everything else it talks to — node daemons, ComfyUI, the served models
@@ -196,3 +205,74 @@ the required capability, or wait in the queue if none is free. A job
 already claimed and running when its node disappears is not resumed
 in-place — it's requeued and re-run from scratch on whichever node picks
 it up next.
+
+## Security
+
+The hub holds the owner's memory, projects, API keys and a shared browser, so
+past Phase 6 it is expected to run *authenticated*, and the only thing that
+should be able to reach port 4000 is the tailnet (plus the DO droplet's Caddy,
+`deploy/do/README.md`).
+
+    HUB_PASSWORD        the owner's password. Unset, auth is disabled entirely
+                        and every route is open — dev-only.
+    HUB_SESSION_SECRET  HMAC key for session cookies. Unset, a random key is
+                        generated and every restart logs the owner out.
+    DAEMON_TOKEN        shared bearer every node daemon sends. Unset, no daemon
+                        can register or claim jobs.
+    TRUST_PROXY         set only when the hub sits behind the DO proxy: `1` to
+                        trust any proxy, or the proxy's tailnet IP/CIDR (safer).
+
+Browsers authenticate with an HttpOnly, SameSite=Lax, HMAC-signed `hub_session`
+cookie from `POST /api/login` (30 days); daemons send
+`Authorization: Bearer $DAEMON_TOKEN` and may only reach the registration, claim
+and job-report routes — a leaked daemon token cannot drive the owner's browser
+or read memory. Everything under `/api/` and the `/ws` upgrade is guarded except
+`POST /api/login` and `GET /api/health`, classified on the *matched route* so a
+percent-encoded path cannot slip past. Five failed logins lock a client out for
+15 minutes.
+
+`TRUST_PROXY` matters more than it looks: behind Caddy every request arrives
+from the proxy's address, so without it the login throttle counts all attempts
+as one client and one attacker's five failures lock the owner out. With it,
+`X-Forwarded-For` names the real client and `X-Forwarded-Proto` marks the
+session cookie `Secure`. Do not set it on a hub anything else can reach
+directly — those headers are then attacker-controlled.
+
+## Deploying
+
+The whole system, from the outside in:
+
+1. **Control node** — the machine running the hub (`packages/hub`), normally
+   the Mac mini under launchd: it owns `data/` (SQLite, memory bundle, project
+   bundles, media) and every API key. `deploy/macmini/README.md`. Moving it to
+   the Strix Halo is one `/controlnode` away: `deploy/controlnode.md`.
+2. **Nodes** — every other machine runs the node daemon against its own config
+   over Tailscale (`deploy/tailscale.md`, `configs/README.md`): the Spark serves
+   models and renders video through ComfyUI (`deploy/spark/README.md`), the Mac
+   mini hosts the shared browser, the AMD box and MacBook add capacity
+   (`deploy/amd/README.md`, `deploy/macbook/README.md`). Each daemon registers
+   with the hub, heartbeats, and claims jobs it has the capability for.
+3. **Telegram** — the phone-side control surface: `deploy/telegram.md`. It is
+   the only thing that needs to work when you are away from the tower UI.
+4. **DO proxy** — a $6 droplet on the tailnet running Caddy, which is the only
+   machine with a public listener: it terminates TLS for your domain, gates
+   everything behind HTTP basic auth as a second factor, and reverse-proxies to
+   the control node's `:4000` over the tailnet. `deploy/do/README.md`.
+
+External API keys: `deploy/external-apis.md`. Nothing here needs a router port
+forward or a public IP on any machine but the droplet.
+
+## Status
+
+| Phase | Delivered |
+| --- | --- |
+| 1 | Monorepo skeleton: hub (node registry, SQLite job queue, model gateway, agent runtime, REST/SSE) + node daemon (process supervisor, register/heartbeat), two concurrent streaming sessions against a mock model. |
+| 2 | Elastic multi-node cluster: nodes advertise job types and run `shell-task`s; a node dying mid-job requeues it onto another capable node; per-node deployment playbooks. |
+| 3 | Orchestration: portable project bundles, one long-lived orchestrator per project delegating to ephemeral subagents, master orchestrator, briefings, rehydration after a restart. Plus the pixel-art tower UI over the hub WebSocket. |
+| 4 | Telegram control and the personal assistant: git-versioned markdown memory + planner, commands and free-form chat, daily briefing, check-ins, alerts, and the confirmation gate for outward actions. |
+| 5b | The Mac mini's headed Chromium as a shared cluster resource: leases with owner preemption, a browser tool set for agents, frame-by-frame recording, and the 5F screening room. |
+| 6 | Owner login + daemon tokens, video generation on the Spark with the LLM/video exclusivity swap and `/video`, the four sanctioned external tools with an audit trail, the control-node switch and `/controlnode`, and the DigitalOcean proxy. |
+
+Not built, deliberately: Kokoro voice notes (the `OutgoingMessage.voice` seam
+exists), MLX serving on the MacBook, and video on the 7900XTX (blocked
+upstream — ROCm has no working MiniMax-H3 path).

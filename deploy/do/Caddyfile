@@ -1,0 +1,72 @@
+# AgentHub public edge — DigitalOcean droplet, on the tailnet.
+#
+# The droplet is stateless: it holds no data, no API keys and no database. Its
+# only job is to terminate TLS for the public domain, demand a second factor
+# before anything is forwarded, and reverse-proxy to the *current* control node
+# over Tailscale. Everything it needs comes from /etc/caddy/agenthub.env
+# (see deploy/do/README.md):
+#
+#   HUB_DOMAIN     hub.example.com          the public name
+#   HUB_UPSTREAM   hub.internal:4000        the control-node alias (see README)
+#   ACME_EMAIL     you@example.com          Let's Encrypt contact
+#   EDGE_USER      owner                    basic-auth user
+#   EDGE_HASH      $2a$14$...               `caddy hash-password` output
+#
+# Reload after editing either file:  sudo systemctl reload caddy
+
+{
+	email {$ACME_EMAIL}
+	# The droplet must never answer on its IP or on a name we did not configure:
+	# an unmatched Host gets a connection close, not a certificate.
+	servers {
+		strict_sni_host on
+	}
+}
+
+{$HUB_DOMAIN} {
+	encode zstd gzip
+
+	# MANDATORY, not optional. The hub's own login is one password on a machine
+	# that holds the owner's memory, projects and API keys; this is the second
+	# factor in front of it, and it is what keeps unauthenticated internet
+	# traffic — scanners, exploit probes, login-throttle spam — from ever
+	# reaching the tailnet at all. Generate the hash with `caddy hash-password`;
+	# never put a plaintext password here.
+	basic_auth {
+		{$EDGE_USER} {$EDGE_HASH}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Cross-Origin-Opener-Policy same-origin
+		-Server
+	}
+
+	# The hub's WebSocket (/ws) needs no special block: Caddy v2's reverse_proxy
+	# passes Upgrade/Connection through and streams bidirectionally by default.
+	# Same for the headers the hub's auth depends on — X-Forwarded-For,
+	# X-Forwarded-Proto and X-Forwarded-Host are set automatically, which is why
+	# the hub must run with TRUST_PROXY set (see README).
+	reverse_proxy {$HUB_UPSTREAM} {
+		# A video job's clip comes back through here; don't buffer it in RAM.
+		flush_interval -1
+		# A control-node switch takes the upstream down for a few seconds. Fail
+		# fast and say so rather than hanging the browser for a minute.
+		transport http {
+			dial_timeout 5s
+		}
+		header_up X-Real-IP {remote_host}
+	}
+
+	# One request per client identity is not worth logging a body for; keep the
+	# access log to what an incident actually needs.
+	log {
+		output file /var/log/caddy/agenthub.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

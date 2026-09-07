@@ -67,8 +67,7 @@ export interface AssistantToolDeps {
  * action that demonstrates the confirmation gate.
  *
  * Everything here acts on the owner's own hub, so it runs immediately. Anything that would leave it
- * must be flagged `outward` and go through `gate.propose` instead — Phase 6's X posting plugs in
- * where `demo_outward_action` sits.
+ * must be flagged `outward` and go through `gate.propose` instead, the way `post_to_x` does.
  */
 export function assistantTools(deps: AssistantToolDeps): Tool[] {
   const { memory, planner, service, master, gate, registry, jobs } = deps;

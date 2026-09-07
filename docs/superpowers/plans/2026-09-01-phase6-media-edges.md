@@ -67,6 +67,8 @@ Commit `feat(hub): grok, gemini and web-search tools with audit log and confirma
 
 Tests: two fake control daemons with `echo`-based scripts and a temp-dir rsync substitute: switch checkpoints, copies, calls start on the target, and the hub reports stopping; refuse switch when the target isn't online. Commit `feat: control-node switch procedure and /controlnode`.
 
+**As shipped, the names differ from the sketch above:** the routes are `GET`/`POST /api/controlnode` (not `/api/control*`), the daemon endpoints are `POST /control/hub/start|stop` plus `GET /control/hub` and `GET /control/hub/data-stamp`, the hub option is `HubOptions.controlNode`, and the playbook is `deploy/controlnode.md`. The copy is verified by comparing a `dataStamp` of both roots (`@agenthub/shared/data-stamp`) rather than by `VACUUM INTO` a checkpoint file — the checkpoint is a `wal_checkpoint(TRUNCATE)` and the stamp is what proves the bytes arrived.
+
 ---
 
 ### Task 6: DigitalOcean proxy + Tailscale docs + acceptance

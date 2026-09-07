@@ -15,6 +15,15 @@ export interface AuthOptions {
   sessionSecret?: string;
   /** Injected in tests so expiry can be driven without waiting on real time. */
   now?: () => number;
+  /**
+   * Passed straight to Fastify. Set it only when the hub really sits behind a trusted reverse proxy
+   * (the DO droplet's Caddy, `deploy/do/`): it makes `req.ip` the left-most `X-Forwarded-For` entry
+   * and `req.protocol` follow `X-Forwarded-Proto`, so the login throttle counts the real client and
+   * the session cookie is marked `Secure`. Prefer the proxy's tailnet IP over `true` — with `true`
+   * anyone who can reach the hub directly can spoof the header and either evade the throttle or
+   * lock the owner out. Left off, `X-Forwarded-*` is ignored entirely.
+   */
+  trustProxy?: boolean | string;
 }
 
 /**

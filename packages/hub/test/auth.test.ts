@@ -251,4 +251,27 @@ describe('hub auth', () => {
     now += 15 * 60 * 1000 + 1;
     expect((await attempt(PASSWORD)).statusCode).toBe(200);
   });
+
+  it('keys the throttle on the forwarded client only when a proxy is trusted', async () => {
+    // Behind Caddy every login arrives from the proxy's address, so without trustProxy one
+    // attacker's five failures would lock the owner out too. With it, each forwarded client is
+    // counted on its own.
+    const behindProxy = createHub({ auth: { password: PASSWORD, sessionSecret: 'test-secret', trustProxy: true } });
+    hubs.push(behindProxy);
+    const viaProxy = (hub: Hub, password: string, client: string) => hub.app.inject({
+      method: 'POST', url: '/api/login', payload: { password },
+      headers: { 'x-forwarded-for': client }, remoteAddress: '10.1.1.1',
+    });
+
+    for (let i = 0; i < 5; i += 1) expect((await viaProxy(behindProxy, 'nope', '203.0.113.7')).statusCode).toBe(401);
+    expect((await viaProxy(behindProxy, PASSWORD, '203.0.113.7')).statusCode).toBe(429);
+    expect((await viaProxy(behindProxy, PASSWORD, '203.0.113.8')).statusCode).toBe(200);
+
+    // Off (the default), the header is ignored: the five failures counted against the peer address,
+    // so the *same* peer is locked out however it labels itself.
+    const direct = createHub({ auth: { password: PASSWORD, sessionSecret: 'test-secret' } });
+    hubs.push(direct);
+    for (let i = 0; i < 5; i += 1) expect((await viaProxy(direct, 'nope', '203.0.113.7')).statusCode).toBe(401);
+    expect((await viaProxy(direct, PASSWORD, '203.0.113.8')).statusCode).toBe(429);
+  });
 });

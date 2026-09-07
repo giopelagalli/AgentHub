@@ -1,9 +1,15 @@
 # External APIs
 
-Three named tools are the only way an AgentHub agent can reach the outside
-world (PRD §12). There is no generic `fetch` tool, and there never should be:
-the policy is enforced by construction — if a capability is not one of the
-tools below, no agent can perform it.
+Four named tools across three services are the only way an AgentHub agent can
+reach the outside world *over HTTP* (PRD §12). There is no generic `fetch`
+tool, and there never should be: no agent tool makes an unaudited HTTP call —
+if a capability is not one of the tools below, no agent can perform it.
+
+The residual hole is `run_shell`, the project-workspace tool: a command it runs
+can open its own socket, and the tool belt cannot see that. If that matters for
+your threat model, sandbox it at the OS/network level (a `nobody`-style user
+with an egress-denied firewall group, a container, or a per-node outbound
+allowlist) — the tool belt is not where it can be closed.
 
 Every call is bounded by a 15s timeout and writes one `tool_audit` row
 (timestamp, session, tool, purpose, request/response bytes, ok). Read the
@@ -29,14 +35,24 @@ OpenAI-shaped; the answer is `choices[0].message.content`. Model override:
     { "text": "<post>" }
 
 A different service from xAI with its own credential: `X_API_KEY` is an X API
-v2 OAuth2 user-context token with `tweet.write` (developer.x.com → project →
-user authentication settings). With `X_API_KEY` unset the tool falls back to
-`XAI_API_KEY`, which will fail against the X API — set the right one.
+v2 **user-context** token with `tweet.write` (developer.x.com → project → user
+authentication settings). App-only (bearer) tokens cannot post.
+
+Mind which user-context flavour you paste in: an OAuth2 access token obtained
+by hand expires in about two hours, so the tool works once and then 401s. Use
+either OAuth 1.0a user-context credentials (long-lived, but they must be signed
+per request — that needs a signing step this hub does not implement yet) or
+OAuth2 with a refresh token and a refresher that keeps `X_API_KEY` current.
+Until one of those is wired up, treat `post_to_x` as a manual-token tool and
+expect to re-paste it.
+
+With `X_API_KEY` unset the tool falls back to `XAI_API_KEY`, which will fail
+against the X API — set the right one.
 
 `post_to_x` is the hub's only **outward** tool: it never posts when the model
 calls it. It proposes the post through the confirmation gate and returns
 `pending confirmation <id>`; the post happens only when the owner confirms
-(`POST /api/assistant/actions/:id/confirm`, or the inline Confirm button in
+(`POST /api/assistant/pending/:id/confirm`, or the inline Confirm button in
 Telegram). The audit row is written when the post is actually sent.
 
 ## youtube_understand — Gemini

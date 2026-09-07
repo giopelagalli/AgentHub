@@ -41,9 +41,18 @@ if (token && ownerChatId && ownerChatId.startsWith('-')) {
 const password = process.env.HUB_PASSWORD;
 const sessionSecret = process.env.HUB_SESSION_SECRET;
 const daemonToken = process.env.DAEMON_TOKEN;
+// `TRUST_PROXY=1` trusts any proxy, which is only right when nothing but the DO droplet's Caddy can
+// reach this port; anything else is taken as the proxy's address (an IP, a CIDR, or a comma-separated
+// list) and is the safer form. Unset, `X-Forwarded-*` headers are ignored.
+const trustProxyEnv = process.env.TRUST_PROXY;
+const trustProxy: boolean | string | undefined = trustProxyEnv === undefined || trustProxyEnv === ''
+  ? undefined
+  : ['1', 'true', 'yes'].includes(trustProxyEnv.toLowerCase()) ? true
+  : ['0', 'false', 'no'].includes(trustProxyEnv.toLowerCase()) ? false
+  : trustProxyEnv;
 let auth: AuthOptions | undefined;
 if (password) {
-  auth = { password, ...(sessionSecret ? { sessionSecret } : {}), ...(daemonToken ? { daemonToken } : {}) };
+  auth = { password, ...(sessionSecret ? { sessionSecret } : {}), ...(daemonToken ? { daemonToken } : {}), ...(trustProxy !== undefined ? { trustProxy } : {}) };
   if (!sessionSecret) console.log('[hub] HUB_SESSION_SECRET not set; sessions are signed with a random key and drop on every restart');
   if (!daemonToken) console.log('[hub] DAEMON_TOKEN not set; no daemon can register or claim jobs against this hub');
 } else {

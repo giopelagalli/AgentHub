@@ -15,6 +15,7 @@ import { runToolCall, type Tool, type ToolContext } from '../src/agents/tools.js
 import { LeaseManager } from '../src/browser/lease.js';
 import { BrowserProxy } from '../src/browser/proxy.js';
 import { Recorder } from '../src/browser/recorder.js';
+import { ProjectBundle } from '../src/projects/bundle.js';
 import { browserTools, browserOperatorTools, type BrowserToolDeps } from '../src/agents/browser-tools.js';
 
 const PAGES = {
@@ -101,6 +102,18 @@ describe('browserTools — direct tool calls', () => {
       .toBe('error: no browser lease — call acquire_browser first');
   });
 
+  it('release_browser reports "lease already lost" instead of claiming success once the lease is gone', async () => {
+    const tools = browserTools(deps, 'orchestrator');
+    const ctx = ctxFor(31);
+    expect(await runToolCall(tools, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx)).toBe('browser lease granted');
+
+    // The owner preempts the holder directly through the LeaseManager, as a real preempt would.
+    leases.acquire({ kind: 'owner', id: 'owner' });
+
+    expect(await runToolCall(tools, { id: '2', name: 'release_browser', arguments: '{}' }, ctx))
+      .toBe('error: lease already lost');
+  });
+
   it('subagent priority: acquire_browser reports the queue position immediately, no polling', async () => {
     leases.acquire({ kind: 'orchestrator', id: 'orch-1' });
     const tools = browserOperatorTools(deps);
@@ -131,6 +144,59 @@ describe('browserTools — direct tool calls', () => {
     const result = await runToolCall(tools, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctxFor(13));
     expect(result).toBe('queued: position 1');
     expect(elapsed).toBeGreaterThanOrEqual(60_000);
+  });
+});
+
+describe('browserTools — requester identity across turns', () => {
+  let root: string;
+  let bundle: ProjectBundle;
+
+  beforeEach(async () => {
+    root = mkdtempSync(join(tmpdir(), 'ah-browser-tools-bundle-'));
+    bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'ship it' });
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('a returning orchestrator (fresh sessionId, same project) re-acquires its still-valid lease instead of queueing', async () => {
+    // Turn 1: a fresh tool list (AgentLoop builds one per turn) and the sessionId AgentLoop mints for it.
+    const turn1 = browserTools(deps, 'orchestrator');
+    const ctx1: ToolContext = { sessionId: 101, log: () => {}, bundle };
+    expect(await runToolCall(turn1, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx1)).toBe('browser lease granted');
+    const leaseId = leases.holder()!.leaseId;
+
+    // Turn 2: another fresh tool list and a different sessionId — but the same project bundle. The
+    // turn-1 lease is still well within its TTL, so this must renew it in place, not queue behind it.
+    const turn2 = browserTools(deps, 'orchestrator');
+    const ctx2: ToolContext = { sessionId: 202, log: () => {}, bundle };
+    expect(await runToolCall(turn2, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx2)).toBe('browser lease granted');
+    expect(leases.holder()!.leaseId).toBe(leaseId);
+    expect(leases.queue()).toEqual([]);
+  });
+});
+
+describe('browserTools — acquire_browser abort handling', () => {
+  it('aborts within one poll interval when the signal fires, and withdraws from the queue', async () => {
+    leases.acquire({ kind: 'owner', id: 'owner' }); // holds forever; the orchestrator below queues behind it
+    const controller = new AbortController();
+    let polls = 0;
+    // A sleep that never resolves on its own — if the abort race didn't win, this test would hang
+    // (or time out), which is exactly the "delays shutdown by up to a full poll interval" bug.
+    const sleep = async (): Promise<void> => {
+      polls += 1;
+      if (polls === 1) controller.abort();
+      await new Promise<void>(() => {});
+    };
+    const tools = browserTools({ ...deps, sleep }, 'orchestrator');
+    const ctx: ToolContext = { sessionId: 21, log: () => {}, signal: controller.signal };
+
+    const result = await runToolCall(tools, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx);
+
+    expect(result).toBe('error: aborted');
+    expect(polls).toBe(1);
+    expect(leases.queue()).toEqual([]);
   });
 });
 

@@ -78,6 +78,19 @@ export class LeaseManager {
     return true;
   }
 
+  /**
+   * Removes a *queued* (not held) request, for a caller that gives up waiting before ever being
+   * granted the lease — an aborted poll, a cancelled turn. False if `id`/`kind` isn't in the queue
+   * (already granted, already withdrawn, or never queued).
+   */
+  withdraw(id: string, kind: BrowserRequesterKind): boolean {
+    const i = this.waiting.findIndex((w) => w.id === id && w.kind === kind);
+    if (i < 0) return false;
+    this.waiting.splice(i, 1);
+    this.emit();
+    return true;
+  }
+
   /** Pushes the holder's expiry out by a full TTL. False once the lease is gone — preempted, expired or released. */
   renew(leaseId: string): boolean {
     this.expireInternal();

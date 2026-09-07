@@ -149,4 +149,17 @@ describe('LeaseManager', () => {
     ]);
     expect(leases.release(id)).toBe(false);
   });
+
+  it('withdraw removes a queued request, but never the holder, and no-ops when not queued', () => {
+    const { leases } = fixture();
+    const id = granted(leases.acquire(sub));
+    leases.acquire(orch);
+    // Not queued (never asked, or already holds): false, and nothing changes.
+    expect(leases.withdraw('nobody', 'orchestrator')).toBe(false);
+    expect(leases.withdraw(sub.id, 'subagent')).toBe(false); // sub holds; withdraw only touches the queue
+    expect(leases.holder()?.requester).toEqual(sub);
+    expect(leases.withdraw(orch.id, 'orchestrator')).toBe(true);
+    expect(leases.queue()).toEqual([]);
+    expect(leases.withdraw(orch.id, 'orchestrator')).toBe(false); // already gone
+  });
 });

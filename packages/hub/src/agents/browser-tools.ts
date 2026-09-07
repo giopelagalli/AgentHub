@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import type { BrowserRequesterKind } from '@agenthub/shared';
 import type { LeaseManager, Requester } from '../browser/lease.js';
 import { BrowserError, type BrowserOp, type BrowserProxy } from '../browser/proxy.js';
@@ -8,6 +9,15 @@ const ORCHESTRATOR_WAIT_MS = 60_000;
 const POLL_INTERVAL_MS = 2_000;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Resolves once `signal` fires; never resolves for an absent signal. Used to race against a sleep. */
+function whenAborted(signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve) => {
+    if (!signal) return;
+    if (signal.aborted) { resolve(); return; }
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
 
 export interface BrowserToolDeps {
   leases: LeaseManager;
@@ -48,9 +58,22 @@ const pageLine = (s: PageStateResult): string => `page: ${s.title} (${s.url})`;
 
 // --- shared plumbing ---------------------------------------------------------------------------------
 
-/** The requester id is the AgentLoop session id: stable across every tool call in one run. */
-function requesterId(ctx: ToolContext): string {
-  return String(ctx.sessionId);
+/**
+ * The requester id used for lease priority and dedup (`LeaseManager.acquire` keys on `(id, kind)`).
+ *
+ * Orchestrator-kind tools key on the project slug (`project:<slug>`), not the AgentLoop session id.
+ * AgentLoop mints a fresh `sessionId` for every turn (see `AgentLoop.run`), so an id built from it
+ * would make a returning orchestrator look like a brand-new requester on its next turn and queue
+ * behind its *own* still-valid lease from the turn before, stuck there until the lease's TTL lapses.
+ * Keying on the slug instead means a returning orchestrator's `acquire_browser` call matches
+ * `LeaseManager`'s current holder and re-acquires its lease in place (renewed, same leaseId).
+ *
+ * Subagents are single-turn — one `sessionId` covers a subagent's whole life — so per-session ids are
+ * already correct there; the slug is folded in only for a readable, namespaced id, not for dedup.
+ */
+function requesterId(kind: BrowserRequesterKind, ctx: ToolContext): string {
+  const slug = ctx.bundle ? basename(ctx.bundle.dir) : 'unknown';
+  return kind === 'orchestrator' ? `project:${slug}` : `subagent:${slug}:${ctx.sessionId}`;
 }
 
 /**
@@ -70,12 +93,13 @@ type Held = Map<string, string>;
 async function act(
   deps: BrowserToolDeps,
   held: Held,
+  kind: BrowserRequesterKind,
   ctx: ToolContext,
   op: BrowserOp,
   args: Record<string, unknown> | undefined,
   format: (result: unknown) => string,
 ): Promise<string> {
-  const id = requesterId(ctx);
+  const id = requesterId(kind, ctx);
   const leaseId = held.get(id);
   if (!leaseId) return 'error: no browser lease — call acquire_browser first';
   try {
@@ -96,7 +120,7 @@ async function act(
  * subagent doesn't have. Subagents get the queue position back immediately instead.
  */
 async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequesterKind, ctx: ToolContext): Promise<string> {
-  const id = requesterId(ctx);
+  const id = requesterId(kind, ctx);
   const requester: Requester = { kind, id };
   let result = deps.leases.acquire(requester);
   if (kind === 'orchestrator') {
@@ -104,7 +128,14 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
     const sleep = deps.sleep ?? defaultSleep;
     const deadline = now() + ORCHESTRATOR_WAIT_MS;
     while ('queued' in result && now() < deadline) {
-      await sleep(Math.min(POLL_INTERVAL_MS, deadline - now()));
+      // Raced against the signal so a cancelled turn (ProjectService.stop(), a turn timeout) doesn't
+      // sit through up to a full poll interval before noticing — it can otherwise stall shutdown by
+      // as much as POLL_INTERVAL_MS on every poll.
+      await Promise.race([sleep(Math.min(POLL_INTERVAL_MS, deadline - now())), whenAborted(ctx.signal)]);
+      if (ctx.signal?.aborted) {
+        deps.leases.withdraw(id, kind);
+        return 'error: aborted';
+      }
       result = deps.leases.acquire(requester);
     }
   }
@@ -115,13 +146,12 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
   return `queued: position ${result.position}`;
 }
 
-function release(deps: BrowserToolDeps, held: Held, ctx: ToolContext): string {
-  const id = requesterId(ctx);
+function release(deps: BrowserToolDeps, held: Held, kind: BrowserRequesterKind, ctx: ToolContext): string {
+  const id = requesterId(kind, ctx);
   const leaseId = held.get(id);
   if (!leaseId) return 'error: no browser lease — call acquire_browser first';
   held.delete(id);
-  deps.leases.release(leaseId);
-  return 'browser lease released';
+  return deps.leases.release(leaseId) ? 'browser lease released' : 'error: lease already lost';
 }
 
 // --- tool set ------------------------------------------------------------------------------------
@@ -143,18 +173,18 @@ export function browserTools(deps: BrowserToolDeps, kind: BrowserRequesterKind):
     },
     {
       def: { type: 'tool', name: 'release_browser', description: 'Release the browser lease you are holding.', parameters: { type: 'object', properties: {}, required: [] } },
-      run: async (_args, ctx) => release(deps, held, ctx),
+      run: async (_args, ctx) => release(deps, held, kind, ctx),
     },
     {
       def: {
         type: 'tool', name: 'browser_navigate', description: 'Navigate the shared browser to a URL. Requires the lease.',
         parameters: { type: 'object', properties: { url: strProp('URL to load.') }, required: ['url'] },
       },
-      run: async (args, ctx) => act(deps, held, ctx, 'navigate', { url: str(args, 'url') }, (r) => pageLine(r as PageStateResult)),
+      run: async (args, ctx) => act(deps, held, kind, ctx, 'navigate', { url: str(args, 'url') }, (r) => pageLine(r as PageStateResult)),
     },
     {
       def: { type: 'tool', name: 'browser_read', description: 'Read the current page: visible text and links. Requires the lease.', parameters: { type: 'object', properties: {}, required: [] } },
-      run: async (_args, ctx) => act(deps, held, ctx, 'read', undefined, (r) => {
+      run: async (_args, ctx) => act(deps, held, kind, ctx, 'read', undefined, (r) => {
         const read = r as PageReadResult;
         const lines = [pageLine(read.state), '', read.text];
         if (read.links.length) lines.push('', 'links:', ...read.links.map((l) => `- ${l.text}: ${l.href}`));
@@ -166,7 +196,7 @@ export function browserTools(deps: BrowserToolDeps, kind: BrowserRequesterKind):
         type: 'tool', name: 'browser_click', description: 'Click an element (CSS selector or `text=...`). Requires the lease.',
         parameters: { type: 'object', properties: { selector: strProp('CSS selector or `text=<label>`.') }, required: ['selector'] },
       },
-      run: async (args, ctx) => act(deps, held, ctx, 'click', { selector: str(args, 'selector') }, (r) => pageLine(r as PageStateResult)),
+      run: async (args, ctx) => act(deps, held, kind, ctx, 'click', { selector: str(args, 'selector') }, (r) => pageLine(r as PageStateResult)),
     },
     {
       def: {
@@ -183,12 +213,12 @@ export function browserTools(deps: BrowserToolDeps, kind: BrowserRequesterKind):
       },
       run: async (args, ctx) => {
         const typeArgs = { selector: str(args, 'selector'), text: str(args, 'text'), submit: optBool(args, 'submit') ?? false };
-        return act(deps, held, ctx, 'type', typeArgs, (r) => pageLine(r as PageStateResult));
+        return act(deps, held, kind, ctx, 'type', typeArgs, (r) => pageLine(r as PageStateResult));
       },
     },
     {
       def: { type: 'tool', name: 'browser_screenshot', description: 'Screenshot the current page. Saved to the session recording, not returned to you. Requires the lease.', parameters: { type: 'object', properties: {}, required: [] } },
-      run: async (_args, ctx) => act(deps, held, ctx, 'screenshot', undefined, (r) => {
+      run: async (_args, ctx) => act(deps, held, kind, ctx, 'screenshot', undefined, (r) => {
         const shot = r as ScreenshotResult;
         return shot.path ? `saved ${shot.path}` : `screenshot taken (frame ${shot.seq}, not stored — frame cap reached)`;
       }),

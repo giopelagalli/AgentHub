@@ -135,15 +135,20 @@ describe('browserTools — direct tool calls', () => {
     expect(elapsed).toBeLessThan(60_000);
   });
 
-  it('orchestrator priority: acquire_browser gives up after 60s (fake clock) and reports still-queued', async () => {
+  it('orchestrator priority: acquire_browser gives up after 60s (fake clock), withdraws, and reports busy', async () => {
     leases.acquire({ kind: 'owner', id: 'owner' }); // never releases
     let elapsed = 0;
     const now = () => elapsed;
     const sleep = async (ms: number) => { elapsed += ms; };
     const tools = browserTools({ ...deps, now, sleep }, 'orchestrator');
     const result = await runToolCall(tools, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctxFor(13));
-    expect(result).toBe('queued: position 1');
+    expect(result).toBe('error: browser busy — try again later');
     expect(elapsed).toBeGreaterThanOrEqual(60_000);
+    expect(leases.queue()).toEqual([]);
+
+    // A later release must not grant the lease to the request that already gave up.
+    leases.release(leases.holder()!.leaseId);
+    expect(leases.holder()).toBeNull();
   });
 });
 
@@ -175,6 +180,19 @@ describe('browserTools — requester identity across turns', () => {
     expect(leases.holder()!.leaseId).toBe(leaseId);
     expect(leases.queue()).toEqual([]);
   });
+
+  it('release_browser falls back to the current holder when a fresh turn (new sessionId, same project) never learned the leaseId itself', async () => {
+    const turn1 = browserTools(deps, 'orchestrator');
+    const ctx1: ToolContext = { sessionId: 301, log: () => {}, bundle };
+    expect(await runToolCall(turn1, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx1)).toBe('browser lease granted');
+
+    // A brand-new browserTools() instance (fresh `held` map) for a later turn of the same project —
+    // it never called acquire_browser itself, so it has no local memory of the leaseId.
+    const turn2 = browserTools(deps, 'orchestrator');
+    const ctx2: ToolContext = { sessionId: 402, log: () => {}, bundle };
+    expect(await runToolCall(turn2, { id: '1', name: 'release_browser', arguments: '{}' }, ctx2)).toBe('browser lease released');
+    expect(leases.holder()).toBeNull();
+  });
 });
 
 describe('browserTools — acquire_browser abort handling', () => {
@@ -197,6 +215,34 @@ describe('browserTools — acquire_browser abort handling', () => {
     expect(result).toBe('error: aborted');
     expect(polls).toBe(1);
     expect(leases.queue()).toEqual([]);
+  });
+
+  it('releases a lease granted during the abort race instead of leaking it to the aborted requester', async () => {
+    leases.acquire({ kind: 'subagent', id: 'busy' }); // holds; the orchestrator below queues behind it
+    const controller = new AbortController();
+    let polls = 0;
+    const sleep = async (): Promise<void> => {
+      polls += 1;
+      if (polls === 1) {
+        // The owner releases mid-sleep, promoting the queued orchestrator to holder — before the
+        // abort below is even observed by the acquire loop.
+        leases.release(leases.holder()!.leaseId);
+        controller.abort();
+      }
+      await new Promise<void>(() => {});
+    };
+    const tools = browserTools({ ...deps, sleep }, 'orchestrator');
+    const ctx: ToolContext = { sessionId: 23, log: () => {}, signal: controller.signal };
+
+    const result = await runToolCall(tools, { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx);
+
+    expect(result).toBe('error: aborted');
+    expect(leases.holder()).toBeNull();
+    expect(leases.queue()).toEqual([]);
+
+    // The aborted requester must not be able to act with a lease it was never told it holds.
+    expect(await runToolCall(tools, { id: '2', name: 'browser_navigate', arguments: '{"url":"https://start.test/"}' }, ctx))
+      .toBe('error: no browser lease — call acquire_browser first');
   });
 });
 

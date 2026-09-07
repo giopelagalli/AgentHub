@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import type { BrowserRequesterKind } from '@agenthub/shared';
-import type { LeaseManager, Requester } from '../browser/lease.js';
+import type { LeaseManager, Lease, Requester } from '../browser/lease.js';
 import { BrowserError, type BrowserOp, type BrowserProxy } from '../browser/proxy.js';
 import type { Tool, ToolContext } from './tools.js';
 
@@ -115,6 +115,30 @@ async function act(
 }
 
 /**
+ * The requester's current lease, if `leases.holder()` happens to be them right now. Used by every
+ * path below that has to give up on a lease it can't address directly by leaseId: `withdraw` only
+ * ever removes a *queued* entry, so a requester that was granted the lease between the last poll and
+ * a giving-up check (abort, timeout) — or a fresh `held` map (a new turn) that never learned its
+ * leaseId — needs this instead to find the lease it's about to release.
+ */
+function holderMatching(deps: BrowserToolDeps, id: string, kind: BrowserRequesterKind): Lease | null {
+  const holder = deps.leases.holder();
+  return holder && holder.requester.id === id && holder.requester.kind === kind ? holder : null;
+}
+
+/**
+ * Gives up a request that is no longer wanted (aborted, or the orchestrator's poll timed out).
+ * Withdraws the queued entry; if it wasn't queued (it was granted in the gap between the last poll
+ * and this check), releases the lease instead so a caller that never recorded the leaseId — it gave
+ * up before reaching the `held.set` — doesn't leave it held forever.
+ */
+function giveUp(deps: BrowserToolDeps, id: string, kind: BrowserRequesterKind): void {
+  if (deps.leases.withdraw(id, kind)) return;
+  const holder = holderMatching(deps, id, kind);
+  if (holder) deps.leases.release(holder.leaseId);
+}
+
+/**
  * Grants the lease, or (for orchestrators only) polls for it — an orchestrator's turn is bounded to a
  * handful of tool calls, so making it burn one just to learn "still queued" would waste the budget a
  * subagent doesn't have. Subagents get the queue position back immediately instead.
@@ -127,16 +151,25 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
     const now = deps.now ?? Date.now;
     const sleep = deps.sleep ?? defaultSleep;
     const deadline = now() + ORCHESTRATOR_WAIT_MS;
+    // Hoisted out of the loop: one abort listener per acquire call (whenAborted registers it once),
+    // reused across every poll iteration instead of piling up a fresh, never-removed listener per poll.
+    const aborted = whenAborted(ctx.signal);
     while ('queued' in result && now() < deadline) {
       // Raced against the signal so a cancelled turn (ProjectService.stop(), a turn timeout) doesn't
       // sit through up to a full poll interval before noticing — it can otherwise stall shutdown by
       // as much as POLL_INTERVAL_MS on every poll.
-      await Promise.race([sleep(Math.min(POLL_INTERVAL_MS, deadline - now())), whenAborted(ctx.signal)]);
+      await Promise.race([sleep(Math.min(POLL_INTERVAL_MS, deadline - now())), aborted]);
       if (ctx.signal?.aborted) {
-        deps.leases.withdraw(id, kind);
+        giveUp(deps, id, kind);
         return 'error: aborted';
       }
       result = deps.leases.acquire(requester);
+    }
+    if ('queued' in result) {
+      // Gave up waiting: withdraw (or release, if granted in the gap before this check) rather than
+      // report a stale queue position the caller will never poll again to correct.
+      giveUp(deps, id, kind);
+      return 'error: browser busy — try again later';
     }
   }
   if ('granted' in result) {
@@ -149,9 +182,15 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
 function release(deps: BrowserToolDeps, held: Held, kind: BrowserRequesterKind, ctx: ToolContext): string {
   const id = requesterId(kind, ctx);
   const leaseId = held.get(id);
-  if (!leaseId) return 'error: no browser lease — call acquire_browser first';
-  held.delete(id);
-  return deps.leases.release(leaseId) ? 'browser lease released' : 'error: lease already lost';
+  if (leaseId) {
+    held.delete(id);
+    return deps.leases.release(leaseId) ? 'browser lease released' : 'error: lease already lost';
+  }
+  // No memory of a leaseId in this tool list's `held` map — a fresh turn (browserTools() rebuilds it
+  // every call) that re-acquired its still-valid lease in an earlier turn and never held it here.
+  // Fall back to whoever the LeaseManager currently says holds it.
+  const holder = holderMatching(deps, id, kind);
+  return holder && deps.leases.release(holder.leaseId) ? 'browser lease released' : 'error: no browser lease — call acquire_browser first';
 }
 
 // --- tool set ------------------------------------------------------------------------------------

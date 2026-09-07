@@ -100,6 +100,8 @@ export function rsyncSync(cmd: string[] = DEFAULT_RSYNC): SyncFn {
 export class ControlSwitch {
   /** Set for the whole procedure; the server turns state-mutating routes into 503s while it is. */
   private inProgress = false;
+  /** Set only once `quiesce()` has actually run for the current attempt; guards `resume()` on failure. */
+  private quiesced = false;
   private readonly fetchImpl: typeof fetch;
   private readonly sync: SyncFn;
   private readonly log: (line: string) => void;
@@ -150,6 +152,7 @@ export class ControlSwitch {
       // snapshot below is of a database nobody is still changing. Telegram's long poll is part of
       // it: two hubs polling one bot token would both consume the owner's updates.
       await this.deps.quiesce?.();
+      this.quiesced = true;
       // The WAL is the part of the state that isn't in the file yet; folding it in makes the data
       // root, and only the data root, the thing worth copying. The snapshot beside it is what the
       // target opens: the live file is read by the sync while the process still holds it open.
@@ -169,12 +172,16 @@ export class ControlSwitch {
     } catch (err) {
       // Nothing was started on the target on any of these paths, so this hub simply goes back to
       // serving — the flag has to come off, and the paused writers have to come back, or it would
-      // 503 every write and schedule nothing from here on.
+      // 503 every write and schedule nothing from here on. But resume() only undoes a quiesce that
+      // actually ran: a refusal before it (offline, already running, no auth) never stopped anything.
       this.inProgress = false;
-      try {
-        this.deps.resume?.();
-      } catch (resumeErr) {
-        this.log(`[controlnode] resuming after a failed switch: ${(resumeErr as Error).message}`);
+      if (this.quiesced) {
+        this.quiesced = false;
+        try {
+          this.deps.resume?.();
+        } catch (resumeErr) {
+          this.log(`[controlnode] resuming after a failed switch: ${(resumeErr as Error).message}`);
+        }
       }
       throw err;
     }

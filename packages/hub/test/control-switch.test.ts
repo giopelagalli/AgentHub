@@ -1,12 +1,14 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dataStamp } from '@agenthub/shared/data-stamp';
+import type { NodeInfo } from '@agenthub/shared';
 import type { AuthOptions } from '../src/auth.js';
-import { openDb } from '../src/db.js';
+import { openDb, type Db } from '../src/db.js';
 import { createHub, type Hub } from '../src/server.js';
+import { ControlSwitch } from '../src/control-switch.js';
 import { CommandRouter, type ControlNodeDeps } from '../src/telegram/router.js';
 import { FakeTelegramPort } from '../src/telegram/port.js';
 import type { Assistant } from '../src/assistant/assistant.js';
@@ -342,26 +344,38 @@ describe('/controlnode over Telegram', () => {
     expect(port.sent[1]!.msg.text).toMatch(/Move the hub to strix\?/);
     // The confirm button carries a one-shot nonce, so the buttons are matched by shape.
     const confirm = port.sent[1]!.msg.buttons!.flat()[0]!;
+    const cancel = port.sent[1]!.msg.buttons!.flat()[1]!;
     expect(confirm.text).toBe('Confirm');
-    expect(confirm.data).toMatch(/^cn:go:strix:\w+$/);
-    expect(port.sent[1]!.msg.buttons![0]![1]).toEqual({ text: 'Cancel', data: 'cn:cancel' });
+    expect(confirm.data).toMatch(/^cn:go:strix:(\w+)$/);
+    expect(cancel).toEqual({ text: 'Cancel', data: `cn:cancel:${/^cn:go:strix:(\w+)$/.exec(confirm.data)![1]}` });
     expect(switched).toEqual([]);
 
-    await port.simulateCallback(OWNER, 'cn:cancel');
+    // Cancel spends the same nonce the Confirm button carries, so a stale Confirm tap after it
+    // finds nothing left to spend.
+    await port.simulateCallback(OWNER, cancel.data);
     await r.idle();
     expect(port.sent[2]!.msg.text).toBe('Cancelled.');
     expect(switched).toEqual([]);
 
     await port.simulateCallback(OWNER, confirm.data);
     await r.idle();
-    expect(switched).toEqual(['strix']);
-    expect(port.sent[3]!.msg.text).toBe('Hub moved to strix: http://strix:4000');
+    expect(switched).toEqual([]);
+    expect(port.sent[3]!.msg.text).toBe('That confirmation has expired — run /controlnode strix again.');
 
-    // The nonce is spent: tapping the same button again moves nothing.
-    await port.simulateCallback(OWNER, confirm.data);
+    // A fresh confirmation still switches normally.
+    await port.simulateMessage(OWNER, '/controlnode strix');
+    await r.idle();
+    const secondConfirm = port.sent[4]!.msg.buttons!.flat()[0]!;
+    await port.simulateCallback(OWNER, secondConfirm.data);
     await r.idle();
     expect(switched).toEqual(['strix']);
-    expect(port.sent[4]!.msg.text).toBe('That confirmation has expired — run /controlnode strix again.');
+    expect(port.sent[5]!.msg.text).toBe('Hub moved to strix: http://strix:4000');
+
+    // The nonce is spent: tapping the same button again moves nothing.
+    await port.simulateCallback(OWNER, secondConfirm.data);
+    await r.idle();
+    expect(switched).toEqual(['strix']);
+    expect(port.sent[6]!.msg.text).toBe('That confirmation has expired — run /controlnode strix again.');
   });
 
   it('expires a confirmation button after ten minutes', async () => {
@@ -411,5 +425,52 @@ describe('/controlnode over Telegram', () => {
     await port.simulateCallback(OWNER, port.sent[1]!.msg.buttons!.flat()[0]!.data);
     await r.idle();
     expect(port.sent[2]!.msg.text).toBe('Switch to strix failed: a video job is running');
+  });
+});
+
+describe('resume() only follows a quiesce that actually ran', () => {
+  const target: NodeInfo = {
+    id: 2, name: 'strix', arch: 'x86_64', status: 'online', lastHeartbeat: Date.now(),
+    endpoints: [], jobTypes: [], profiles: [], video: false,
+    controlNode: true, control: { url: 'http://fake-strix' },
+  };
+  const fakeDb = { pragma: () => {}, prepare: () => ({ run: () => {} }) } as unknown as Db;
+  const fakeRegistry = { byName: () => target, all: () => [target] } as unknown as NodeRegistry;
+
+  function makeSwitch(fetchImpl: typeof fetch, extra: { authConfigured?: boolean } = {}) {
+    const quiesce = vi.fn(async () => {});
+    const resume = vi.fn();
+    const sw = new ControlSwitch({
+      db: fakeDb, registry: fakeRegistry, dataRoot: '/tmp/agenthub-cn-fake', self: 'mini',
+      quiesce, resume, fetchImpl, ...extra,
+    });
+    return { sw, quiesce, resume };
+  }
+
+  it('a 502 (the daemon unreachable) never runs quiesce or resume', async () => {
+    const { sw, quiesce, resume } = makeSwitch(async () => { throw new Error('connection refused'); });
+    await expect(sw.switchTo('strix')).rejects.toThrow(/failed/);
+    expect(quiesce).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('a 409 (the target already running a hub) never runs quiesce or resume', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      running: true, dataRoot: '/remote', hubUrl: 'http://strix:4000',
+    }))) as typeof fetch;
+    const { sw, quiesce, resume } = makeSwitch(fetchImpl);
+    await expect(sw.switchTo('strix')).rejects.toThrow(/already running a hub/);
+    expect(quiesce).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('a 412 (the target would come up with no HUB_PASSWORD) never runs quiesce or resume', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({
+      running: false, dataRoot: '/remote', hubUrl: 'http://strix:4000', authConfigured: false,
+    }))) as typeof fetch;
+    const { sw, quiesce, resume } = makeSwitch(fetchImpl, { authConfigured: true });
+    await expect(sw.switchTo('strix')).rejects.toThrow(/HUB_PASSWORD/);
+    expect(quiesce).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
   });
 });

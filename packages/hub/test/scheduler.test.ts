@@ -14,7 +14,7 @@ import type { Briefing } from '../src/projects/schema.js';
 import { createHub, type Hub } from '../src/server.js';
 import { Alerts, type AlertEvents } from '../src/telegram/alerts.js';
 import { FakeTelegramPort } from '../src/telegram/port.js';
-import { Scheduler, type Clock } from '../src/telegram/scheduler.js';
+import { Scheduler, SystemClock, type Clock } from '../src/telegram/scheduler.js';
 
 const OWNER = 'owner-chat';
 
@@ -324,6 +324,23 @@ describe('Scheduler firing', () => {
 
     clock.advanceTo(Date.UTC(2026, 0, 3, 0, 0, 0));
     expect(port.sent).toHaveLength(0);
+  });
+
+  it('start() is idempotent: a second call never orphans the first call\'s timers', async () => {
+    const { hub: h, port, assistant } = await setup();
+    vi.useFakeTimers();
+    try {
+      const scheduler = new Scheduler({
+        clock: new SystemClock(), port, ownerChatId: OWNER, master: h.master, service: h.projects, assistant,
+        briefingTime: '08:00', checkinTimes: ['13:00'], tz: 'UTC',
+      });
+      scheduler.start();
+      scheduler.start();
+      scheduler.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

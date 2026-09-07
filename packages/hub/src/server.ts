@@ -164,6 +164,9 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
     ...(opts.video?.cooldownMs !== undefined ? { cooldownMs: opts.video.cooldownMs } : {}),
     ...(opts.video?.now ? { now: opts.video.now } : {}),
+    // Same staleness window the registry itself uses, so `restore()`'s own staleness check agrees
+    // with `NodeRegistry.sweep()`/`online()` without needing a sweep to have run first.
+    ...(opts.staleMs !== undefined ? { staleMs: opts.staleMs } : {}),
   });
   // A hub that died mid-video comes back owing the node its serving: the slots it was holding are
   // read back here, and whatever the node's live profile turns out to be is reconciled on its next
@@ -180,16 +183,25 @@ export function createHub(opts: HubOptions = {}): Hub {
    * poll — that last one before the new hub starts, so the two never both consume the owner's
    * updates. `resumeWriters` puts them back on the paths where this hub keeps serving.
    */
+  // Whether quiesceWriters actually stopped the port — a stop() call that itself failed left long
+  // polling running, and resumeWriters must not start() a port that was never stopped.
+  let portStoppedByQuiesce = false;
   const quiesceWriters = async (): Promise<void> => {
     await projects.stop({ graceMs: QUIESCE_GRACE_MS });
     const handle = await assistantReady?.catch(() => null);
     handle?.scheduler?.stop();
-    await handle?.port?.stop().catch((err: unknown) => app.log.error(`pausing telegram for the switch failed: ${(err as Error).message}`));
+    if (handle?.port) {
+      await handle.port.stop()
+        .then(() => { portStoppedByQuiesce = true; })
+        .catch((err: unknown) => app.log.error(`pausing telegram for the switch failed: ${(err as Error).message}`));
+    }
   };
   const resumeWriters = (): void => {
     projects.start();
     void assistantReady?.then((handle) => {
       handle.scheduler?.start();
+      if (!portStoppedByQuiesce) return;
+      portStoppedByQuiesce = false;
       return handle.port?.start();
     }).catch((err: unknown) => app.log.error(`resuming after a failed switch: ${(err as Error).message}`));
   };

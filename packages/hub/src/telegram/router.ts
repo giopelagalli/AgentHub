@@ -207,7 +207,7 @@ export class CommandRouter {
     const nonce = this.cnConfirmations.propose(`move the hub to ${wanted}`, async () => wanted).id;
     return {
       text: `Move the hub to ${wanted}? This stops the hub here once the new one is up.`,
-      buttons: [[{ text: 'Confirm', data: `cn:go:${wanted}:${nonce}` }, { text: 'Cancel', data: 'cn:cancel' }]],
+      buttons: [[{ text: 'Confirm', data: `cn:go:${wanted}:${nonce}` }, { text: 'Cancel', data: `cn:cancel:${nonce}` }]],
     };
   }
 
@@ -266,7 +266,12 @@ export class CommandRouter {
       else await this.deps.service.runTurn(slug);
       return [formatProjects(await this.deps.service.briefings())];
     }
-    if (data === 'cn:cancel') return [{ text: 'Cancelled.' }];
+    // Spends the nonce the way `cn:go` does: without this a Cancel tap followed by a still-valid
+    // Confirm tap could switch the hub anyway.
+    if (data.startsWith('cn:cancel:')) {
+      this.cnConfirmations.cancel(data.slice('cn:cancel:'.length));
+      return [{ text: 'Cancelled.' }];
+    }
     if (data.startsWith('cn:go:')) {
       // `cn:go:<node>:<nonce>`; the node name can't contain a colon, but splitting from the right
       // is what makes that a property of this format rather than an assumption about node names.

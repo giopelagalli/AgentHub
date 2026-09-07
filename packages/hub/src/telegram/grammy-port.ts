@@ -16,6 +16,9 @@ export class GrammyPort implements TelegramPort {
   // Flips false if polling ever dies (bot.start()'s promise rejecting after onStart already
   // resolved it, or bot.catch failing to recover) — see isRunning().
   private alive = false;
+  // Only the very first start() should drop pending updates: a resume after a quiesce window must
+  // not discard owner messages sent while this hub had polling paused.
+  private startedOnce = false;
 
   constructor(token: string) {
     this.bot = new Bot(token);
@@ -77,8 +80,10 @@ export class GrammyPort implements TelegramPort {
 
   /** Resolves once long polling has actually started, not when it stops (which is what `bot.start()`'s own promise waits for). */
   start(): Promise<void> {
+    const dropPendingUpdates = !this.startedOnce;
+    this.startedOnce = true;
     return new Promise((resolve, reject) => {
-      const run = this.bot.start({ drop_pending_updates: true, onStart: () => { this.alive = true; resolve(); } });
+      const run = this.bot.start({ drop_pending_updates: dropPendingUpdates, onStart: () => { this.alive = true; resolve(); } });
       // The promise above only settles once polling *stops* — after onStart it's a long-running
       // tail, not a rejection this caller should await. Log it here so a later failure isn't
       // swallowed, and clear `alive` so isRunning() reflects reality.

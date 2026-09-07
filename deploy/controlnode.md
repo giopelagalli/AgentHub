@@ -46,12 +46,14 @@ through to the hub it spawns:
     HUB_PASSWORD  HUB_SESSION_SECRET  DAEMON_TOKEN  TRUST_PROXY
     CONTROL_NODE_NAME  HUB_HOST  PORT
     TELEGRAM_BOT_TOKEN  TELEGRAM_OWNER_CHAT_ID  BRIEFING_TIME  CHECKIN_TIMES
-    XAI_API_KEY  X_API_KEY  GEMINI_API_KEY  SEARCH_API_KEY  SEARCH_PROVIDER  COMFY_URL
+    XAI_API_KEY  XAI_MODEL  X_API_KEY  GEMINI_API_KEY  GEMINI_MODEL  SEARCH_API_KEY  SEARCH_PROVIDER
 
-Each name is read from `controlNode.env` in the daemon config first and the daemon's own process
-environment second; `CONTROL_NODE_NAME` is always overridden with `node.name`, so the new hub cannot
-offer its own machine as a switch target. Set them **the same on both candidates**: a value only the
-Mac mini has is a capability the hub loses the moment it moves.
+A started hub otherwise inherits this daemon process's whole environment; this resolution list: these
+keys are overridden from `controlNode.env` (falling back to the daemon's own process environment when
+a key isn't set there); everything else is inherited unchanged. `CONTROL_NODE_NAME` is always
+overridden with `node.name` on top of that, so the new hub cannot offer its own machine as a switch
+target. Set the resolution list **the same on both candidates**: a value only the Mac mini has is a
+capability the hub loses the moment it moves.
 
 `GET /control/hub` reports `authConfigured` (true when a `HUB_PASSWORD` is reachable at all). A hub
 that has auth on **refuses with 412** to hand itself to a node reporting `authConfigured: false`,

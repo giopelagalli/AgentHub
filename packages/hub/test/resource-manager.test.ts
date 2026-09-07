@@ -258,8 +258,8 @@ describe('ResourceManager', () => {
     const fake = await startControl();
     const { db, registry, gateway } = setup(fake.url);
     // The node was last heard from long before this hub came up: offline for slot purposes.
+    // `restore()` must see this from the heartbeat directly — no sweep() has run to flip its status.
     registry.register(registration(fake.url), Date.now() - 120_000);
-    registry.sweep();
 
     const store = sqliteSlotStore(db);
     store.save('spark', 14);

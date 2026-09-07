@@ -103,6 +103,9 @@ export class Scheduler {
   constructor(private deps: SchedulerDeps) {}
 
   start(): void {
+    // Idempotent: a second start() must not orphan the timers the first one set — stop() first so
+    // scheduleNext never piles a new timer on top of one still pending.
+    this.stop();
     this.scheduleNext('briefing');
     this.scheduleNext('checkin');
   }

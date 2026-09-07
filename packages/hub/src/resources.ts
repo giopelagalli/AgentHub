@@ -14,6 +14,8 @@ const DEFAULT_DRAIN_TIMEOUT_MS = 60_000;
 const DEFAULT_DRAIN_POLL_MS = 100;
 const DEFAULT_CONTROL_TIMEOUT_MS = 30_000;
 const DEFAULT_COOLDOWN_MS = 30_000;
+/** Matches `NodeRegistry`'s own default; overridable so a hub can pass the same value it gave the registry. */
+const DEFAULT_STALE_MS = 15_000;
 
 /**
  * Where held slots live across a hub restart. `held` alone is in-memory, so without this a hub that
@@ -62,6 +64,8 @@ export interface ResourceManagerDeps {
   /** How long a node is passed over for video work after a failed swap. */
   cooldownMs?: number;
   now?: () => number;
+  /** How long since the last heartbeat before `restore()` treats a node as offline for slot purposes. */
+  staleMs?: number;
 }
 
 export class VideoSlotBusyError extends Error {
@@ -134,7 +138,13 @@ export class ResourceManager {
       // never come back. The slot stays held (the job is still running as far as the queue knows)
       // and `reconcile` re-applies the park on the node's first heartbeat — or the sweep releases
       // the slot when it gives up on the node instead.
-      if (this.deps.registry.byName(node)?.status !== 'online') {
+      //
+      // Staleness is computed directly from the heartbeat rather than trusting `NodeInfo.status`:
+      // that field only flips to 'offline' once `NodeRegistry.sweep()` has run, which a hub freshly
+      // restarted from `restore()` has not necessarily done yet.
+      const info = this.deps.registry.byName(node);
+      const staleMs = this.deps.staleMs ?? DEFAULT_STALE_MS;
+      if (!info || this.now() - info.lastHeartbeat > staleMs) {
         this.log(`[resources] ${node} holds the video slot for job ${jobId} but its heartbeat is stale; not parking until it reports in`);
         continue;
       }

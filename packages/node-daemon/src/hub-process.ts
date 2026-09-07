@@ -35,11 +35,12 @@ export const HUB_ENV_KEYS = [
   'BRIEFING_TIME',
   'CHECKIN_TIMES',
   'XAI_API_KEY',
+  'XAI_MODEL',
   'X_API_KEY',
   'GEMINI_API_KEY',
+  'GEMINI_MODEL',
   'SEARCH_API_KEY',
   'SEARCH_PROVIDER',
-  'COMFY_URL',
 ] as const;
 
 export interface HubStatus {

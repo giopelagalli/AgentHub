@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
@@ -162,6 +162,75 @@ describe('assistant HTTP API', () => {
     } finally {
       await bare.stop();
     }
+  });
+});
+
+describe('telegram wiring failures leave the assistant usable', () => {
+  /** A port whose polling never comes up — the shape of a bad token or an unreachable Telegram. */
+  class UnstartablePort extends FakeTelegramPort {
+    stopped = false;
+
+    override async start(): Promise<void> {
+      throw new Error('401 unauthorized');
+    }
+
+    override async stop(): Promise<void> {
+      this.stopped = true;
+    }
+  }
+
+  /** Builds a hub whose telegram wiring is expected to fail, and tears it down with the suite. */
+  async function setupBroken(cfg: { port: FakeTelegramPort; briefingTime?: string }): Promise<Hub> {
+    projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-broken-projects-'));
+    memoryRoot = await mkdtemp(join(tmpdir(), 'agenthub-broken-memory-'));
+    hub = createHub({
+      projectsRoot,
+      assistant: {
+        memoryRoot, telegram: { port: cfg.port, ownerChatId: OWNER }, clock: new FakeClock(),
+        ...(cfg.briefingTime ? { schedule: { briefingTime: cfg.briefingTime } } : {}),
+      },
+    });
+    await hub.projects.stop();
+    return hub;
+  }
+
+  it('keeps the HTTP assistant serving when the telegram port refuses to start', async () => {
+    const port = new UnstartablePort();
+    const h = await setupBroken({ port });
+
+    const handle = await h.assistant();
+    expect(handle.port).toBeNull();
+    expect(handle.scheduler).toBeNull();
+    expect(port.stopped).toBe(true);
+    expect((await h.app.inject({ method: 'GET', url: '/api/planner' })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: 'GET', url: '/api/memory/index' })).statusCode).toBe(200);
+  });
+
+  it('answers 503, not 500, when the wiring itself failed', async () => {
+    projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-broken-projects-'));
+    // A memory root that cannot exist: its parent is a regular file, so MemoryStore.open rejects
+    // and `assistantReady` is a rejected promise every route has to cope with.
+    memoryRoot = await mkdtemp(join(tmpdir(), 'agenthub-broken-memory-'));
+    const blocker = join(memoryRoot, 'not-a-dir');
+    await writeFile(blocker, 'x', 'utf8');
+    hub = createHub({ projectsRoot, assistant: { memoryRoot: join(blocker, 'memory') } });
+    await hub.projects.stop();
+
+    expect((await hub.app.inject({ method: 'GET', url: '/api/planner' })).statusCode).toBe(503);
+    expect((await hub.app.inject({ method: 'POST', url: '/api/assistant/messages', payload: { text: 'hi' } })).statusCode).toBe(503);
+    await expect(hub.stop()).resolves.toBeUndefined();
+    hub = undefined;
+  });
+
+  it('keeps serving — and stops cleanly — when the configured briefing time is malformed', async () => {
+    const port = new FakeTelegramPort();
+    const h = await setupBroken({ port, briefingTime: '25:99' });
+
+    const handle = await h.assistant();
+    expect(handle.scheduler).toBeNull();
+    expect((await h.app.inject({ method: 'GET', url: '/api/planner' })).statusCode).toBe(200);
+    await expect(h.stop()).resolves.toBeUndefined();
+    hub = undefined; // already stopped; afterEach must not stop it twice
   });
 });
 

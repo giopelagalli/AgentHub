@@ -409,20 +409,32 @@ export function createHub(opts: HubOptions = {}): Hub {
 
     const { port, ownerChatId } = cfg.telegram;
     const clock = cfg.clock ?? new SystemClock();
-    handle.router = new CommandRouter({ port, ownerChatId, assistant, service: projects, master, planner, registry, gate });
-    handle.router.start();
-    handle.scheduler = new Scheduler({
+    const router = new CommandRouter({ port, ownerChatId, assistant, service: projects, master, planner, registry, gate });
+    const scheduler = new Scheduler({
       clock, port, ownerChatId, master, service: projects, assistant,
       briefingTime: cfg.schedule?.briefingTime ?? DEFAULT_BRIEFING_TIME,
       checkinTimes: cfg.schedule?.checkinTimes ?? DEFAULT_CHECKIN_TIMES,
       ...(cfg.schedule?.tz ? { tz: cfg.schedule.tz } : {}),
     });
-    handle.scheduler.start();
-    handle.alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock });
-    handle.alerts.attach(hubEvents);
-    await port.start();
-    // Recorded only once polling is up, so `stop()` never stops a port that never started.
-    handle.port = port;
+    // Telegram is one optional surface on the assistant, not a precondition for it: a bad token, an
+    // unreachable Telegram, or a malformed BRIEFING_TIME costs the bot and nothing else — the
+    // handle still comes back usable and the HTTP assistant routes keep working. Polling starts
+    // first so nothing is wired to a port that never came up.
+    try {
+      await port.start();
+      router.start();
+      scheduler.start();
+      const alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock });
+      alerts.attach(hubEvents);
+      handle.port = port;
+      handle.router = router;
+      handle.scheduler = scheduler;
+      handle.alerts = alerts;
+    } catch (err) {
+      app.log.error(`telegram startup failed, continuing without it: ${(err as Error).message}`);
+      scheduler.stop();
+      await port.stop().catch((stopErr) => app.log.error(`telegram port stop failed: ${(stopErr as Error).message}`));
+    }
     return handle;
   };
 
@@ -431,13 +443,18 @@ export function createHub(opts: HubOptions = {}): Hub {
   // unhandled rejection minutes later; this logs it and marks the promise handled.
   if (assistantReady) void assistantReady.catch((err) => app.log.error(`assistant wiring failed: ${(err as Error).message}`));
 
-  /** Resolves the wired assistant, or replies 503 and returns null when the hub has none. */
+  /**
+   * Resolves the wired assistant, or replies 503 and returns null when the hub has none — including
+   * when the wiring itself failed (a memory root that won't open). That is unavailability, not a
+   * request-handling bug, so it must not reach the client as a 500 from a rejected route promise.
+   */
   const requireAssistant = async (reply: FastifyReply): Promise<AssistantHandle | null> => {
-    if (!assistantReady) {
-      reply.code(503).send({ error: 'assistant not configured' });
+    const handle = assistantReady ? await assistantReady.catch(() => null) : null;
+    if (!handle) {
+      reply.code(503).send({ error: assistantReady ? 'assistant unavailable' : 'assistant not configured' });
       return null;
     }
-    return assistantReady;
+    return handle;
   };
 
   const resolveList = (value: string, reply: FastifyReply): PlannerList | null => {

@@ -11,6 +11,7 @@ import {
   hotspotsFor,
   planFor,
   projectFloorPlan,
+  TV_SCREEN,
 } from '../src/render/floorplans.js';
 import type { UiState } from '../src/store.js';
 
@@ -27,6 +28,7 @@ function uiState(hub: Partial<HubState> | null, busy: number[] = []): UiState {
     busy: new Set(busy),
     floor: 'f1',
     connection: 'live',
+    browserFrame: null,
   };
 }
 
@@ -82,6 +84,23 @@ describe('FLOORPLANS', () => {
       });
     });
   }
+
+  it('gives the screening room a browser hotspot over its screen', () => {
+    const spot = FLOORPLANS.f5.hotspots.find((h) => h.id === 'browser:tv');
+    expect(spot).toBeDefined();
+    // The live view is painted into the screen well, which must sit inside the hotspot.
+    expect(TV_SCREEN.x).toBeGreaterThanOrEqual(spot!.x);
+    expect(TV_SCREEN.y).toBeGreaterThanOrEqual(spot!.y);
+    expect(TV_SCREEN.x + TV_SCREEN.w).toBeLessThanOrEqual(spot!.x + spot!.w);
+    expect(TV_SCREEN.y + TV_SCREEN.h).toBeLessThanOrEqual(spot!.y + spot!.h);
+  });
+
+  it('sizes the screen well at the 128x72 the spec asks for', () => {
+    expect(TV_SCREEN.w).toBe(128);
+    expect(TV_SCREEN.h).toBe(72);
+    expect(SPRITES.tvStatic[0].rows[0]).toHaveLength(TV_SCREEN.w);
+    expect(SPRITES.tvStatic[0].rows).toHaveLength(TV_SCREEN.h);
+  });
 
   it('gives the lobby its jobboard and directory hotspots', () => {
     const ids = FLOORPLANS.f1.hotspots.map((h) => h.id);
@@ -167,8 +186,22 @@ describe('live floors', () => {
     expect(items.filter((i) => i.sprite === 'desk')).toHaveLength(2);
   });
 
+  it('lights the screening room plaque red only while the browser is held', () => {
+    const free = dynamicFurniture('f5', live);
+    expect(free).toEqual([{ sprite: 'leasePlaque', x: 248, y: 28, frame: 0 }]);
+
+    const held = uiState({
+      browser: {
+        holder: { leaseId: 'l1', requester: { kind: 'subagent', id: '7' }, expiresAt: 0 },
+        queue: [],
+        node: 'macmini',
+      },
+    });
+    expect(dynamicFurniture('f5', held)[0].frame).toBe(1);
+  });
+
   it('keeps every live sprite on screen', () => {
-    for (const id of ['b1', 'f2'] as const) {
+    for (const id of ['b1', 'f2', 'f5'] as const) {
       for (const item of dynamicFurniture(id, live)) {
         const frames = SPRITES[item.sprite];
         expect(frames, `unknown sprite '${item.sprite}'`).toBeDefined();

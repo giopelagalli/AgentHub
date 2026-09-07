@@ -1,4 +1,5 @@
 import type { Tier } from '@agenthub/shared';
+import { TV_SCREEN_INSET } from '../art/sprites.js';
 import type { FloorId, StaticFloorId } from '../floors.js';
 import type { UiState } from '../store.js';
 
@@ -81,6 +82,22 @@ const STATION_LIFT = 12;
 /** Aisle slots on B1 and desk slots on 2F: front row first, then the back row. */
 const RACK_SLOTS = [64, 144].flatMap((y) => RACK_XS.map((x) => ({ x, y })));
 const DESK_SLOTS = [112, 200].flatMap((y) => DESK_XS.map((x) => ({ x, y })));
+
+// 5F — the screen stands against the back wall, its plaque on the wall beside it.
+const TV_X = 88;
+const TV_Y = 24;
+const TV_W = 144;
+const TV_H = 100;
+const PLAQUE_X = 248;
+const PLAQUE_Y = 28;
+
+/** Where the live screencast lands on screen: the `tv` sprite's well, in floor coordinates. */
+export const TV_SCREEN = {
+  x: TV_X + TV_SCREEN_INSET.x,
+  y: TV_Y + TV_SCREEN_INSET.y,
+  w: TV_SCREEN_INSET.w,
+  h: TV_SCREEN_INSET.h,
+};
 
 const GAUGE_TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const GAUGE_X = 160;
@@ -190,6 +207,46 @@ export const FLOORPLANS: Record<StaticFloorId, FloorPlan> = {
       { sprite: 'plant', x: 284, y: 248 },
     ],
     hotspots: [elevatorHotspot],
+  },
+
+  // 5F — screening room: the shared browser on a big screen, two rows of benches
+  // facing it, and the lease plaque on the wall (lamp state is live — see
+  // dynamicFurniture()).
+  f5: {
+    tilemap: [
+      TOP,
+      WALL,
+      BASE,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+      OPEN,
+    ],
+    legend: { ...PAINTED, f: 'carpet' },
+    furniture: [
+      elevator,
+      { sprite: 'tv', x: TV_X, y: TV_Y },
+      // Staggered rows, the way seats are set out in a small screening room.
+      { sprite: 'sofa', x: 72, y: 168 },
+      { sprite: 'sofa', x: 176, y: 168 },
+      { sprite: 'sofa', x: 40, y: 240 },
+      { sprite: 'sofa', x: 208, y: 240 },
+      { sprite: 'floorLamp', x: 264, y: 128 },
+      { sprite: 'plant', x: 16, y: 140 },
+      { sprite: 'plant', x: 292, y: 140 },
+    ],
+    hotspots: [elevatorHotspot, { id: 'browser:tv', x: TV_X, y: TV_Y, w: TV_W, h: TV_H }],
   },
 
   // PH — polished stone, gilded desk, briefing board, night skyline window.
@@ -337,6 +394,12 @@ export function dynamicFurniture(floorId: FloorId, state: UiState): Furniture[] 
         frame: Math.min(hub.streams[tier] ?? 0, GAUGE_SEGMENTS),
       })),
     ];
+  }
+
+  // The plaque's lamp is the whole of the browser room's live state: green while
+  // the browser is free, red while somebody holds the lease.
+  if (floorId === 'f5') {
+    return [{ sprite: 'leasePlaque', x: PLAQUE_X, y: PLAQUE_Y, frame: hub.browser?.holder ? 1 : 0 }];
   }
 
   if (floorId === 'f2') {

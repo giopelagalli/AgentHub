@@ -1,11 +1,21 @@
 import type { HubState } from '@agenthub/shared';
 import { floorsFor, type FloorId } from './floors.js';
 
+/** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the renderer. */
+export interface BrowserFrame {
+  nodeName: string;
+  leaseId: string | null;
+  jpegBase64: string;
+  at: number;
+}
+
 export interface UiState {
   hub: HubState | null;
   busy: Set<number>;
   floor: FloorId;
   connection: 'live' | 'polling' | 'down';
+  /** Newest screencast frame, or null when nothing has arrived for this visit to the screening room. */
+  browserFrame: BrowserFrame | null;
 }
 
 export type StoreEvent =
@@ -13,10 +23,13 @@ export type StoreEvent =
   | { type: 'agent-busy'; agentId: number; busy: boolean }
   | { type: 'busy-reset' }
   | { type: 'set-floor'; floor: FloorId }
+  | { type: 'browser-frame'; frame: BrowserFrame }
   | { type: 'connection'; status: UiState['connection'] };
 
 export class Store {
-  private state: UiState = { hub: null, busy: new Set(), floor: 'f1', connection: 'down' };
+  private state: UiState = {
+    hub: null, busy: new Set(), floor: 'f1', connection: 'down', browserFrame: null,
+  };
   private listeners = new Set<(s: UiState) => void>();
 
   getState(): UiState {
@@ -46,8 +59,17 @@ export class Store {
       case 'busy-reset':
         this.state = { ...this.state, busy: new Set() };
         break;
+      // Leaving the screening room drops the last frame: the cast stops with the
+      // unsubscribe, and coming back to a frozen still would read as live.
       case 'set-floor':
-        this.state = { ...this.state, floor: event.floor };
+        this.state = {
+          ...this.state,
+          floor: event.floor,
+          browserFrame: event.floor === 'f5' ? this.state.browserFrame : null,
+        };
+        break;
+      case 'browser-frame':
+        this.state = { ...this.state, browserFrame: event.frame };
         break;
       case 'connection':
         this.state = { ...this.state, connection: event.status };

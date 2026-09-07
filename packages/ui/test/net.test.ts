@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { HubState } from '@agenthub/shared';
-import { applyHubState, handleWsMessage, shouldOpenSocket, shouldUsePoll } from '../src/net.js';
+import {
+  applyHubState,
+  BROWSER_TOPIC,
+  handleWsMessage,
+  shouldOpenSocket,
+  shouldUsePoll,
+  topicTransition,
+} from '../src/net.js';
 import { Store } from '../src/store.js';
 
 const hubState: HubState = {
@@ -52,6 +59,20 @@ describe('shouldOpenSocket', () => {
   });
 });
 
+describe('topicTransition', () => {
+  it('subscribes on arriving at the screening room and unsubscribes on leaving', () => {
+    expect(topicTransition(null, 'f5')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition('f1', 'f5')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition('f5', 'p:acme')).toEqual({ type: 'unsubscribe', topic: BROWSER_TOPIC });
+  });
+
+  it('says nothing when the screening room is neither entered nor left', () => {
+    expect(topicTransition(null, 'f1')).toBeNull();
+    expect(topicTransition('f1', 'ph')).toBeNull();
+    expect(topicTransition('f5', 'f5')).toBeNull();
+  });
+});
+
 describe('applyHubState', () => {
   it('dispatches a valid payload into the store', () => {
     const store = new Store();
@@ -84,6 +105,20 @@ describe('handleWsMessage', () => {
     expect([...store.getState().busy]).toEqual([]);
   });
 
+  it('applies browser-frame frames, defaulting a missing lease to null', () => {
+    const store = new Store();
+    handleWsMessage(store, JSON.stringify({
+      type: 'browser-frame', nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 5,
+    }));
+    expect(store.getState().browserFrame).toEqual({
+      nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 5,
+    });
+    handleWsMessage(store, JSON.stringify({
+      type: 'browser-frame', nodeName: 'macmini', leaseId: null, jpegBase64: 'def', at: 6,
+    }));
+    expect(store.getState().browserFrame?.leaseId).toBeNull();
+  });
+
   it('ignores malformed and unknown frames without throwing', () => {
     const store = new Store();
     let notifications = 0;
@@ -96,10 +131,14 @@ describe('handleWsMessage', () => {
       JSON.stringify({ type: 'state' }),
       JSON.stringify({ type: 'agent-busy', agentId: 'seven', busy: true }),
       JSON.stringify({ type: 'agent-busy', agentId: 7 }),
+      JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', at: 1 }),
+      JSON.stringify({ type: 'browser-frame', jpegBase64: 'abc', at: 1 }),
+      JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', jpegBase64: 'abc' }),
     ]) {
       expect(() => handleWsMessage(store, raw)).not.toThrow();
     }
     expect(notifications).toBe(0);
     expect(store.getState().hub).toBeNull();
+    expect(store.getState().browserFrame).toBeNull();
   });
 });

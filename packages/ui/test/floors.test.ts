@@ -8,6 +8,7 @@ describe('FLOORS', () => {
       { id: 'b1', label: 'B1 SERVER ROOM' },
       { id: 'f1', label: '1F LOBBY' },
       { id: 'f2', label: '2F GENERAL STAFF' },
+      { id: 'f5', label: '5F SCREENING ROOM' },
       { id: 'ph', label: 'PH PENTHOUSE' },
     ]);
   });
@@ -42,17 +43,18 @@ describe('floorsFor', () => {
     expect(floorsFor(hubState([]))).toEqual(FLOORS);
   });
 
-  it('inserts one floor per non-done project, numbered from 3F, before the penthouse', () => {
+  it('inserts one floor per non-done project, numbered from 3F, before the screening room', () => {
     const floors = floorsFor(
       hubState([project({ slug: 'acme', title: 'Acme' }), project({ slug: 'zeta', title: 'Zeta' })]),
     );
-    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:acme', 'p:zeta', 'ph']);
+    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:acme', 'p:zeta', 'f5', 'ph']);
     expect(floors.map((f) => f.label)).toEqual([
       'B1 SERVER ROOM',
       '1F LOBBY',
       '2F GENERAL STAFF',
       '3F ACME',
       '4F ZETA',
+      '5F SCREENING ROOM',
       'PH PENTHOUSE',
     ]);
   });
@@ -64,7 +66,7 @@ describe('floorsFor', () => {
         project({ slug: 'zeta', title: 'Zeta', status: 'active' }),
       ]),
     );
-    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:zeta', 'ph']);
+    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:zeta', 'f5', 'ph']);
   });
 
   it('keeps paused/blocked projects on the tower', () => {
@@ -74,7 +76,7 @@ describe('floorsFor', () => {
         project({ slug: 'b', status: 'blocked' }),
       ]),
     );
-    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:a', 'p:b', 'ph']);
+    expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:a', 'p:b', 'f5', 'ph']);
   });
 
   it('uppercases and truncates the title to 14 chars plus an ellipsis', () => {

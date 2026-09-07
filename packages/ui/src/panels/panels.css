@@ -159,6 +159,36 @@
   background: var(--c-pale);
 }
 
+/* Action row for panels that do more than report — the browser lease levers. */
+.gb-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.gb-actions button {
+  padding: 3px 8px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--c-cream);
+  background: var(--c-ink);
+  border: 2px solid var(--c-ink);
+  cursor: pointer;
+}
+
+.gb-actions button:focus-visible {
+  outline: 1px dotted var(--c-mid);
+  outline-offset: 2px;
+}
+
+.gb-actions button:disabled {
+  color: var(--c-mid);
+  background: var(--c-pale);
+  border-color: var(--c-mid);
+  cursor: default;
+}
+
 .gb-menu {
   margin: 0;
   padding: 0;

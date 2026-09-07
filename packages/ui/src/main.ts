@@ -8,6 +8,7 @@ import { startLoop } from './engine/loop.js';
 import { Screen } from './engine/screen.js';
 import { floorsFor } from './floors.js';
 import { connect } from './net.js';
+import { openBrowserPanel } from './panels/browser.js';
 import { openChat } from './panels/chat.js';
 import { closeDialog, dialogIsOpen, openDialog, tickDialog, type DialogChoice } from './panels/dialog.js';
 import { openElevatorMenu } from './panels/elevator.js';
@@ -41,6 +42,34 @@ store.subscribe((state) => {
   badge.textContent = badgeLabel(state.connection);
 });
 badge.textContent = badgeLabel(store.getState().connection);
+
+/**
+ * The newest screencast frame, decoded once on arrival — the render loop draws
+ * whichever image is ready rather than waiting on a decode. A frame that lands
+ * after a newer one has already been decoded is dropped, and the screen falls
+ * back to static as soon as no browser node is online.
+ */
+let screencast: HTMLImageElement | null = null;
+let screencastAt = 0;
+
+store.subscribe((state) => {
+  const frame = state.browserFrame;
+  if (!frame || !state.hub?.browser?.node) {
+    screencast = null;
+    screencastAt = 0;
+    return;
+  }
+  if (frame.at <= screencastAt) return;
+  screencastAt = frame.at;
+  const image = new Image();
+  image.src = `data:image/jpeg;base64,${frame.jpegBase64}`;
+  void image
+    .decode()
+    .then(() => {
+      if (frame.at >= screencastAt) screencast = image;
+    })
+    .catch(() => {});
+});
 
 /** Informational panels, newest last: Esc closes the one on top. */
 const panels: (() => void)[] = [];
@@ -227,6 +256,10 @@ bindPointer(screen.canvas, (x, y) => {
     void greetAssistant();
     return;
   }
+  if (spot.id === 'browser:tv') {
+    openPanel(openBrowserPanel(document.body, store));
+    return;
+  }
   if (spot.id === 'briefing') {
     void openMasterBriefingDialog();
     return;
@@ -305,6 +338,6 @@ startLoop(
       'ticks' in ride ? ride.ticks : 0,
       SPRITES.elevator.length,
     );
-    renderFloor(screen.ctx, state.floor, state, tick, doors);
+    renderFloor(screen.ctx, state.floor, state, tick, doors, screencast);
   },
 );

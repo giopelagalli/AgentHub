@@ -132,6 +132,191 @@ function elevatorDoors(open: number): SpriteDef {
   return { legend: ELEVATOR_LEGEND, rows };
 }
 
+const TV_LEGEND = {
+  'D': 'steelDark', 's': 'steel', 'S': 'steelLit', 'g': 'glass', 'e': 'ledGreen', 'a': 'accentAmber', 'k': 'ink',
+};
+
+/** Where the `tv` sprite's screen well sits inside the sprite, and how big it is. */
+export const TV_SCREEN_INSET = { x: 8, y: 8, w: 128, h: 72 };
+
+/**
+ * The screening room's big screen: a steel cabinet on two pedestals, hollowed
+ * out around a screen well the renderer paints the screencast into. The well is
+ * filled with dead glass so an unpainted screen still reads as a screen. 144x100
+ */
+function bigScreen(): SpriteDef {
+  const W = 144;
+  const inner = (fill: string): string => `DS${fill.repeat(W - 4)}SD`;
+  const leg = `D${'s'.repeat(22)}D`;
+  const rows = [
+    'D'.repeat(W),
+    `D${'S'.repeat(W - 2)}D`,
+    inner('s'), inner('s'), inner('s'), inner('s'), inner('s'),
+    // Shadowed lip where the bezel turns in towards the glass.
+    inner('D'),
+    // The well itself: 8px of bezel, 128px of screen, 8px of bezel.
+    ...Array.from({ length: TV_SCREEN_INSET.h }, () => `DS${'s'.repeat(5)}D${'g'.repeat(128)}D${'s'.repeat(5)}SD`),
+    inner('D'),
+    inner('s'), inner('s'),
+    // Maker's stripe on the left, standby lamp on the right.
+    `DS${'a'.repeat(24)}${'s'.repeat(108)}${'e'.repeat(8)}SD`,
+    inner('s'), inner('s'), inner('s'),
+    `D${'S'.repeat(W - 2)}D`,
+    'D'.repeat(W),
+    'D'.repeat(W),
+    ...Array.from({ length: 8 }, () => `${'.'.repeat(24)}${leg}${'.'.repeat(48)}${leg}${'.'.repeat(24)}`),
+    `${'.'.repeat(20)}${'D'.repeat(32)}${'.'.repeat(40)}${'D'.repeat(32)}${'.'.repeat(20)}`,
+    `${'.'.repeat(20)}${'k'.repeat(32)}${'.'.repeat(40)}${'k'.repeat(32)}${'.'.repeat(20)}`,
+  ];
+  return { legend: TV_LEGEND, rows };
+}
+
+const PLAQUE_LEGEND = {
+  'V': 'woodDark', 'W': 'woodLit', 'c': 'cream', 'k': 'ink', 'e': 'ledGreen', 'r': 'accentRed',
+};
+
+/**
+ * Lease plaque beside the screen: a lamp and two engraved lines. Green with the
+ * browser free, red while somebody holds it — the names live in the panel. 40x14
+ */
+function leasePlaque(lamp: 'e' | 'r'): SpriteDef {
+  const c = (n: number): string => 'c'.repeat(n);
+  const k = (n: number): string => 'k'.repeat(n);
+  const glow = (n: number): string => lamp.repeat(n);
+  const body = [
+    c(36),
+    `${c(2)}${k(8)}${c(26)}`,
+    `${c(2)}k${glow(6)}k${c(4)}${k(18)}${c(4)}`,
+    `${c(2)}k${glow(6)}k${c(4)}${k(18)}${c(4)}`,
+    `${c(2)}k${glow(6)}k${c(26)}`,
+    `${c(2)}k${glow(6)}k${c(4)}${k(14)}${c(8)}`,
+    `${c(2)}k${glow(6)}k${c(4)}${k(14)}${c(8)}`,
+    `${c(2)}${k(8)}${c(26)}`,
+    c(36),
+  ];
+  return {
+    legend: PLAQUE_LEGEND,
+    rows: [
+      'V'.repeat(40),
+      `V${'W'.repeat(38)}V`,
+      ...body.map((row) => `VW${row}WV`),
+      `V${'W'.repeat(38)}V`,
+      'V'.repeat(40),
+      'k'.repeat(40),
+    ],
+  };
+}
+
+const STATIC_LEGEND = { 'k': 'ink', 'D': 'steelDark', 'm': 'mid', 'g': 'glass', 'G': 'glassLit', 'c': 'cream' };
+
+// Weighted snow ramps: the dark one is a scanline, the bright one the roll bar
+// sweeping down the tube. Repeats in a ramp are the weighting.
+const SNOW = 'kkkkDDDDmmggGc';
+const SNOW_DIM = 'kkkkkkkkDDDDmg';
+const SNOW_BRIGHT = 'DDmmggGGGGcccc';
+
+// 4x5 rather than 3x5: at three pixels wide an N is indistinguishable from an M.
+const GLYPHS: Record<string, string[]> = {
+  'N': ['#..#', '##.#', '#.##', '#..#', '#..#'],
+  'O': ['.##.', '#..#', '#..#', '#..#', '.##.'],
+  'S': ['.###', '#...', '.##.', '...#', '###.'],
+  'I': ['####', '.##.', '.##.', '.##.', '####'],
+  'G': ['.###', '#...', '#.##', '#..#', '.###'],
+  'A': ['.##.', '#..#', '####', '#..#', '#..#'],
+  'L': ['#...', '#...', '#...', '#...', '####'],
+  ' ': ['....', '....', '....', '....', '....'],
+};
+
+const NO_SIGNAL = 'NO SIGNAL';
+const GLYPH_W = 4;
+const GLYPH_H = 5;
+const GLYPH_SCALE = 2;
+
+/** Burns the caption into `pixels` (mutated), on an ink plate so it survives the snow. */
+function stampCaption(pixels: string[][], text: string): void {
+  const width = (text.length * (GLYPH_W + 1) - 1) * GLYPH_SCALE;
+  const height = GLYPH_H * GLYPH_SCALE;
+  const left = Math.floor((TV_SCREEN_INSET.w - width) / 2);
+  const top = Math.floor((TV_SCREEN_INSET.h - height) / 2);
+
+  for (let y = top - 4; y < top + height + 4; y++) {
+    for (let x = left - 5; x < left + width + 5; x++) pixels[y][x] = 'k';
+  }
+  for (let i = 0; i < text.length; i++) {
+    const glyph = GLYPHS[text[i]];
+    for (let gy = 0; gy < GLYPH_H; gy++) {
+      for (let gx = 0; gx < GLYPH_W; gx++) {
+        if (glyph[gy][gx] !== '#') continue;
+        for (let sy = 0; sy < GLYPH_SCALE; sy++) {
+          for (let sx = 0; sx < GLYPH_SCALE; sx++) {
+            pixels[top + gy * GLYPH_SCALE + sy][left + (i * (GLYPH_W + 1) + gx) * GLYPH_SCALE + sx] = 'c';
+          }
+        }
+      }
+    }
+  }
+}
+
+/**
+ * One frame of dead-channel snow, sized to the screen well. Generated rather
+ * than hand-drawn — 9k pixels of noise is data, not art — but seeded, so the
+ * frames are identical build to build and cycle without popping.
+ */
+function staticFrame(index: number, frames: number): SpriteDef {
+  let seed = (index * 2654435761 + 12345) >>> 0;
+  const random = (): number => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  };
+  const barTop = Math.floor((index / frames) * TV_SCREEN_INSET.h);
+
+  const pixels: string[][] = [];
+  for (let y = 0; y < TV_SCREEN_INSET.h; y++) {
+    const inBar = y >= barTop && y < barTop + 6;
+    const ramp = inBar ? SNOW_BRIGHT : y % 3 === 2 ? SNOW_DIM : SNOW;
+    const row: string[] = [];
+    for (let x = 0; x < TV_SCREEN_INSET.w; x++) row.push(ramp[Math.floor(random() * ramp.length)]);
+    pixels.push(row);
+  }
+  stampCaption(pixels, NO_SIGNAL);
+  return { legend: STATIC_LEGEND, rows: pixels.map((row) => row.join('')) };
+}
+
+const STATIC_FRAMES = 3;
+
+const SOFA_LEGEND = { 'V': 'plushDark', 'm': 'plush', 'l': 'plushLit', 'a': 'accentAmber', 'k': 'ink' };
+
+/**
+ * Two-seater bench for the screening room, seen from behind: rounded backrest
+ * over an amber piping line, then the arms and the two cushions. 56x18
+ */
+function sofa(): SpriteDef {
+  const W = 56;
+  // Arms four pixels proud of the cushions, lit on the side facing the lamp.
+  const seat = `VlmV${'l'.repeat(23)}VV${'l'.repeat(23)}VmlV`;
+  return {
+    legend: SOFA_LEGEND,
+    rows: [
+      `${'.'.repeat(4)}${'V'.repeat(W - 8)}${'.'.repeat(4)}`,
+      `..${'V'.repeat(W - 4)}..`,
+      `V${'m'.repeat(W - 2)}V`,
+      `Vm${'l'.repeat(W - 4)}mV`,
+      `Vm${'l'.repeat(W - 4)}mV`,
+      `Vm${'l'.repeat(W - 4)}mV`,
+      `V${'m'.repeat(W - 2)}V`,
+      `V${'a'.repeat(W - 2)}V`,
+      'V'.repeat(W),
+      `VVVV${'m'.repeat(W - 8)}VVVV`,
+      seat, seat, seat,
+      `VVVV${'m'.repeat(W - 8)}VVVV`,
+      'V'.repeat(W),
+      `..VV${'.'.repeat(W - 8)}VV..`,
+      `..VV${'.'.repeat(W - 8)}VV..`,
+      `.${'k'.repeat(W - 2)}.`,
+    ],
+  };
+}
+
 /**
  * Every entry is a frame list, so animated and static art share one shape:
  * `SPRITES.desk` is a single frame, `SPRITES.elevator` is four.
@@ -760,4 +945,12 @@ export const SPRITES: Record<string, SpriteDef[]> = {
       ],
     },
   ],
+  // Screening-room screen; the well is painted by the renderer. 144x100
+  tv: [bigScreen()],
+  // Dead channel: seeded snow with a rolling bar, three frames. 128x72
+  tvStatic: Array.from({ length: STATIC_FRAMES }, (_, i) => staticFrame(i, STATIC_FRAMES)),
+  // Lease plaque: frame 0 free, frame 1 held. 40x14
+  leasePlaque: [leasePlaque('e'), leasePlaque('r')],
+  // Screening-room bench. 56x18
+  sofa: [sofa()],
 };

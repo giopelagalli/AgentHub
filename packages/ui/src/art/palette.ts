@@ -27,6 +27,10 @@ export const PALETTE: Record<string, string> = {
   // Penthouse night window.
   night: '#101a2e',
   star: '#f4ecc0',
+  // Screening-room plush: sofa shadow, body, and the light catching its back.
+  plushDark: '#5a2320',
+  plush: '#8c3a33',
+  plushLit: '#c25c4e',
   // Lamp glow and bare-concrete vacancy.
   warm: '#e0c07a',
   dust: '#a7a08a',

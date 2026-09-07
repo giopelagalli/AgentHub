@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { HubState } from '@agenthub/shared';
-import { Store } from '../src/store.js';
+import { Store, type BrowserFrame } from '../src/store.js';
 
 function fabricateHubState(agentIds: number[]): HubState {
   return {
@@ -11,6 +11,8 @@ function fabricateHubState(agentIds: number[]): HubState {
   };
 }
 
+const frame: BrowserFrame = { nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 10 };
+
 describe('Store', () => {
   it('starts on floor f1 with connection down and empty hub/busy', () => {
     const store = new Store();
@@ -19,6 +21,26 @@ describe('Store', () => {
     expect(s.connection).toBe('down');
     expect(s.hub).toBeNull();
     expect(s.busy.size).toBe(0);
+    expect(s.browserFrame).toBeNull();
+  });
+
+  it('browser-frame keeps only the newest frame', () => {
+    const store = new Store();
+    store.dispatch({ type: 'browser-frame', frame });
+    expect(store.getState().browserFrame).toEqual(frame);
+    const next = { ...frame, jpegBase64: 'def', at: 11 };
+    store.dispatch({ type: 'browser-frame', frame: next });
+    expect(store.getState().browserFrame).toEqual(next);
+  });
+
+  it('drops the frame on leaving the screening room, and keeps it while staying', () => {
+    const store = new Store();
+    store.dispatch({ type: 'set-floor', floor: 'f5' });
+    store.dispatch({ type: 'browser-frame', frame });
+    store.dispatch({ type: 'set-floor', floor: 'f5' });
+    expect(store.getState().browserFrame).toEqual(frame);
+    store.dispatch({ type: 'set-floor', floor: 'f1' });
+    expect(store.getState().browserFrame).toBeNull();
   });
 
   it('hub-state replaces hub and prunes busy ids no longer present in agents', () => {

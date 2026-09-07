@@ -1,4 +1,5 @@
 import type { HubState } from '@agenthub/shared';
+import type { FloorId } from './floors.js';
 import type { Store } from './store.js';
 
 const STATE_URL = '/api/state';
@@ -24,6 +25,29 @@ export function applyHubState(store: Store, payload: unknown): boolean {
   return true;
 }
 
+/** The hub only casts the browser screen to sockets that asked for this topic. */
+export const BROWSER_TOPIC = 'browser';
+
+/** The one floor that watches the cast. */
+const BROWSER_FLOOR: FloorId = 'f5';
+
+export interface TopicMessage {
+  type: 'subscribe' | 'unsubscribe';
+  topic: string;
+}
+
+/**
+ * The topic message a floor change owes the hub, or null when it owes none:
+ * screencast frames are big, so the client subscribes on arriving at the
+ * screening room and unsubscribes on leaving. `before` is the floor this socket
+ * was last told about — null for a socket that has said nothing yet.
+ */
+export function topicTransition(before: FloorId | null, after: FloorId): TopicMessage | null {
+  const wants = after === BROWSER_FLOOR;
+  if (wants === (before === BROWSER_FLOOR)) return null;
+  return { type: wants ? 'subscribe' : 'unsubscribe', topic: BROWSER_TOPIC };
+}
+
 /** Pure half of the socket: a raw frame in, store dispatches out. Bad frames are dropped. */
 export function handleWsMessage(store: Store, raw: string): void {
   let message: unknown;
@@ -41,6 +65,23 @@ export function handleWsMessage(store: Store, raw: string): void {
   }
   if (frame.type === 'agent-busy' && typeof frame.agentId === 'number' && typeof frame.busy === 'boolean') {
     store.dispatch({ type: 'agent-busy', agentId: frame.agentId, busy: frame.busy });
+    return;
+  }
+  if (
+    frame.type === 'browser-frame'
+    && typeof frame.jpegBase64 === 'string'
+    && typeof frame.nodeName === 'string'
+    && typeof frame.at === 'number'
+  ) {
+    store.dispatch({
+      type: 'browser-frame',
+      frame: {
+        nodeName: frame.nodeName,
+        leaseId: typeof frame.leaseId === 'string' ? frame.leaseId : null,
+        jpegBase64: frame.jpegBase64,
+        at: frame.at,
+      },
+    });
   }
 }
 
@@ -88,6 +129,8 @@ export function connect(store: Store): void {
   let current: WebSocket | null = null;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let reconnectTimer: ReturnType<typeof setInterval> | undefined;
+  /** The floor the open socket has been told about; null while no socket is up. */
+  let announcedFloor: FloorId | null = null;
 
   const readyState = (): number | null => current?.readyState ?? null;
 
@@ -103,6 +146,15 @@ export function connect(store: Store): void {
     const ok = await fetchState(store);
     if (!shouldUsePoll(readyState())) return;
     store.dispatch({ type: 'connection', status: ok ? 'polling' : 'down' });
+  };
+
+  const syncTopics = (): void => {
+    const socket = current;
+    if (!socket || socket.readyState !== OPEN) return;
+    const floor = store.getState().floor;
+    const message = topicTransition(announcedFloor, floor);
+    announcedFloor = floor;
+    if (message) socket.send(JSON.stringify(message));
   };
 
   const startFallback = (): void => {
@@ -123,16 +175,21 @@ export function connect(store: Store): void {
       // doesn't stay stuck busy forever.
       store.dispatch({ type: 'busy-reset' });
       store.dispatch({ type: 'connection', status: 'live' });
+      // A new socket carries no subscriptions, whatever the last one had asked for.
+      announcedFloor = null;
+      syncTopics();
     });
     socket.addEventListener('message', (event) => handleWsMessage(store, String(event.data)));
     socket.addEventListener('close', () => {
       if (current !== socket) return;
       current = null;
+      announcedFloor = null;
       startFallback();
     });
     socket.addEventListener('error', () => socket.close());
   }
 
+  store.subscribe(syncTopics);
   void fetchState(store);
   open();
 }

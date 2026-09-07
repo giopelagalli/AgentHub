@@ -21,6 +21,17 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const MAX_LOG_QUEUE = 500;
 
+/**
+ * Reads (and so releases) a response body nobody reads otherwise. Undici holds the connection open
+ * until a body is consumed or cancelled, so an unread response is a keep-alive socket that outlives
+ * the call that made it.
+ */
+async function drain(res: Response): Promise<void> {
+  try {
+    await res.arrayBuffer();
+  } catch { /* already consumed or aborted */ }
+}
+
 export interface JobRunnerOptions {
   hub: string;
   node: string;
@@ -56,6 +67,11 @@ export class JobRunner {
   constructor(private opts: JobRunnerOptions) {
     this.execute = opts.execute ?? this.defaultExecute;
     this.headers = { 'content-type': 'application/json', ...opts.authHeaders };
+  }
+
+  /** Follows the hub to another control node; see `Daemon.rediscoverHub`. */
+  setHub(hub: string): void {
+    this.opts.hub = hub;
   }
 
   private defaultExecute: Execute = (job, log) => {
@@ -137,6 +153,7 @@ export class JobRunner {
         method: 'POST', headers: this.headers,
         body: JSON.stringify({ node: this.opts.node, types: this.opts.types }),
       });
+      if (res.status !== 200) await drain(res);
       if (res.status === 204) return null; // nothing to claim right now
       if (res.status === 403) {
         if (!this.warned403) {
@@ -244,9 +261,9 @@ export class JobRunner {
 
   private async sendLog(jobId: number, line: string): Promise<void> {
     try {
-      await fetch(`${this.opts.hub}/api/jobs/${jobId}/log`, {
+      await drain(await fetch(`${this.opts.hub}/api/jobs/${jobId}/log`, {
         method: 'POST', headers: this.headers, body: JSON.stringify({ line }),
-      });
+      }));
     } catch { /* best effort */ }
   }
 
@@ -267,6 +284,7 @@ export class JobRunner {
           headers: { 'content-type': 'application/octet-stream', ...this.opts.authHeaders },
           body: new Uint8Array(bytes),
         });
+        await drain(res);
         if (res.ok) return true;
         // A 4xx won't get better by trying again (unknown job, wrong type, empty body).
         if (res.status < 500) {
@@ -296,6 +314,7 @@ export class JobRunner {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await send();
+        await drain(res);
         if (res.ok) return;
         if (res.status === 409) {
           // The hub already reassigned this job to another runner (our report arrived late, e.g.

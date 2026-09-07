@@ -85,4 +85,63 @@ describe('db', () => {
     db.prepare(`INSERT INTO job_logs (job_id, seq, line, at) VALUES (?,?,?,?)`).run(1, 0, 'hi', Date.now());
     expect((db.prepare(`SELECT COUNT(*) c FROM job_logs`).get() as { c: number }).c).toBe(1);
   });
+
+  it('relaxes messages.agent_id from NOT NULL to nullable, preserving rows, ids and old messages behavior', () => {
+    dir = mkdtempSync(join(tmpdir(), 'ah-db-'));
+    const dbPath = join(dir, 'hub.db');
+
+    const oldDb = new Database(dbPath);
+    oldDb.exec(`
+      CREATE TABLE agents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        tier TEXT NOT NULL,
+        system_prompt TEXT NOT NULL
+      );
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id INTEGER NOT NULL REFERENCES agents(id),
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    oldDb.prepare(`INSERT INTO agents (name, tier, system_prompt) VALUES (?,?,?)`).run('bot', 'worker', 'you are a bot');
+    const agentRow = oldDb.prepare(`SELECT id FROM agents WHERE name='bot'`).get() as { id: number };
+    const agentId = agentRow.id;
+    const messageIds: number[] = [];
+    for (const content of ['hello', 'world', 'again']) {
+      const res = oldDb.prepare(`INSERT INTO messages (agent_id, role, content, created_at) VALUES (?,?,?,?)`)
+        .run(agentId, 'user', content, Date.now());
+      messageIds.push(Number(res.lastInsertRowid));
+    }
+    oldDb.close();
+
+    const db = openDb(dbPath);
+
+    const messageCols = db.pragma(`table_info(messages)`) as { name: string; notnull: number }[];
+    const agentIdCol = messageCols.find((c) => c.name === 'agent_id');
+    expect(agentIdCol?.notnull).toBe(0);
+
+    // rows and ids survived the rebuild
+    const rows = db.prepare(`SELECT id, agent_id, role, content FROM messages ORDER BY id`)
+      .all() as { id: number; agent_id: number; role: string; content: string }[];
+    expect(rows.map((r) => r.id)).toEqual(messageIds);
+    expect(rows.map((r) => r.content)).toEqual(['hello', 'world', 'again']);
+    expect(rows.every((r) => r.agent_id === agentId)).toBe(true);
+
+    // a session-scoped message (no owning agent) can now be inserted with agent_id NULL
+    expect(() => db.prepare(`INSERT INTO messages (agent_id, role, content, created_at) VALUES (NULL, 'user', 'session msg', ?)`)
+      .run(Date.now())).not.toThrow();
+
+    // re-opening is a no-op: same row count, agent_id still nullable
+    const countBefore = (db.prepare(`SELECT COUNT(*) c FROM messages`).get() as { c: number }).c;
+    db.close();
+    const reopened = openDb(dbPath);
+    const countAfter = (reopened.prepare(`SELECT COUNT(*) c FROM messages`).get() as { c: number }).c;
+    expect(countAfter).toBe(countBefore);
+    const reopenedAgentIdCol = (reopened.pragma(`table_info(messages)`) as { name: string; notnull: number }[])
+      .find((c) => c.name === 'agent_id');
+    expect(reopenedAgentIdCol?.notnull).toBe(0);
+  });
 });

@@ -34,10 +34,23 @@ empty one, would be required.
       <dict>
         <key>HUB_DB</key><string>/Users/<you>/agenthub-data/hub.db</string>
         <key>PORT</key><string>4000</string>
+        <key>MEMORY_ROOT</key><string>/Users/<you>/agenthub-data/memory</string>
+        <key>TELEGRAM_BOT_TOKEN</key><string><from BotFather, see ../telegram.md></string>
+        <key>TELEGRAM_OWNER_CHAT_ID</key><string><your chat id, see ../telegram.md></string>
+        <key>BRIEFING_TIME</key><string>08:00</string>
+        <key>CHECKIN_TIMES</key><string>13:00,18:00</string>
       </dict>
       <key>RunAtLoad</key><true/>
       <key>KeepAlive</key><true/>
     </dict></plist>
+
+The hub never loads a `.env` file — `TELEGRAM_BOT_TOKEN`/`TELEGRAM_OWNER_CHAT_ID`
+(and the rest of the assistant config) have to be set here, in the plist's
+own `EnvironmentVariables`, not in a `.env` next to the repo. See
+`../telegram.md` for getting a bot token and your chat id, and the README's
+"Assistant & Telegram" section for what each variable does. With either
+Telegram variable missing the hub still starts — it just runs without the
+bot.
 
     launchctl load ~/Library/LaunchAgents/com.agenthub.hub.plist
 

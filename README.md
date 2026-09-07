@@ -77,6 +77,52 @@ Each bundle's git history is its version log: nested checkouts under
 (`manifest.yaml`, `project.md`, `decisions.log.md`, `tasks.yaml`, plus
 `skills/` and `briefings/`), not the workspace.
 
+## Assistant & Telegram
+
+The hub runs a personal assistant agent with a git-versioned markdown memory
+(`MEMORY.md` index + one-fact-per-file notes under `notes/`, plus
+`planner/{goals,todo,backlog}.md`) and, when configured, control from
+Telegram: commands, free-form chat, a daily briefing, check-ins, and alerts
+(node offline, project blocked). None of this loads a `.env` file — set the
+variables below in the environment the hub process actually runs under (see
+`deploy/macmini/README.md` for the launchd unit).
+
+Env vars (see `.env.example`):
+
+    MEMORY_ROOT             where the memory bundle lives (default data/memory)
+    TELEGRAM_BOT_TOKEN      from @BotFather; see deploy/telegram.md
+    TELEGRAM_OWNER_CHAT_ID  the only chat id the bot will act on; see deploy/telegram.md
+    BRIEFING_TIME           local HH:MM for the daily briefing (default 08:00)
+    CHECKIN_TIMES           comma-separated local HH:MM list (default 13:00,18:00)
+
+`TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_CHAT_ID` are both required for the
+bot to start; with either missing the hub logs one line and runs the
+assistant over HTTP only (`/api/assistant/messages` etc., used by the UI's
+reception desk chat).
+
+Commands:
+
+    /help                        this list
+    /brief                       the daily briefing across every project
+    /projects                    project status, with pause/resume/run-turn buttons
+    /goals, /todo, /backlog      view a planner list
+      ... add <text>             append an item
+      ... done <n>                tick off item n
+    /new <title>: <intent>       start a new project; replies again once its first turn lands
+    /nodes                       cluster health
+    /video, /controlnode         coming in Phase 6
+
+Anything else is sent to the assistant, which can read/search memory, edit
+the planner, and manage projects. An outward-facing action (nothing built in
+yet; Phase 6 adds X posting) never runs on its own — the assistant replies
+with inline `[Confirm] [Cancel]` buttons and only Confirm from the owner's
+own chat executes it.
+
+Voice notes are not built: `TelegramPort`'s `OutgoingMessage.voice` field and
+a future `VoiceAdapter` interface are where a Kokoro TTS hookup would plug in
+(text in, spoken `Buffer` out, sent instead of/alongside the text reply) —
+see `deploy/telegram.md`.
+
 ## Cluster (real nodes)
 
 Beyond `npm run dev:node`'s mock daemon, real nodes each run the node

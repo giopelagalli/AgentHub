@@ -32,10 +32,19 @@ export interface BrowserProxyDeps {
   now?: () => number;
   /** Phase-6 daemon token, sent verbatim as `authorization` once there is one. */
   authHeader?: string;
+  /** Overridable in tests so a black-holed node doesn't need a real 15s to prove `act()` times out. */
+  actionTimeoutMs?: number;
+  /** Overridable in tests; kept short so a stuck node can't pin the screencast's `inFlight` flag. */
+  screencastTimeoutMs?: number;
 }
 
 /** ≤ 2 fps, per the screencast budget. */
 const MIN_FRAME_INTERVAL_MS = 500;
+
+/** Bounds one `act()` call (a navigate/click/type/read, or the screenshot it takes for the recording). */
+const DEFAULT_ACTION_TIMEOUT_MS = 15_000;
+/** Bounds one screencast poll frame — short, so a black-holed node can't wedge the live view. */
+const DEFAULT_SCREENCAST_TIMEOUT_MS = 5_000;
 
 /**
  * The hub's side of the browser: it resolves the one online node advertising the capability and
@@ -50,6 +59,8 @@ export class BrowserProxy {
   private readonly doFetch: typeof fetch;
   private readonly now: () => number;
   private readonly authHeader: string | undefined;
+  private readonly actionTimeoutMs: number;
+  private readonly screencastTimeoutMs: number;
 
   constructor(deps: BrowserProxyDeps) {
     this.registry = deps.registry;
@@ -59,6 +70,8 @@ export class BrowserProxy {
     this.doFetch = deps.fetch ?? ((input, init) => fetch(input, init));
     this.now = deps.now ?? Date.now;
     this.authHeader = deps.authHeader;
+    this.actionTimeoutMs = deps.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+    this.screencastTimeoutMs = deps.screencastTimeoutMs ?? DEFAULT_SCREENCAST_TIMEOUT_MS;
   }
 
   /** The browser node, or null when none is online. */
@@ -78,7 +91,7 @@ export class BrowserProxy {
     const args = action.args ?? {};
     const at = this.now();
     if (action.op === 'screenshot') {
-      const recorded = await this.recorder.record(leaseId, { op: 'screenshot', at, jpeg: await this.shot(node.url) });
+      const recorded = await this.recorder.record(leaseId, { op: 'screenshot', at, jpeg: await this.shot(node.url, this.actionTimeoutMs) });
       return { seq: recorded.seq, path: recorded.frame ? join(this.recorder.dir(leaseId), recorded.frame) : null };
     }
 
@@ -86,7 +99,7 @@ export class BrowserProxy {
     // The action already happened; a node that fails to hand back a frame (or a full disk) must not
     // turn a successful navigate into an error for the caller.
     try {
-      await this.recorder.record(leaseId, { op: action.op, args, at, jpeg: await this.shot(node.url) });
+      await this.recorder.record(leaseId, { op: action.op, args, at, jpeg: await this.shot(node.url, this.actionTimeoutMs) });
     } catch { /* recording is a side channel */ }
     return result;
   }
@@ -107,7 +120,7 @@ export class BrowserProxy {
       try {
         const node = this.node();
         if (!node) return;
-        const jpeg = await this.shot(node.url);
+        const jpeg = await this.shot(node.url, this.screencastTimeoutMs);
         const frame: BrowserFrame = {
           nodeName: node.name,
           leaseId: this.leases.holder()?.leaseId ?? null,
@@ -140,24 +153,29 @@ export class BrowserProxy {
   }
 
   private async send(url: string, op: Exclude<BrowserOp, 'screenshot'>, args: Record<string, unknown>): Promise<unknown> {
-    const res = await this.call(`${url}/browser/${op}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(args) });
+    const res = await this.call(`${url}/browser/${op}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(args) }, this.actionTimeoutMs);
     // The daemon already separates "asked wrong" (400) from "the browser couldn't" (502); relaying
     // its status keeps that distinction all the way out to the agent.
     if (!res.ok) throw new BrowserError(res.status, await errorText(res));
     return res.json();
   }
 
-  private async shot(url: string): Promise<Buffer> {
-    const res = await this.call(`${url}/browser/screenshot`, { headers: this.headers() });
+  private async shot(url: string, timeoutMs: number): Promise<Buffer> {
+    const res = await this.call(`${url}/browser/screenshot`, { headers: this.headers() }, timeoutMs);
     if (!res.ok) throw new BrowserError(res.status, await errorText(res));
     return Buffer.from(await res.arrayBuffer());
   }
 
-  /** A node that vanished between the registry lookup and the call is unavailable, not a hub bug. */
-  private async call(url: string, init: RequestInit): Promise<Response> {
+  /**
+   * A node that vanished between the registry lookup and the call is unavailable, not a hub bug. A
+   * node that accepted the connection but never answers is a different failure — without a timeout it
+   * would hang `act()` (or pin the screencast's `inFlight` flag) forever, so every call is bounded.
+   */
+  private async call(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     try {
-      return await this.doFetch(url, init);
+      return await this.doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
+      if (err instanceof Error && err.name === 'TimeoutError') throw new BrowserError(504, 'browser node timeout');
       throw new BrowserError(503, `browser node unreachable: ${(err as Error).message}`);
     }
   }

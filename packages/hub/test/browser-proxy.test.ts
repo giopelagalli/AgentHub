@@ -2,10 +2,16 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { FakeDriver, FAKE_JPEG } from '../../node-daemon/src/browser/driver.js';
 import { createBrowserServer } from '../../node-daemon/src/browser/server.js';
 import { createHub, type Hub } from '../src/server.js';
+import { openDb } from '../src/db.js';
+import { NodeRegistry } from '../src/node-registry.js';
+import { LeaseManager } from '../src/browser/lease.js';
+import { BrowserProxy } from '../src/browser/proxy.js';
+import { Recorder } from '../src/browser/recorder.js';
 
 const PAGES = {
   'https://start.test/': {
@@ -215,5 +221,56 @@ describe('browser screencast', () => {
 
     watcher.close();
     bystander.close();
+  });
+});
+
+describe('browser proxy timeouts', () => {
+  let blackhole: HttpServer;
+  let blackholeUrl: string;
+  let blackholeRecordings: string;
+
+  beforeEach(async () => {
+    // Accepts the connection but never answers — the stand-in for a wedged daemon node.
+    blackhole = createHttpServer(() => { /* never responds */ });
+    await new Promise<void>((resolve) => blackhole.listen(0, '127.0.0.1', resolve));
+    blackholeUrl = `http://127.0.0.1:${(blackhole.address() as { port: number }).port}`;
+    blackholeRecordings = mkdtempSync(join(tmpdir(), 'ah-proxy-timeout-'));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve) => blackhole.close(() => resolve()));
+    rmSync(blackholeRecordings, { recursive: true, force: true });
+  });
+
+  it('times out act() against a black-holed node instead of hanging forever', async () => {
+    const db = openDb(':memory:');
+    const registry = new NodeRegistry(db);
+    registry.register({ name: 'stuck', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: blackholeUrl } });
+    const leases = new LeaseManager();
+    const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), actionTimeoutMs: 100 });
+
+    const granted = leases.acquire({ kind: 'owner', id: 'owner' });
+    if (!('granted' in granted)) throw new Error('expected the owner to be granted');
+
+    await expect(proxy.act(granted.leaseId, { op: 'read' })).rejects.toMatchObject({ status: 504, message: 'browser node timeout' });
+  });
+
+  it('bounds a screencast poll frame separately, so a stuck node cannot pin the inFlight flag', async () => {
+    const db = openDb(':memory:');
+    const registry = new NodeRegistry(db);
+    registry.register({ name: 'stuck', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: blackholeUrl } });
+    const leases = new LeaseManager();
+    const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), screencastTimeoutMs: 100 });
+
+    const cast = proxy.screencast(500);
+    let frames = 0;
+    cast.onFrame(() => { frames += 1; });
+    cast.start();
+    // Two poll intervals' worth of wall time; each poll's fetch is capped at 100ms, so both ticks
+    // must finish (with no frame — the black hole always errors) well inside this window. If the
+    // timeout didn't apply, the first tick alone would still be in flight, wedging `inFlight` forever.
+    await new Promise((r) => setTimeout(r, 1200));
+    cast.stop();
+    expect(frames).toBe(0);
   });
 });

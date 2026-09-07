@@ -1,6 +1,6 @@
-import { existsSync } from 'node:fs';
+import { existsSync, type Dirent } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
 import type { Priority } from '@agenthub/shared';
@@ -8,6 +8,20 @@ import { validateBriefing, validateSlug, type Briefing, type Manifest, type Proj
 
 const CONTEXT_PACK_LIMIT = 12000;
 const CONTEXT_PACK_MARKER = '\n[truncated]';
+
+/** Sub-directories that always exist in a bundle, even a freshly cloned one that lost empty dirs. */
+const SCAFFOLD_DIRS = ['skills', 'briefings', 'workspace'];
+
+/** Only these paths are "knowledge" the manifest index (and the model's context pack) cares about. */
+const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'decisions.log.md', 'tasks.yaml'];
+const KNOWLEDGE_DIRS = ['skills', 'briefings'];
+
+const BUNDLE_GITIGNORE = [
+  '# Nested checkouts under workspace/ belong to their own repos and are not versioned by this bundle.',
+  'workspace/**/node_modules/',
+  'workspace/**/.git/',
+  '',
+].join('\n');
 
 function projectTemplate(title: string, intent: string): string {
   return [`# ${title}`, ``, `## Goal`, ``, intent, ``, `## Current State`, ``, `## Constraints`, ``].join('\n');
@@ -41,13 +55,53 @@ function parseDecisionBlocks(content: string): string[] {
     .filter((s) => s.startsWith('## '));
 }
 
-async function walkFiles(root: string, dir = root, acc: string[] = []): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
+async function walkDir(root: string, dir: string, acc: string[]): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
   for (const e of entries) {
-    if (e.name === '.git') continue;
     const full = join(dir, e.name);
-    if (e.isDirectory()) await walkFiles(root, full, acc);
+    if (e.isDirectory()) await walkDir(root, full, acc);
     else if (e.isFile()) acc.push(relative(root, full));
+  }
+}
+
+/**
+ * Indexes only the bundle's own knowledge files — manifest.yaml, project.md, decisions.log.md,
+ * tasks.yaml, plus everything under skills/ and briefings/. `workspace/` is the project's actual
+ * checkout (arbitrary code, node_modules, nested repos) and is never part of the model's context.
+ */
+async function walkFiles(root: string): Promise<string[]> {
+  const acc: string[] = [];
+  for (const f of KNOWLEDGE_FILES) {
+    if (existsSync(join(root, f))) acc.push(f);
+  }
+  for (const d of KNOWLEDGE_DIRS) await walkDir(root, join(root, d), acc);
+  return acc;
+}
+
+/**
+ * Finds directories under `workspace/` that are themselves git checkouts (contain a `.git` entry).
+ * `git add -A` would otherwise record these as dangling gitlinks (mode 160000) instead of descending
+ * into them — the fix is to keep the whole directory out of the bundle's git index via .gitignore,
+ * not just its `.git` folder. Does not recurse into a repo it finds (nested-within-nested is that
+ * repo's own business).
+ */
+async function findNestedRepos(dir: string, acc: string[] = []): Promise<string[]> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return acc;
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const full = join(dir, e.name);
+    if (existsSync(join(full, '.git'))) acc.push(full);
+    else await findNestedRepos(full, acc);
   }
   return acc;
 }
@@ -64,9 +118,13 @@ export class ProjectBundle {
     const dir = join(root, init.slug);
     if (existsSync(dir)) throw new Error(`project bundle already exists: ${init.slug}`);
 
-    await mkdir(join(dir, 'briefings'), { recursive: true });
-    await mkdir(join(dir, 'skills'), { recursive: true });
-    await mkdir(join(dir, 'workspace'), { recursive: true });
+    for (const sub of SCAFFOLD_DIRS) {
+      await mkdir(join(dir, sub), { recursive: true });
+      // git tracks no empty directories, so a clone of a bundle with nothing in skills/briefings/
+      // workspace yet would otherwise come back without them.
+      await writeFile(join(dir, sub, '.gitkeep'), '', 'utf8');
+    }
+    await writeFile(join(dir, '.gitignore'), BUNDLE_GITIGNORE, 'utf8');
 
     const now = Date.now();
     const manifest: Manifest = {
@@ -109,6 +167,10 @@ export class ProjectBundle {
     if (!m || m.schema !== 1 || typeof m.slug !== 'string' || typeof m.title !== 'string' || !Array.isArray(m.index)) {
       throw new Error(`invalid manifest for project: ${slug}`);
     }
+    // A clone (or an older bundle predating these scaffolds) may be missing empty directories or the
+    // gitignore; put them back rather than have every bundle method guard against ENOENT.
+    for (const sub of SCAFFOLD_DIRS) await mkdir(join(dir, sub), { recursive: true });
+    if (!existsSync(join(dir, '.gitignore'))) await writeFile(join(dir, '.gitignore'), BUNDLE_GITIGNORE, 'utf8');
     return new ProjectBundle(dir, simpleGit(dir));
   }
 
@@ -231,7 +293,33 @@ export class ProjectBundle {
     }
   }
 
+  /**
+   * Nested checkouts under workspace/ (a project the model `git clone`d, say) aren't covered by the
+   * static .gitignore — their names aren't known ahead of time — so each one found gets its own
+   * `workspace/<name>/` line. Without this, `git add -A` would record the checkout as a dangling
+   * gitlink (mode 160000) rather than leaving it alone. Nested checkouts are not versioned by this
+   * bundle; they belong to their own repos.
+   */
+  private async excludeNestedRepos(): Promise<void> {
+    const nested = await findNestedRepos(this.workspace);
+    if (nested.length === 0) return;
+    const gitignorePath = join(this.dir, '.gitignore');
+    const existing = await readFile(gitignorePath, 'utf8').catch(() => '');
+    const lines = existing.split('\n');
+    let changed = false;
+    for (const dir of nested) {
+      const entry = `${relative(this.dir, dir).split(sep).join('/')}/`;
+      if (!lines.includes(entry)) {
+        lines.push(entry);
+        changed = true;
+      }
+    }
+    if (changed) await writeFile(gitignorePath, lines.join('\n'), 'utf8');
+  }
+
   async commit(message: string): Promise<void> {
+    await this.excludeNestedRepos();
+
     const index = await walkFiles(this.dir);
     const m = await this.manifest();
     m.index = index.sort();

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -38,7 +38,9 @@ describe('ProjectBundle.create', () => {
       schema: 1, slug: 'demo-project', title: 'Demo Project', status: 'active',
       priority: 'project', intent: 'ship a demo', links: [],
     });
-    expect(manifest.index.sort()).toEqual(['decisions.log.md', 'manifest.yaml', 'project.md', 'tasks.yaml']);
+    expect(manifest.index.sort()).toEqual([
+      'briefings/.gitkeep', 'decisions.log.md', 'manifest.yaml', 'project.md', 'skills/.gitkeep', 'tasks.yaml',
+    ]);
 
     expect(await bundle.readProject()).toContain('ship a demo');
     expect(await bundle.tasks()).toEqual({ tasks: [] });
@@ -142,6 +144,79 @@ describe('ProjectBundle.commit', () => {
 
     const git = simpleGit(bundle.dir);
     expect((await git.log()).total).toBe(2);
+  });
+});
+
+describe('ProjectBundle.commit — nested repos and node_modules stay out of the git index', () => {
+  it('excludes workspace node_modules and nested git checkouts, with no gitlink entries', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+
+    await mkdir(join(bundle.workspace, 'lib', 'node_modules', 'x'), { recursive: true });
+    await writeFile(join(bundle.workspace, 'lib', 'node_modules', 'x', 'index.js'), 'module.exports = 1;\n', 'utf8');
+
+    const nestedDir = join(bundle.workspace, 'repo');
+    await mkdir(nestedDir, { recursive: true });
+    await writeFile(join(nestedDir, 'README.md'), '# nested\n', 'utf8');
+    const nestedGit = simpleGit(nestedDir);
+    await nestedGit.init();
+    await nestedGit.addConfig('user.name', 'Nested');
+    await nestedGit.addConfig('user.email', 'nested@example.com');
+    await nestedGit.add(['-A']);
+    await nestedGit.commit('nested: initial');
+
+    await bundle.commit('agent: touched workspace');
+
+    const git = simpleGit(bundle.dir);
+    const files = await git.raw(['ls-files']);
+    expect(files).not.toMatch(/node_modules/);
+    expect(files.split('\n')).not.toEqual(expect.arrayContaining(['workspace/repo']));
+    expect(files).not.toMatch(/^workspace\/repo\//m);
+
+    const lsTree = await git.raw(['ls-tree', '-r', 'HEAD']);
+    expect(lsTree).not.toContain('160000'); // no gitlink (embedded-repo) entries
+  });
+});
+
+describe('ProjectBundle manifest index excludes workspace/', () => {
+  it('never lists workspace files in manifest.index', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+    await writeFile(join(bundle.workspace, 'app.js'), 'console.log(1);\n', 'utf8');
+
+    await bundle.commit('agent: added workspace file');
+
+    const manifest = await bundle.manifest();
+    expect(manifest.index.some((p) => p.startsWith('workspace/'))).toBe(false);
+  });
+});
+
+describe('ProjectBundle scaffold recovery', () => {
+  it('open() recreates missing skills/briefings/workspace dirs and the gitignore', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+    await rm(join(bundle.dir, 'skills'), { recursive: true, force: true });
+    await rm(join(bundle.dir, 'briefings'), { recursive: true, force: true });
+    await rm(join(bundle.dir, 'workspace'), { recursive: true, force: true });
+    await rm(join(bundle.dir, '.gitignore'), { force: true });
+
+    const reopened = await ProjectBundle.open(root, 'demo');
+
+    await expect(reopened.writeSkill('research', '# Research\n')).resolves.toBeUndefined();
+    await expect(readdir(reopened.workspace)).resolves.toEqual([]);
+    await expect(readdir(join(reopened.dir, 'briefings'))).resolves.toEqual([]);
+  });
+
+  it('round-trips through a git clone without ENOENT on skills/briefings/workspace', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+    await bundle.writeSkill('research', '# Research\n');
+    await bundle.commit('agent: add skill');
+
+    const cloneDir = join(root, 'demo-clone');
+    await simpleGit().clone(bundle.dir, cloneDir);
+
+    const cloned = await ProjectBundle.open(root, 'demo-clone');
+    await expect(cloned.writeSkill('another', '# Another\n')).resolves.toBeUndefined();
+    const skillNames = (await cloned.skills()).map((s) => s.name).sort();
+    expect(skillNames).toEqual(['another', 'research']);
+    await expect(readdir(cloned.workspace)).resolves.toBeDefined();
   });
 });
 

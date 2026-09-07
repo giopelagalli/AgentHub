@@ -7,6 +7,7 @@ import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
 import { validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
+import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import type { AgentLoop } from './loop.js';
 
 const TOOL_RESULT_LIMIT = 8000;
@@ -403,7 +404,7 @@ const SUBAGENT_RESULT_LIMIT = 4000;
  * only, and hands its final report back as the tool result. Parallel fan-out is a later
  * optimization; the caller's tool budget is what bounds how many of these a turn can start.
  */
-export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string }): Tool {
+export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; browser?: BrowserToolDeps }): Tool {
   return {
     def: {
       type: 'tool', name: 'spawn_subagent',
@@ -420,13 +421,19 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string }): T
     run: async (args, ctx) => {
       const task = str(args, 'task');
       const role = fields(args).role === undefined ? 'coder' : oneOf(args, 'role', SUBAGENT_ROLES);
+      if (role === 'browser-operator' && !deps.browser) return 'error: browser-operator is not available in this session';
+      // browser-operator additionally gets the shared browser toolset — every other role stays
+      // scoped to the workspace, as before.
+      const tools = role === 'browser-operator' && deps.browser
+        ? [...workspaceTools(), ...browserOperatorTools(deps.browser)]
+        : workspaceTools();
       const res = await deps.loop.run({
         kind: 'subagent',
         subject: deps.subject,
         tier: 'worker',
         system: subagentSystemPrompt(role),
         user: task,
-        tools: workspaceTools(),
+        tools,
         // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
         ctx: { bundle: ctx.bundle },
         maxToolCalls: SUBAGENT_TOOL_CALLS,

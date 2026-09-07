@@ -1,4 +1,4 @@
-export const SUBAGENT_ROLES = ['coder', 'researcher', 'reviewer'] as const;
+export const SUBAGENT_ROLES = ['coder', 'researcher', 'reviewer', 'browser-operator'] as const;
 export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
 
 const BRIEFING_SCHEMA = `{
@@ -47,6 +47,10 @@ export function orchestratorSystemPrompt(contextPack: string): string {
     `  will only see the bundle, not this conversation.`,
     `- Work within this turn's tool budget. If you run out of room, leave the board honest and say`,
     `  what remains in the briefing.`,
+    `- The shared browser is available via acquire_browser / release_browser plus browser_navigate,`,
+    `  browser_read, browser_click, browser_type and browser_screenshot — but only while you hold`,
+    `  the lease, and every use renews it. For a self-contained browsing task, prefer delegating to a`,
+    `  browser-operator subagent instead; either way, release the lease when you're done.`,
     `- ALWAYS end your turn by calling publish_briefing. It is the master orchestrator's only view`,
     `  of this project, and a turn that ends without one is a turn that never reported.`,
     ``,
@@ -59,20 +63,34 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
   coder: 'You implement exactly what the task specifies: write and edit files, run the checks it names, and report what you changed.',
   researcher: 'You investigate and report: read the workspace, gather what the task asks about, and answer with findings rather than changes.',
   reviewer: 'You review against the task: read the relevant files, judge whether they meet the stated bar, and report concrete problems.',
+  'browser-operator': 'You drive the shared browser to complete the task: acquire the lease, navigate/read/click/type as needed, and report what you found or did.',
 };
 
-/** The subagent's system prompt: one role, one task, workspace tools only. */
+/** The subagent's system prompt: one role, one task, workspace tools only (plus the browser for browser-operator). */
 export function subagentSystemPrompt(role: SubagentRole): string {
-  return [
+  const lines = [
     `You are a ${role} subagent working on one task for a project orchestrator.`,
     ROLE_BRIEFS[role],
     ``,
     `- Your tools reach the project workspace only: read_file, write_file, list_dir, run_shell.`,
     `  Do not modify anything outside workspace/ — the project bundle's charter, decision log, task`,
     `  board and briefings belong to the orchestrator. Report what should change there instead.`,
+  ];
+  if (role === 'browser-operator') {
+    lines.push(
+      `- You also have the shared browser: acquire_browser, release_browser, browser_navigate,`,
+      `  browser_read, browser_click, browser_type, browser_screenshot. Call acquire_browser first —`,
+      `  the browser_* tools work only while you hold the lease, and every use renews it. Release the`,
+      `  lease when you're done so others aren't blocked. If a tool replies "lease lost — owner took`,
+      `  control", the owner preempted you; stop and report rather than retrying.`,
+    );
+  }
+  lines.push(
+    ``,
     `- The task in the user message is the whole assignment. If it is ambiguous or looks wrong, say`,
     `  so in your report instead of guessing.`,
     `- Your final message is the only thing the orchestrator sees. Make it a short, concrete report:`,
     `  what you did or found, and anything that blocked you.`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }

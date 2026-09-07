@@ -4,6 +4,9 @@ import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { bundleTools, hubTools, spawnSubagentTool, workspaceTools } from '../agents/tools.js';
+import { browserTools } from '../agents/browser-tools.js';
+import type { LeaseManager } from '../browser/lease.js';
+import type { BrowserProxy } from '../browser/proxy.js';
 import type { ProjectBundle } from './bundle.js';
 import { orchestratorSystemPrompt } from './prompts.js';
 import type { Briefing, Manifest, TaskItem } from './schema.js';
@@ -29,6 +32,9 @@ export interface ProjectOrchestratorDeps {
   queue: JobQueue;
   registry: NodeRegistry;
   transcript: Transcript;
+  /** Present once the hub wires the shared browser; absent, the orchestrator gets no browser tools. */
+  leases?: LeaseManager;
+  browser?: BrowserProxy;
 }
 
 /**
@@ -43,9 +49,10 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript } = this.deps;
+    const { bundle, loop, queue, registry, transcript, leases, browser } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
+    const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
 
     const result = await loop.run({
       kind: 'orchestrator',
@@ -57,7 +64,8 @@ export class ProjectOrchestrator {
         ...workspaceTools(),
         ...bundleTools(),
         ...hubTools(),
-        spawnSubagentTool({ loop, subject: manifest.slug }),
+        ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
+        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps }),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,

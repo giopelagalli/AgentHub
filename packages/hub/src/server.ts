@@ -104,15 +104,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
   const loop = new AgentLoop({ gateway, transcript });
-  const projects = new ProjectService({
-    root: opts.projectsRoot ?? 'data/projects',
-    loop, gateway, queue, registry, transcript,
-    ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
-  });
-  const master = new MasterOrchestrator({ service: projects, loop });
   const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}) });
   const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
   const browser = new BrowserProxy({ registry, leases, recorder });
+  const projects = new ProjectService({
+    root: opts.projectsRoot ?? 'data/projects',
+    loop, gateway, queue, registry, transcript, leases, browser,
+    ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
+  });
+  const master = new MasterOrchestrator({ service: projects, loop });
   const app = Fastify();
 
   if (opts.uiDist && existsSync(opts.uiDist)) {

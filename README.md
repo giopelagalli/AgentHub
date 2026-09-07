@@ -153,9 +153,20 @@ unaudited HTTP call, enforced by construction rather than by a filter.
 Posting also needs an X *user-context* token — a hand-pasted OAuth2 one expires
 in ~2h; see `deploy/external-apis.md`.
 
-`run_shell` is the residual hole: it runs commands in a project workspace, and
-a command can open its own socket where the audit log can't see it. Sandbox it
-at the OS/network level if that matters — it is not closable in the tool belt.
+Two belts sit outside that ledger and are the residual holes:
+
+- `run_shell` runs commands in a project workspace, and a command can open its
+  own socket where the audit log can't see it.
+- `browser_navigate` / `browser_type` (and the rest of `BROWSER_OPS`) drive the
+  shared browser at a real site of the agent's choosing. Those actions are
+  **frame-recorded, not audited**: the screenshot timeline under
+  `<DATA_ROOT>/media/browser/<leaseId>/` shows what happened, but no
+  `tool_audit` row is written and the destination is not constrained to an
+  allowlist.
+
+Neither is closable in the tool belt. Sandbox `run_shell` at the OS/network
+level if that matters, and treat the browser node's own egress as the boundary
+for the browser ops (`deploy/macmini/README.md`).
 
 The hub's own non-agent outbound traffic is Telegram (bot API, owner chat
 only); everything else it talks to — node daemons, ComfyUI, the served models

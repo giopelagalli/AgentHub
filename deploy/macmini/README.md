@@ -17,7 +17,7 @@ process above. The browser simulator below is the one thing that needs
 one, and it can declare `browser: { enabled: true }` with no `serving`
 entries at all: the daemon config validator only requires *some*
 capability be declared (`config.ts` throws `daemon config: no capability
-(serving, jobTypes or browser) declared` when `serving`, `jobTypes` and
+(serving, jobTypes, browser or controlNode) declared` when `serving`, `jobTypes` and
 `browser` are all absent), and `browser` alone satisfies it. There is no
 need for a stub `serving` entry — a stub endpoint would be registered
 with the hub and routable by the gateway, taking agent traffic and
@@ -37,9 +37,14 @@ failing it.
       <key>WorkingDirectory</key><string>/Users/<you>/AgentHub</string>
       <key>EnvironmentVariables</key>
       <dict>
-        <key>HUB_DB</key><string>/Users/<you>/agenthub-data/hub.db</string>
+        <key>DATA_ROOT</key><string>/Users/<you>/agenthub-data</string>
+        <key>CONTROL_NODE_NAME</key><string>macmini</string>
         <key>PORT</key><string>4000</string>
-        <key>MEMORY_ROOT</key><string>/Users/<you>/agenthub-data/memory</string>
+        <key>HUB_HOST</key><string>100.x.y.z</string>
+        <key>HUB_PASSWORD</key><string><the owner password></string>
+        <key>HUB_SESSION_SECRET</key><string><openssl rand -hex 32></string>
+        <key>DAEMON_TOKEN</key><string><the same token every daemon config carries></string>
+        <key>TRUST_PROXY</key><string><the droplet's tailnet IP, see ../do/README.md §7></string>
         <key>TELEGRAM_BOT_TOKEN</key><string><from BotFather, see ../telegram.md></string>
         <key>TELEGRAM_OWNER_CHAT_ID</key><string><your Telegram user id, see ../telegram.md></string>
         <key>BRIEFING_TIME</key><string>08:00</string>
@@ -48,6 +53,18 @@ failing it.
       <key>RunAtLoad</key><true/>
       <key>KeepAlive</key><true/>
     </dict></plist>
+
+`DATA_ROOT` is the one directory the hub owns; `HUB_DB`, `PROJECTS_ROOT`,
+`MEMORY_ROOT` and the browser recordings all default to paths under it, and it
+is what a control-node switch copies (`../controlnode.md`). `HUB_HOST` is the
+address the hub binds: set it to **this machine's tailnet IP** so the hub is
+not listening on every interface the Mac has — the default is `0.0.0.0`, which
+is only right for local dev.
+
+The **same** variables must be set on the standby control node's daemon too:
+after a switch the new hub is spawned by that daemon and configured entirely
+from what it passes through (the allowlist in `../controlnode.md`). A hub with
+auth on refuses (412) to hand itself to a node that reports no `HUB_PASSWORD`.
 
 The hub never loads a `.env` file — `TELEGRAM_BOT_TOKEN`/`TELEGRAM_OWNER_CHAT_ID`
 (and the rest of the assistant config) have to be set here, in the plist's
@@ -104,7 +121,12 @@ nodes; leave it unset on macOS.
 ### Daemon config
 
     node: { name: macmini, arch: arm64 }
-    hub: http://127.0.0.1:4000
+    # The tailnet alias, not a machine name: it follows the hub across a
+    # control-node switch (../do/README.md §6, ../controlnode.md).
+    hub: http://hub.internal:4000
+    hubCandidates:
+      - http://macmini.<tailnet>.ts.net:4000
+      - http://strix.<tailnet>.ts.net:4000
     # No advertiseHost: the browser server stays on loopback (see below).
     jobTypes: ["browser-lease"]
     browser:
@@ -142,6 +164,9 @@ daemon token lands.
       <key>EnvironmentVariables</key>
       <dict>
         <key>PLAYWRIGHT_BROWSERS_PATH</key><string>/Users/<you>/agenthub-data/playwright</string>
+        <key>DAEMON_TOKEN</key><string><the same token the hub carries></string>
+        <!-- On a control-node candidate, repeat the hub's own variables here too:
+             this daemon is what spawns the hub after a switch. See ../controlnode.md. -->
       </dict>
       <key>RunAtLoad</key><true/>
       <key>KeepAlive</key><true/>
@@ -152,8 +177,10 @@ daemon token lands.
 ## Future: Strix Halo switch
 
 Spec §4.2 names the AMD Strix Halo box as a future alternate control node.
-Switching (`/controlnode <name>`) checkpoints the DB, then rsyncs `data/`
-(the SQLite DB plus project and memory file stores) over the tailnet to the
-new control node before starting the hub there — `data/` is the only state
-that needs to move. Until Strix Halo hardware exists, the Mac mini is the
-only control node.
+Switching (`/controlnode <name>`) pauses every writer, checkpoints the DB into
+a `checkpoint.db` snapshot, then rsyncs `data/` (the snapshot plus the project
+and memory file stores) over the tailnet to the new control node before
+starting the hub there — `data/` is the only state that needs to move. The new
+hub's configuration comes from the *target daemon's* environment, so set the
+variables above on both machines. Until Strix Halo hardware exists, the Mac
+mini is the only control node — see `../controlnode.md` for the full procedure.

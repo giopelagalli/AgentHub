@@ -5,11 +5,22 @@ reach the outside world *over HTTP* (PRD §12). There is no generic `fetch`
 tool, and there never should be: no agent tool makes an unaudited HTTP call —
 if a capability is not one of the tools below, no agent can perform it.
 
-The residual hole is `run_shell`, the project-workspace tool: a command it runs
-can open its own socket, and the tool belt cannot see that. If that matters for
-your threat model, sandbox it at the OS/network level (a `nobody`-style user
-with an egress-denied firewall group, a container, or a per-node outbound
-allowlist) — the tool belt is not where it can be closed.
+Two capabilities leave the machine without passing through that ledger, and
+both are outside what the tool belt can close:
+
+- **`run_shell`**, the project-workspace tool: a command it runs can open its
+  own socket, and the tool belt cannot see that.
+- **`browser_navigate` / `browser_type`** and the other `BROWSER_OPS` on the
+  shared browser (`deploy/macmini/README.md`): an agent holding the lease can
+  drive a real browser to any site and type into it. These are
+  **frame-recorded, not audited** — the screenshot timeline under
+  `<DATA_ROOT>/media/browser/<leaseId>/` is the record of what happened, and
+  no `tool_audit` row is written for them.
+
+If either matters for your threat model, close it at the OS/network level (a
+`nobody`-style user with an egress-denied firewall group, a container, or a
+per-node outbound allowlist on the browser node) — the tool belt is not where
+it can be done.
 
 Every call is bounded by a 15s timeout and writes one `tool_audit` row
 (timestamp, session, tool, purpose, request/response bytes, ok). Read the

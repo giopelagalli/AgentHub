@@ -2,7 +2,15 @@
 node:
   name: macbook
   arch: arm64
-hub: http://macmini.<tailnet>.ts.net:4000
+# The tailnet alias for whichever machine is currently the control node — not a
+# machine name, so a /controlnode switch needs no config change here
+# (deploy/do/README.md §6, deploy/controlnode.md).
+hub: http://hub.internal:4000
+# Backstop for the window before the alias has moved: probed in order after
+# three consecutive failed heartbeats.
+hubCandidates:
+  - http://macmini.<tailnet>.ts.net:4000
+  - http://strix.<tailnet>.ts.net:4000
 advertiseHost: macbook.<tailnet>.ts.net
 heartbeatMs: 5000
 serving:

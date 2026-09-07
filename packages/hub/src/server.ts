@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { BrowserRequesterKind, BrowserStatus, HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
+import { Auth, routeAccess, type AuthOptions } from './auth.js';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
@@ -91,6 +92,8 @@ export interface HubOptions {
   tickIntervalMs?: number;
   assistant?: AssistantOptions;
   browser?: BrowserOptions;
+  /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
+  auth?: AuthOptions;
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -115,6 +118,27 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
   const master = new MasterOrchestrator({ service: projects, loop });
   const app = Fastify();
+
+  // Registered before any route or plugin so it also covers the static UI and the /ws upgrade —
+  // @fastify/websocket runs the route's onRequest hooks, and a 401 sent here means the handshake
+  // never completes. Without `auth` the hook does not exist at all and the hub stays open.
+  const auth = opts.auth ? new Auth(opts.auth) : null;
+  if (auth) {
+    app.addHook('onRequest', async (req, reply) => {
+      const access = routeAccess(req.method, req.url.split('?')[0]!);
+      if (access === 'none' || access === 'open') return;
+      if (auth.ownerOk(req.headers.cookie)) return;
+      if (access === 'daemon' && auth.bearerOk(req.headers.authorization)) return;
+      // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
+      // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
+      // half-dead and hold `app.close()` open forever.
+      if (req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
+      return reply.code(401).send({ error: 'unauthorized' });
+    });
+  }
+  /** A cookie is only marked Secure when the request actually arrived over TLS, directly or via a proxy. */
+  const isHttps = (req: FastifyRequest): boolean =>
+    req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
 
   if (opts.uiDist && existsSync(opts.uiDist)) {
     app.register(fastifyStatic, { root: opts.uiDist });
@@ -205,6 +229,30 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   const sweeper = setInterval(() => { sweepAndRequeue(); leases.expire(); broadcastState(); }, opts.sweepIntervalMs ?? 5000);
   sweeper.unref();
+
+  // --- auth ---------------------------------------------------------------------
+
+  // Unauthenticated on purpose: a health probe that needs a session can't tell a down hub from a
+  // logged-out one.
+  app.get('/api/health', async () => ({ ok: true }));
+
+  // The UI's boot check. The hook answers 401 for it when there is a session to be had and none was
+  // sent; reaching the handler at all means the caller is the owner (or the hub is open).
+  app.get('/api/me', async () => ({ owner: true }));
+
+  if (auth) {
+    app.post('/api/login', async (req, reply) => {
+      const body = req.body as Partial<{ password: string }> | undefined;
+      if (!auth.passwordOk(body?.password)) return reply.code(401).send({ error: 'invalid password' });
+      reply.header('set-cookie', auth.sessionCookie(isHttps(req)));
+      return { owner: true };
+    });
+
+    app.post('/api/logout', async (req, reply) => {
+      reply.header('set-cookie', auth.clearedCookie(isHttps(req)));
+      return { ok: true };
+    });
+  }
 
   app.post('/api/nodes/register', async (req) => {
     const result = registry.register(req.body as NodeRegistration);

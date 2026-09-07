@@ -32,7 +32,11 @@ export class Daemon {
   private browserDriver?: BrowserDriver;
   /** The port the browser server actually bound, which differs from config when it asked for 0. */
   private browserPort?: number;
+  /** Sent on every hub call once the hub has auth enabled; empty when this node has no token. */
+  private readonly authHeaders: Record<string, string>;
   constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
+    const token = cfg.hubToken ?? process.env.DAEMON_TOKEN;
+    this.authHeaders = token ? { authorization: `Bearer ${token}` } : {};
     this.supervisor = new Supervisor(cfg.serving ?? [], (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
       void this.stop().then(() => process.exit(1));
@@ -64,12 +68,12 @@ export class Daemon {
     await this.supervisor.startAll();
     if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
     const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(this.registration()),
+      method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
     });
     if (!res.ok) throw new Error(`hub registration failed: ${res.status}`);
     const interval = this.cfg.heartbeatMs ?? 5000;
     this.timer = setInterval(() => {
-      fetch(`${this.cfg.hub}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST' })
+      fetch(`${this.cfg.hub}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST', headers: this.authHeaders })
         .then((res) => { if (res.status === 404) void this.reregister('heartbeat'); })
         .catch(() => { /* hub temporarily unreachable; keep beating */ });
     }, interval);
@@ -82,6 +86,7 @@ export class Daemon {
         types: jobTypes,
         workspaceRoot: this.cfg.workspaceRoot ?? join(process.cwd(), 'workspace'),
         claimIntervalMs: this.cfg.claimIntervalMs ?? 1000,
+        authHeaders: this.authHeaders,
         onNodeNotFound: () => { void this.reregister('claim'); },
       });
       this.runner.start();
@@ -99,7 +104,7 @@ export class Daemon {
     console.error(`[daemon] hub doesn't know node ${this.cfg.node.name} (${reason} 404) — re-registering`);
     try {
       const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(this.registration()),
+        method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
       });
       if (!res.ok) console.error(`[daemon] re-registration failed: ${res.status}`);
     } catch (err) {

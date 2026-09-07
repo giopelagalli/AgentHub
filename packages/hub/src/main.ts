@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { AuthOptions } from './auth.js';
 import { createHub, type AssistantOptions } from './server.js';
 import { GrammyPort } from './telegram/grammy-port.js';
 
@@ -34,11 +35,26 @@ if (token && ownerChatId && ownerChatId.startsWith('-')) {
   console.log('[hub] TELEGRAM_BOT_TOKEN/TELEGRAM_OWNER_CHAT_ID not set; telegram bot disabled');
 }
 
+// No password, no auth: the hub answers everyone, which is only safe on a machine nothing else can
+// reach. That is a deliberate local-dev mode, so it costs a log line rather than a refusal to start.
+const password = process.env.HUB_PASSWORD;
+const sessionSecret = process.env.HUB_SESSION_SECRET;
+const daemonToken = process.env.DAEMON_TOKEN;
+let auth: AuthOptions | undefined;
+if (password) {
+  auth = { password, ...(sessionSecret ? { sessionSecret } : {}), ...(daemonToken ? { daemonToken } : {}) };
+  if (!sessionSecret) console.log('[hub] HUB_SESSION_SECRET not set; sessions are signed with a random key and drop on every restart');
+  if (!daemonToken) console.log('[hub] DAEMON_TOKEN not set; no daemon can register or claim jobs against this hub');
+} else {
+  console.log('[hub] HUB_PASSWORD not set; auth is disabled and every route is open');
+}
+
 const hub = createHub({
   dbPath: process.env.HUB_DB ?? 'data/hub.db',
   projectsRoot: process.env.PROJECTS_ROOT ?? 'data/projects',
   uiDist,
   assistant,
+  ...(auth ? { auth } : {}),
 });
 const port = Number(process.env.PORT ?? 4000);
 hub.app.listen({ port, host: '0.0.0.0' }).then((addr) => console.log(`[hub] listening at ${addr}`)).catch((err) => {

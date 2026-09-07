@@ -159,6 +159,13 @@
   background: var(--c-pale);
 }
 
+/* The login box borrows the centred panel and the chat form row; only its refusal
+   line is its own. */
+.gb-login__error {
+  margin: 6px 0 0;
+  color: var(--c-accentRed);
+}
+
 /* Action row for panels that do more than report — the browser lease levers. */
 .gb-actions {
   display: flex;

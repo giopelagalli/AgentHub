@@ -222,6 +222,62 @@ describe('node daemon', () => {
     await waitForProcessGone(grandchildPid!, 500); // already gone by the time stop() resolved
   }, 20000);
 
+  it('carries the daemon bearer token on register, heartbeat and claim', async () => {
+    hub = createHub({ staleMs: 60000, auth: { password: 'owner-pw', daemonToken: 'daemon-tok', sessionSecret: 's' } });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: token-node', '  arch: arm64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'hubToken: daemon-tok',
+      'heartbeatMs: 100',
+      'jobTypes: ["shell-task"]',
+      `workspaceRoot: ${join(dir, 'workspace')}`,
+      'claimIntervalMs: 50',
+    ].join('\n'));
+
+    daemon = new Daemon(loadConfig(cfgPath));
+    await daemon.start(); // registration throws on a 401
+
+    const t0 = hub.registry.byName('token-node')!.lastHeartbeat;
+    await new Promise((r) => setTimeout(r, 400));
+    expect(hub.registry.byName('token-node')!.lastHeartbeat).toBeGreaterThan(t0);
+
+    // Claim, log and complete are the runner's own calls; the job only finishes if all three passed.
+    const job = hub.queue.enqueue({ type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['echo', 'hi'] } });
+    const deadline = Date.now() + 5000;
+    while (hub.queue.get(job.id)?.status !== 'done' && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(hub.queue.get(job.id)?.status).toBe('done');
+  }, 15000);
+
+  it('is refused by an authenticated hub when it has no token', async () => {
+    vi.stubEnv('DAEMON_TOKEN', '');
+    try {
+      hub = createHub({ staleMs: 60000, auth: { password: 'owner-pw', daemonToken: 'daemon-tok', sessionSecret: 's' } });
+      await hub.app.listen({ port: 0, host: '127.0.0.1' });
+      const hubPort = (hub.app.server.address() as { port: number }).port;
+
+      const dir = tmpDir();
+      const cfgPath = join(dir, 'daemon.yaml');
+      writeFileSync(cfgPath, [
+        'node:', '  name: tokenless-node', '  arch: arm64',
+        `hub: http://127.0.0.1:${hubPort}`,
+        'jobTypes: ["shell-task"]',
+      ].join('\n'));
+
+      daemon = new Daemon(loadConfig(cfgPath));
+      await expect(daemon.start()).rejects.toThrow(/hub registration failed: 401/);
+      expect(hub.registry.byName('tokenless-node')).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }, 10000);
+
   it('re-registers with a fresh hub after a hub restart (heartbeat 404)', async () => {
     let hubA: Hub | undefined;
     let hubB: Hub | undefined;

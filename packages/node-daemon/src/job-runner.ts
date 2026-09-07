@@ -21,6 +21,8 @@ export interface JobRunnerOptions {
   types: JobType[];
   workspaceRoot: string;
   claimIntervalMs: number;
+  /** `Authorization` header for the hub, when it has auth enabled; empty or absent when it doesn't. */
+  authHeaders?: Record<string, string>;
   execute?: Execute;
   // Called each time the hub returns 404 from /api/jobs/claim (it doesn't know this node) — lets the
   // daemon re-register itself after e.g. a hub restart.
@@ -41,8 +43,11 @@ export class JobRunner {
   private warned403 = false;
   private warned404 = false;
 
+  private readonly headers: Record<string, string>;
+
   constructor(private opts: JobRunnerOptions) {
     this.execute = opts.execute ?? this.defaultExecute;
+    this.headers = { 'content-type': 'application/json', ...opts.authHeaders };
   }
 
   private defaultExecute: Execute = (job, log) => {
@@ -104,7 +109,7 @@ export class JobRunner {
   private async tryClaim(): Promise<Job | null> {
     try {
       const res = await fetch(`${this.opts.hub}/api/jobs/claim`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
+        method: 'POST', headers: this.headers,
         body: JSON.stringify({ node: this.opts.node, types: this.opts.types }),
       });
       if (res.status === 204) return null; // nothing to claim right now
@@ -203,20 +208,20 @@ export class JobRunner {
   private async sendLog(jobId: number, line: string): Promise<void> {
     try {
       await fetch(`${this.opts.hub}/api/jobs/${jobId}/log`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ line }),
+        method: 'POST', headers: this.headers, body: JSON.stringify({ line }),
       });
     } catch { /* best effort */ }
   }
 
   private reportComplete(jobId: number, result: JobResult): Promise<void> {
     return this.reportWithRetry(() => fetch(`${this.opts.hub}/api/jobs/${jobId}/complete`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ result, node: this.opts.node }),
+      method: 'POST', headers: this.headers, body: JSON.stringify({ result, node: this.opts.node }),
     }));
   }
 
   private reportFail(jobId: number, error: string, requeue: boolean): Promise<void> {
     return this.reportWithRetry(() => fetch(`${this.opts.hub}/api/jobs/${jobId}/fail`, {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error, requeue, node: this.opts.node }),
+      method: 'POST', headers: this.headers, body: JSON.stringify({ error, requeue, node: this.opts.node }),
     }));
   }
 

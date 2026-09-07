@@ -8,6 +8,8 @@ export interface BrowserConfig { enabled: boolean; port?: number; display?: stri
 export interface DaemonConfig {
   node: { name: string; arch: string };
   hub: string;
+  /** Bearer token for every hub call; falls back to the `DAEMON_TOKEN` env var. */
+  hubToken?: string;
   advertiseHost?: string;
   heartbeatMs?: number;
   serving?: ServingConfig[];

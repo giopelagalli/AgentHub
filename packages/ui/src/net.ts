@@ -87,7 +87,8 @@ export function handleWsMessage(store: Store, raw: string): void {
 
 async function fetchState(store: Store): Promise<boolean> {
   try {
-    const response = await fetch(STATE_URL);
+    // The session cookie is what authenticates this poll (and the socket, which sends it itself).
+    const response = await fetch(STATE_URL, { credentials: 'same-origin' });
     return response.ok && applyHubState(store, await response.json());
   } catch {
     return false;

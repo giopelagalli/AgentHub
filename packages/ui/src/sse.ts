@@ -4,6 +4,8 @@ export interface SseEvent {
   done?: boolean;
   full?: string;
   error?: string;
+  /** Outward actions the assistant proposed in this reply; they run only once confirmed. */
+  pending?: { id: string; description: string }[];
 }
 
 const DATA_LINE = /^data: (\{.*\})$/m;

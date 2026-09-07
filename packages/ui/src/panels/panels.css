@@ -91,6 +91,27 @@
   color: var(--c-accentRed);
 }
 
+.gb-chat__pending {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+  color: var(--c-mid);
+}
+
+.gb-chat__pending button {
+  padding: 1px 6px;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--c-cream);
+  background: var(--c-ink);
+  border: 2px solid var(--c-ink);
+  cursor: pointer;
+}
+
 .gb-chat__form {
   display: flex;
   gap: 6px;

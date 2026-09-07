@@ -1,8 +1,20 @@
 import { parseSseFrames } from '../sse.js';
 
-export interface ChatAgent {
-  id: number;
+export interface ChatTarget {
+  /** Speaker name in the log and the panel heading. */
   name: string;
+  /** SSE route this panel posts `{ text }` to. */
+  endpoint: string;
+  /**
+   * Base route for the confirmation gate (`<base>/<id>/confirm|cancel`). Only the assistant
+   * proposes outward actions, so only the assistant passes this.
+   */
+  pendingBase?: string;
+}
+
+interface PendingAction {
+  id: string;
+  description: string;
 }
 
 /**
@@ -11,12 +23,12 @@ export interface ChatAgent {
  * arrive; closing aborts the request, which the hub reads as a disconnect and
  * frees the stream slot.
  */
-export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
+export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   const panel = document.createElement('div');
   panel.className = 'gb-panel gb-panel--chat';
 
   const heading = document.createElement('h2');
-  heading.textContent = agent.name;
+  heading.textContent = target.name;
   panel.appendChild(heading);
 
   const note = document.createElement('p');
@@ -67,13 +79,52 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
     return said;
   };
 
+  /**
+   * One row per outward action the reply proposed: nothing has happened yet, and the hub only runs
+   * it once Confirm is pressed. Both buttons go away as soon as either is used, so one proposal
+   * can't be answered twice.
+   */
+  const addPending = (actions: PendingAction[]): void => {
+    if (!target.pendingBase) return;
+    for (const action of actions) {
+      const row = document.createElement('p');
+      row.className = 'gb-chat__pending';
+      const label = document.createElement('span');
+      label.textContent = action.description;
+      row.appendChild(label);
+
+      const answer = async (verb: 'confirm' | 'cancel'): Promise<void> => {
+        row.querySelectorAll('button').forEach((b) => b.remove());
+        try {
+          const response = await fetch(`${target.pendingBase}/${action.id}/${verb}`, { method: 'POST' });
+          if (!response.ok) throw new Error(`hub replied ${response.status}`);
+          const body = (await response.json()) as { result?: string };
+          label.textContent = verb === 'confirm' ? (body.result ?? 'Done.') : `Cancelled: ${action.description}`;
+        } catch (error) {
+          label.textContent = `${action.description} — failed: ${String(error)}`;
+          row.classList.add('gb-chat__msg--error');
+        }
+      };
+
+      for (const verb of ['confirm', 'cancel'] as const) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = verb === 'confirm' ? 'Confirm' : 'Cancel';
+        button.addEventListener('click', () => void answer(verb));
+        row.appendChild(button);
+      }
+      log.appendChild(row);
+      log.scrollTop = log.scrollHeight;
+    }
+  };
+
   let inFlight: AbortController | null = null;
 
   const stream = async (text: string): Promise<void> => {
     // The user's own message always pins to bottom, even if they'd scrolled
     // back to read history — sending is a clear signal they're back at the end.
     addMessage('You', text, true);
-    const reply = addMessage(agent.name, '');
+    const reply = addMessage(target.name, '');
     const controller = new AbortController();
     inFlight = controller;
     // Captured before disabling blurs the input, so we know whether to give
@@ -90,7 +141,7 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
     };
 
     try {
-      const response = await fetch(`/api/agents/${agent.id}/messages`, {
+      const response = await fetch(target.endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
@@ -113,6 +164,7 @@ export function openChat(host: HTMLElement, agent: ChatAgent): () => void {
           // The done frame carries the whole reply: trust it over the pieces.
           if (event.done && typeof event.full === 'string') reply.textContent = event.full;
           pinIfFollowing(following);
+          if (event.done && event.pending?.length) addPending(event.pending);
         }
       }
     } catch (error) {

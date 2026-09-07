@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { HubState, JobResult, JobSpec, JobType, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
+import type { HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
@@ -16,17 +16,54 @@ import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
+import { Assistant } from './assistant/assistant.js';
+import { ConfirmationGate } from './assistant/confirm.js';
+import { MemoryStore } from './assistant/memory.js';
+import { Planner, type PlannerList } from './assistant/planner.js';
+import { assistantTools } from './assistant/tools.js';
+import { Alerts, type AlertEvents } from './telegram/alerts.js';
+import type { TelegramPort } from './telegram/port.js';
+import { CommandRouter } from './telegram/router.js';
+import { Scheduler, SystemClock, type Clock } from './telegram/scheduler.js';
 import { registerWs } from './ws.js';
+
+/** Everything the assistant wiring builds, once `MemoryStore.open` has finished. */
+export interface AssistantHandle {
+  memory: MemoryStore;
+  planner: Planner;
+  gate: ConfirmationGate;
+  assistant: Assistant;
+  /** Telegram parts, present only when `assistant.telegram` was configured. */
+  port: TelegramPort | null;
+  router: CommandRouter | null;
+  scheduler: Scheduler | null;
+  alerts: Alerts | null;
+}
 
 export interface Hub {
   app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
   runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
+  /** Resolves once the assistant is wired; rejects when no `assistant` option was given. */
+  assistant(): Promise<AssistantHandle>;
   stop(opts?: StopOptions): Promise<void>;
 }
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
+const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
+const DEFAULT_BRIEFING_TIME = '08:00';
+const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
+
+export interface AssistantOptions {
+  /** Root of the git-versioned memory bundle (MEMORY.md, notes/, planner/). */
+  memoryRoot: string;
+  /** Telegram transport plus the one chat allowed to drive it; omitted, the bot never starts. */
+  telegram?: { port: TelegramPort; ownerChatId: string };
+  schedule?: { briefingTime?: string; checkinTimes?: string[]; tz?: string };
+  /** Injected in tests so the scheduler and alert dedupe never wait on real time. */
+  clock?: Clock;
+}
 
 export interface HubOptions {
   dbPath?: string;
@@ -35,6 +72,7 @@ export interface HubOptions {
   uiDist?: string;
   projectsRoot?: string;
   tickIntervalMs?: number;
+  assistant?: AssistantOptions;
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -104,11 +142,20 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
   };
 
+  // The sweep is the only place a node is known to have just gone offline, so the alert hookup
+  // hangs off it; briefings pass straight through to the service's own listeners.
+  const nodeOfflineListeners: ((node: NodeInfo, requeued: number) => void)[] = [];
+  const hubEvents: AlertEvents = {
+    onNodeOffline: (cb) => { nodeOfflineListeners.push(cb); },
+    onBriefing: (cb) => { projects.onBriefing(cb); },
+  };
+
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
       const { requeued, failed } = queue.requeueForNode(node.id);
       if (requeued) app.log.info(`requeued ${requeued} jobs from offline node ${node.name}`);
       for (const jobId of failed) jobLogs.append(jobId, `[hub] max attempts exceeded after node ${node.name} went offline`);
+      for (const listener of nodeOfflineListeners) listener(node, requeued);
     }
   };
 
@@ -343,10 +390,156 @@ export function createHub(opts: HubOptions = {}): Hub {
     return result;
   });
 
+  // --- assistant ---------------------------------------------------------------
+
+  /**
+   * Opening the memory store is async (git init, scaffolding), so the wiring is a promise the
+   * routes await rather than something `createHub` can finish synchronously. Telegram only starts
+   * when a port was supplied — no token, no bot, and the rest of the assistant still works.
+   */
+  const initAssistant = async (cfg: AssistantOptions): Promise<AssistantHandle> => {
+    const memory = await MemoryStore.open(cfg.memoryRoot);
+    const planner = new Planner(join(cfg.memoryRoot, 'planner'), (msg) => memory.commit(msg));
+    const gate = new ConfirmationGate();
+    const tools = assistantTools({ memory, planner, gate, service: projects, master, registry });
+    const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript });
+
+    const handle: AssistantHandle = { memory, planner, gate, assistant, port: null, router: null, scheduler: null, alerts: null };
+    if (!cfg.telegram) return handle;
+
+    const { port, ownerChatId } = cfg.telegram;
+    const clock = cfg.clock ?? new SystemClock();
+    handle.router = new CommandRouter({ port, ownerChatId, assistant, service: projects, master, planner, registry, gate });
+    handle.router.start();
+    handle.scheduler = new Scheduler({
+      clock, port, ownerChatId, master, service: projects, assistant,
+      briefingTime: cfg.schedule?.briefingTime ?? DEFAULT_BRIEFING_TIME,
+      checkinTimes: cfg.schedule?.checkinTimes ?? DEFAULT_CHECKIN_TIMES,
+      ...(cfg.schedule?.tz ? { tz: cfg.schedule.tz } : {}),
+    });
+    handle.scheduler.start();
+    handle.alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock });
+    handle.alerts.attach(hubEvents);
+    await port.start();
+    // Recorded only once polling is up, so `stop()` never stops a port that never started.
+    handle.port = port;
+    return handle;
+  };
+
+  const assistantReady = opts.assistant ? initAssistant(opts.assistant) : null;
+  // Nothing awaits the wiring until the first request, so a failure would otherwise surface as an
+  // unhandled rejection minutes later; this logs it and marks the promise handled.
+  if (assistantReady) void assistantReady.catch((err) => app.log.error(`assistant wiring failed: ${(err as Error).message}`));
+
+  /** Resolves the wired assistant, or replies 503 and returns null when the hub has none. */
+  const requireAssistant = async (reply: FastifyReply): Promise<AssistantHandle | null> => {
+    if (!assistantReady) {
+      reply.code(503).send({ error: 'assistant not configured' });
+      return null;
+    }
+    return assistantReady;
+  };
+
+  const resolveList = (value: string, reply: FastifyReply): PlannerList | null => {
+    if (!PLANNER_LISTS.includes(value as PlannerList)) {
+      reply.code(400).send({ error: 'unknown planner list' });
+      return null;
+    }
+    return value as PlannerList;
+  };
+
+  app.post('/api/assistant/messages', async (req, reply) => {
+    const body = req.body as Partial<{ text: string }> | undefined;
+    if (!body || typeof body.text !== 'string' || !body.text) return reply.code(400).send({ error: 'invalid message' });
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    // Same framing as the agent chat route, plus the pending actions this reply proposed so the
+    // caller can render Confirm/Cancel for them.
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    try {
+      const result = await handle.assistant.reply(body.text, {
+        onToken: (token) => { reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`); },
+      });
+      const pending = result.pending.map(({ id, description }) => ({ id, description }));
+      reply.raw.write(`data: ${JSON.stringify({ done: true, full: result.text, pending })}\n\n`);
+    } catch (err) {
+      reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    }
+    reply.raw.end();
+    return reply;
+  });
+
+  app.get('/api/assistant/pending', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    return handle.gate.pending().map(({ id, description, createdAt }) => ({ id, description, createdAt }));
+  });
+
+  app.post('/api/assistant/pending/:id/confirm', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    const { id } = req.params as { id: string };
+    try {
+      return { result: await handle.gate.confirm(id) };
+    } catch (err) {
+      return reply.code(404).send({ error: (err as Error).message });
+    }
+  });
+
+  app.post('/api/assistant/pending/:id/cancel', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    const { id } = req.params as { id: string };
+    if (!handle.gate.cancel(id)) return reply.code(404).send({ error: 'unknown pending action' });
+    return { ok: true };
+  });
+
+  app.get('/api/memory/index', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    return { text: await handle.memory.indexText(), entries: await handle.memory.index() };
+  });
+
+  app.get('/api/planner', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    const lists = await Promise.all(PLANNER_LISTS.map((which) => handle.planner.list(which)));
+    return Object.fromEntries(PLANNER_LISTS.map((which, i) => [which, lists[i]]));
+  });
+
+  app.post('/api/planner/:list', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    const which = resolveList((req.params as { list: string }).list, reply);
+    if (!which) return reply;
+    const body = req.body as Partial<{ text: string }> | undefined;
+    if (!body || typeof body.text !== 'string' || !body.text.trim()) return reply.code(400).send({ error: 'invalid item' });
+    const n = await handle.planner.add(which, body.text.trim());
+    return reply.code(201).send({ n, items: await handle.planner.list(which) });
+  });
+
+  app.post('/api/planner/:list/:n/done', async (req, reply) => {
+    const handle = await requireAssistant(reply);
+    if (!handle) return reply;
+    const params = req.params as { list: string; n: string };
+    const which = resolveList(params.list, reply);
+    if (!which) return reply;
+    if (!(await handle.planner.complete(which, Number(params.n)))) return reply.code(404).send({ error: 'unknown item' });
+    return { items: await handle.planner.list(which) };
+  });
+
   return {
     app, db, registry, queue, gateway, runtime, transcript, projects, master,
+    assistant() {
+      if (!assistantReady) return Promise.reject(new Error('assistant not configured'));
+      return assistantReady;
+    },
     async stop(opts) {
       clearInterval(sweeper);
+      // A failed wiring has already been logged; stopping must still tear the rest of the hub down.
+      const handle = await assistantReady?.catch(() => null);
+      handle?.scheduler?.stop();
+      await handle?.port?.stop();
       await projects.stop(opts);
       await Promise.all([...refreshes]);
       await app.close();

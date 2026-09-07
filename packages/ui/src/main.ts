@@ -97,13 +97,26 @@ async function greetAgent(agent: { id: number; name: string }): Promise<void> {
   );
   if (choice !== 'talk') return;
   dismissChat?.();
-  dismissChat = openPanel(openChat(document.body, agent));
+  dismissChat = openPanel(openChat(document.body, {
+    name: agent.name,
+    endpoint: `/api/agents/${agent.id}/messages`,
+  }));
 }
 
-// Signboards: a dialog with nothing to choose but Close.
-const SIGNS: Record<string, [string, string]> = {
-  reception: ['RECEPTION', 'Assistant — arriving Phase 4.'],
-};
+/** The reception desk is the assistant's spot: a greeting, then its own chat panel. */
+async function greetAssistant(): Promise<void> {
+  const choice = await openDialog(app, ['ASSISTANT', 'How can I help?'], [
+    { id: 'talk', label: 'Talk' },
+    { id: 'close', label: 'Close' },
+  ]);
+  if (choice !== 'talk') return;
+  dismissChat?.();
+  dismissChat = openPanel(openChat(document.body, {
+    name: 'Assistant',
+    endpoint: '/api/assistant/messages',
+    pendingBase: '/api/assistant/pending',
+  }));
+}
 
 const LINE_CHARS = 60;
 const LINES_PER_PAGE = 4;
@@ -210,8 +223,8 @@ bindPointer(screen.canvas, (x, y) => {
     openPanel(openQueuePanel(document.body, state));
     return;
   }
-  if (spot.id in SIGNS) {
-    void openDialog(app, SIGNS[spot.id], [{ id: 'close', label: 'Close' }]);
+  if (spot.id === 'reception') {
+    void greetAssistant();
     return;
   }
   if (spot.id === 'briefing') {

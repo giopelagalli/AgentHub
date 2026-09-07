@@ -25,11 +25,11 @@ async function login(hub: Hub, password = PASSWORD): Promise<string> {
  * A real `/ws` handshake over a raw socket — the HTTP client would hide the distinction this test
  * is about. Resolves the status line the hub answered with.
  */
-function handshake(port: number, cookie?: string): Promise<string> {
+function handshake(port: number, cookie?: string, path = '/ws'): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write([
-        'GET /ws HTTP/1.1', 'Host: 127.0.0.1', 'Connection: Upgrade', 'Upgrade: websocket',
+        `GET ${path} HTTP/1.1`, 'Host: 127.0.0.1', 'Connection: Upgrade', 'Upgrade: websocket',
         'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
         ...(cookie ? [`Cookie: ${cookie}`] : []), '', '',
       ].join('\r\n'));
@@ -52,26 +52,31 @@ describe('auth policy', () => {
     expect(routeAccess('GET', '/')).toBe('none');
     expect(routeAccess('GET', '/assets/tower.js')).toBe('none');
     expect(routeAccess('GET', '/api/health')).toBe('open');
+    expect(routeAccess('HEAD', '/api/health')).toBe('open');
     expect(routeAccess('POST', '/api/login')).toBe('open');
     expect(routeAccess('GET', '/ws')).toBe('owner');
     expect(routeAccess('GET', '/api/state')).toBe('owner');
     expect(routeAccess('POST', '/api/projects')).toBe('owner');
     // A login route is only open for the login itself.
     expect(routeAccess('GET', '/api/login')).toBe('owner');
+    // No route matched, or a route nobody has classified: denied by default.
+    expect(routeAccess('GET', undefined)).toBe('owner');
   });
 
-  it('lets the daemon token reach node, job-report and browser-relay routes only', () => {
+  it('lets the daemon token reach node-registration and job-report routes only', () => {
     expect(routeAccess('POST', '/api/nodes/register')).toBe('daemon');
-    expect(routeAccess('POST', '/api/nodes/spark/heartbeat')).toBe('daemon');
+    expect(routeAccess('POST', '/api/nodes/:name/heartbeat')).toBe('daemon');
     expect(routeAccess('POST', '/api/jobs/claim')).toBe('daemon');
-    expect(routeAccess('POST', '/api/jobs/7/log')).toBe('daemon');
-    expect(routeAccess('POST', '/api/jobs/7/complete')).toBe('daemon');
-    expect(routeAccess('POST', '/api/jobs/7/fail')).toBe('daemon');
-    expect(routeAccess('POST', '/api/browser/act')).toBe('daemon');
-    // Enqueuing and reading jobs is the owner's, not a runner's.
+    expect(routeAccess('POST', '/api/jobs/:id/log')).toBe('daemon');
+    expect(routeAccess('POST', '/api/jobs/:id/complete')).toBe('daemon');
+    expect(routeAccess('POST', '/api/jobs/:id/fail')).toBe('daemon');
+    // Enqueuing and reading jobs is the owner's, not a runner's; so is the node list, and so is the
+    // browser relay — a leaked daemon token must not be able to drive the owner's browser.
     expect(routeAccess('POST', '/api/jobs')).toBe('owner');
-    expect(routeAccess('GET', '/api/jobs/7')).toBe('owner');
+    expect(routeAccess('GET', '/api/jobs/:id')).toBe('owner');
     expect(routeAccess('POST', '/api/browser/lease')).toBe('owner');
+    expect(routeAccess('POST', '/api/browser/act')).toBe('owner');
+    expect(routeAccess('GET', '/api/nodes')).toBe('owner');
   });
 
   it('compares in constant time without throwing on a length mismatch', () => {
@@ -186,6 +191,64 @@ describe('hub auth', () => {
     const port = (hub.app.server.address() as { port: number }).port;
 
     expect(await handshake(port)).toContain('401 Unauthorized');
+    // The router percent-decodes before it matches, so an encoded path is the same route.
+    expect(await handshake(port, undefined, '/%77s')).toContain('401 Unauthorized');
     expect(await handshake(port, await login(hub))).toContain('101 Switching Protocols');
+  });
+
+  it('guards a percent-encoded path the same as the plain one', async () => {
+    const hub = spawn();
+    for (const url of ['/%61pi/state', '/api/%73tate', '/%61pi/nodes']) {
+      expect((await hub.app.inject({ method: 'GET', url })).statusCode).toBe(401);
+    }
+    // The encoding is not what is refused: the same path with a session is served.
+    const cookie = await login(hub);
+    expect((await hub.app.inject({ method: 'GET', url: '/%61pi/state', headers: { cookie } })).statusCode).toBe(200);
+  });
+
+  it('refuses a traversal path outright', async () => {
+    const hub = spawn();
+    const res = await hub.app.inject({ method: 'GET', url: '/api/nodes/../state' });
+    expect([400, 401]).toContain(res.statusCode);
+  });
+
+  it('401s rather than 500s on a cookie value that is not valid encoding', async () => {
+    const hub = spawn();
+    const res = await hub.app.inject({ method: 'GET', url: '/api/state', headers: { cookie: `${SESSION_COOKIE}=%` } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('keeps the browser relay and the node list off the daemon token', async () => {
+    const hub = spawn();
+    const bearer = { authorization: `Bearer ${DAEMON_TOKEN}` };
+    expect((await hub.app.inject({ method: 'POST', url: '/api/browser/act', headers: bearer, payload: {} })).statusCode).toBe(401);
+    expect((await hub.app.inject({ method: 'GET', url: '/api/nodes', headers: bearer })).statusCode).toBe(401);
+
+    // The owner reaches both: a 400 here is the handler refusing an empty action, not the hook.
+    const cookie = await login(hub);
+    expect((await hub.app.inject({ method: 'POST', url: '/api/browser/act', headers: { cookie }, payload: {} })).statusCode).toBe(400);
+    expect((await hub.app.inject({ method: 'GET', url: '/api/nodes', headers: { cookie } })).statusCode).toBe(200);
+  });
+
+  it('answers a HEAD health probe too', async () => {
+    const hub = spawn();
+    expect((await hub.app.inject({ method: 'HEAD', url: '/api/health' })).statusCode).toBe(200);
+  });
+
+  it('locks a client out after five failed logins and lets it back in after the window', async () => {
+    let now = Date.now();
+    const hub = createHub({ auth: { password: PASSWORD, sessionSecret: 'test-secret', now: () => now } });
+    hubs.push(hub);
+    const attempt = (password: string, remoteAddress = '10.0.0.9') =>
+      hub.app.inject({ method: 'POST', url: '/api/login', payload: { password }, remoteAddress });
+
+    for (let i = 0; i < 5; i += 1) expect((await attempt('nope')).statusCode).toBe(401);
+    // Even the right password waits out the lockout.
+    expect((await attempt(PASSWORD)).statusCode).toBe(429);
+    // One client's failures are not another's.
+    expect((await attempt(PASSWORD, '10.0.0.10')).statusCode).toBe(200);
+
+    now += 15 * 60 * 1000 + 1;
+    expect((await attempt(PASSWORD)).statusCode).toBe(200);
   });
 });

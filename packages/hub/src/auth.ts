@@ -24,35 +24,107 @@ export interface AuthOptions {
  */
 export type Access = 'none' | 'open' | 'daemon' | 'owner';
 
-/** `/api/jobs/claim` plus the per-job report routes a daemon calls while running one. */
-const DAEMON_JOB_ROUTE = /^\/api\/jobs\/(?:claim|\d+\/(?:log|complete|fail))$/;
+/**
+ * The `<METHOD> <route>` pairs a daemon bearer may reach: `/api/jobs/claim` plus the per-job report
+ * routes it calls while running one, and the two registration routes. Anything absent is the
+ * owner's.
+ */
+const DAEMON_ROUTES = new Set([
+  'POST /api/nodes/register',
+  'POST /api/nodes/:name/heartbeat',
+  'POST /api/jobs/claim',
+  'POST /api/jobs/:id/log',
+  'POST /api/jobs/:id/complete',
+  'POST /api/jobs/:id/fail',
+]);
 
 /**
- * The policy, as a pure function of method and path: everything under `/api/` and the `/ws` upgrade
- * needs auth except the login route and the health probe. Daemon-facing routes take the bearer token
- * — and the owner cookie too, since the owner may drive the same routes from the UI (the browser
- * relay is one of them) and a session is strictly the stronger credential.
+ * The policy, as a pure function of method and *matched route*: everything under `/api/` and the
+ * `/ws` upgrade needs auth except the login route and the health probe. Daemon-facing routes take
+ * the bearer token — and the owner cookie too, since the owner may drive the same routes from the
+ * UI and a session is strictly the stronger credential. The browser relay is deliberately not one
+ * of them: a leaked daemon token must not be able to drive the owner's browser.
+ *
+ * `route` is the pattern the router matched (`/api/jobs/:id/log`), never the request's raw path:
+ * find-my-way percent-decodes before matching, so classifying the raw path let `/%61pi/state`
+ * through unguarded. An unmatched request (`route` undefined) or a route this function does not
+ * recognise is denied by default, so a new route is guarded until someone classifies it.
  */
-export function routeAccess(method: string, pathname: string): Access {
-  if (pathname === '/ws') return 'owner';
-  if (pathname !== '/api' && !pathname.startsWith('/api/')) return 'none';
-  if (method === 'GET' && pathname === '/api/health') return 'open';
-  if (method === 'POST' && pathname === '/api/login') return 'open';
-  if (pathname === '/api/nodes' || pathname.startsWith('/api/nodes/')) return 'daemon';
-  if (DAEMON_JOB_ROUTE.test(pathname)) return 'daemon';
-  if (pathname === '/api/browser/act') return 'daemon';
+export function routeAccess(method: string, route: string | undefined): Access {
+  if (route === undefined) return 'owner';
+  if (route === '/ws') return 'owner';
+  if (route !== '/api' && !route.startsWith('/api/')) return 'none';
+  if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
+  if (method === 'POST' && route === '/api/login') return 'open';
+  if (DAEMON_ROUTES.has(`${method} ${route}`)) return 'daemon';
   return 'owner';
 }
 
-/** Splits a `Cookie` header into its pairs. Malformed pairs are skipped rather than thrown over. */
+/**
+ * Splits a `Cookie` header into its pairs. Malformed pairs are skipped rather than thrown over —
+ * including a value that is not valid percent-encoding (`hub_session=%`), which would otherwise
+ * turn a hostile header into a 500.
+ */
 export function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (header ?? '').split(';')) {
     const eq = part.indexOf('=');
     if (eq <= 0) continue;
-    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+    try {
+      out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      continue;
+    }
   }
   return out;
+}
+
+/** Failed logins allowed from one client before it is locked out. */
+export const LOGIN_MAX_FAILURES = 5;
+/** How long failures are remembered, and how long a lockout lasts after the last one. */
+export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+/** Above this many tracked clients, expired entries are swept so a spray cannot grow the map forever. */
+const THROTTLE_SWEEP_AT = 1024;
+
+/**
+ * Per-client failed-login counter. In memory only: a restart forgets it, which is acceptable for a
+ * single-owner hub and keeps the password out of a lockout table on disk.
+ */
+export class LoginThrottle {
+  private readonly clients = new Map<string, { count: number; until: number }>();
+  private readonly now: () => number;
+
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
+
+  /** True while this client is locked out — checked before the password, so a correct one waits too. */
+  blocked(client: string): boolean {
+    const entry = this.clients.get(client);
+    if (!entry) return false;
+    if (entry.until <= this.now()) {
+      this.clients.delete(client);
+      return false;
+    }
+    return entry.count >= LOGIN_MAX_FAILURES;
+  }
+
+  /** Records a failure and returns the running count; the window restarts from this attempt. */
+  fail(client: string): number {
+    const now = this.now();
+    if (this.clients.size >= THROTTLE_SWEEP_AT) {
+      for (const [key, entry] of this.clients) if (entry.until <= now) this.clients.delete(key);
+    }
+    const entry = this.clients.get(client);
+    const count = entry && entry.until > now ? entry.count + 1 : 1;
+    this.clients.set(client, { count, until: now + LOGIN_WINDOW_MS });
+    return count;
+  }
+
+  /** A successful login clears the client's history. */
+  succeed(client: string): void {
+    this.clients.delete(client);
+  }
 }
 
 /**

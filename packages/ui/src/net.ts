@@ -85,13 +85,17 @@ export function handleWsMessage(store: Store, raw: string): void {
   }
 }
 
-async function fetchState(store: Store): Promise<boolean> {
+/** A poll either landed, failed, or found the session gone — the last is not the hub being down. */
+type PollResult = 'ok' | 'down' | 'expired';
+
+async function fetchState(store: Store): Promise<PollResult> {
   try {
     // The session cookie is what authenticates this poll (and the socket, which sends it itself).
     const response = await fetch(STATE_URL, { credentials: 'same-origin' });
-    return response.ok && applyHubState(store, await response.json());
+    if (response.status === 401) return 'expired';
+    return response.ok && applyHubState(store, await response.json()) ? 'ok' : 'down';
   } catch {
-    return false;
+    return 'down';
   }
 }
 
@@ -142,11 +146,22 @@ export function connect(store: Store): void {
     reconnectTimer = undefined;
   };
 
+  /**
+   * A 30-day cookie expires mid-session sooner or later. Reloading hands the page back to `boot`,
+   * which asks `/api/me` and puts the login box up — without this the tower just sits on 'down'.
+   */
+  const relogin = (): void => {
+    stopFallback();
+    current?.close();
+    window.location.reload();
+  };
+
   const poll = async (): Promise<void> => {
     if (!shouldUsePoll(readyState())) return;
-    const ok = await fetchState(store);
+    const result = await fetchState(store);
+    if (result === 'expired') return relogin();
     if (!shouldUsePoll(readyState())) return;
-    store.dispatch({ type: 'connection', status: ok ? 'polling' : 'down' });
+    store.dispatch({ type: 'connection', status: result === 'ok' ? 'polling' : 'down' });
   };
 
   const syncTopics = (): void => {

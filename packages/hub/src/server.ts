@@ -4,7 +4,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyStatic from '@fastify/static';
 import type { BrowserRequesterKind, BrowserStatus, HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
-import { Auth, routeAccess, type AuthOptions } from './auth.js';
+import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
@@ -123,16 +123,34 @@ export function createHub(opts: HubOptions = {}): Hub {
   // @fastify/websocket runs the route's onRequest hooks, and a 401 sent here means the handshake
   // never completes. Without `auth` the hook does not exist at all and the hub stays open.
   const auth = opts.auth ? new Auth(opts.auth) : null;
+  const loginThrottle = new LoginThrottle(opts.auth?.now);
   if (auth) {
     app.addHook('onRequest', async (req, reply) => {
-      const access = routeAccess(req.method, req.url.split('?')[0]!);
+      // Two rejections that precede the policy: a path that is not valid percent-encoding, and one
+      // that still carries traversal after decoding. Neither can name a legitimate route.
+      const raw = req.url.split('?')[0]!;
+      let pathname: string;
+      try {
+        pathname = decodeURIComponent(raw);
+      } catch {
+        return reply.code(400).send({ error: 'bad request' });
+      }
+      if (pathname.startsWith('//') || pathname.split('/').includes('..')) {
+        return reply.code(400).send({ error: 'bad request' });
+      }
+      // Classified on the route the router matched, not on `req.url`: find-my-way percent-decodes
+      // before matching, so `/%61pi/state` reaches `/api/state` while its raw path looks like
+      // nothing at all. An unmatched request has no route and is denied.
+      const route = req.routeOptions?.url;
+      const access = routeAccess(req.method, route);
       if (access === 'none' || access === 'open') return;
       if (auth.ownerOk(req.headers.cookie)) return;
       if (access === 'daemon' && auth.bearerOk(req.headers.authorization)) return;
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
-      // half-dead and hold `app.close()` open forever.
-      if (req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
+      // half-dead and hold `app.close()` open forever. Only the one route it owns, so an ordinary
+      // request carrying an `Upgrade` header is not hung up on.
+      if (route === '/ws' && req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
       return reply.code(401).send({ error: 'unauthorized' });
     });
   }
@@ -241,9 +259,22 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/me', async () => ({ owner: true }));
 
   if (auth) {
+    // Guessing the password is the one attack a single-password hub is wide open to, so failures
+    // are counted per client and a run of them shuts that client out for the window — the check
+    // comes before the comparison, so a correct password during a lockout is refused too.
     app.post('/api/login', async (req, reply) => {
+      const client = req.ip;
+      if (loginThrottle.blocked(client)) {
+        app.log.warn(`[auth] throttled login from ${client}`);
+        return reply.code(429).send({ error: 'too many attempts' });
+      }
       const body = req.body as Partial<{ password: string }> | undefined;
-      if (!auth.passwordOk(body?.password)) return reply.code(401).send({ error: 'invalid password' });
+      if (!auth.passwordOk(body?.password)) {
+        const count = loginThrottle.fail(client);
+        app.log.warn(`[auth] failed login from ${client} (${count})`);
+        return reply.code(401).send({ error: 'invalid password' });
+      }
+      loginThrottle.succeed(client);
       reply.header('set-cookie', auth.sessionCookie(isHttps(req)));
       return { owner: true };
     });

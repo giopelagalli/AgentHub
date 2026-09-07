@@ -25,16 +25,24 @@ export class GrammyPort implements TelegramPort {
     // permanently and silently, since start() has already resolved by the time that happens.
     this.bot.catch((err) => console.error('[telegram] handler error', err.error ?? err));
 
+    // Both paths report the *sender's* user id, never the chat's. `CommandRouter` compares this
+    // against one allowlisted id and also sends replies back to it, and only the user id is the
+    // same value on both kinds of update — a callback query carries no chat of its own, so keying
+    // messages on `chat.id` would have left the two halves comparing different numbers. In the
+    // owner's private chat with the bot, which is the only place this bot is meant to be used, the
+    // user id and the chat id are the same number anyway, so replies land where they should.
     this.bot.on('message:text', async (ctx) => {
+      if (!ctx.from) return;
       const message: IncomingMessage = {
-        chatId: String(ctx.chat.id), text: ctx.message.text, messageId: ctx.message.message_id,
+        chatId: String(ctx.from.id), text: ctx.message.text, messageId: ctx.message.message_id,
       };
       for (const handler of this.messageHandlers) await handler(message);
     });
 
     this.bot.on('callback_query:data', async (ctx) => {
+      if (!ctx.from) return;
       const callback: IncomingCallback = {
-        chatId: String(ctx.callbackQuery.from.id), data: ctx.callbackQuery.data, callbackId: ctx.callbackQuery.id,
+        chatId: String(ctx.from.id), data: ctx.callbackQuery.data, callbackId: ctx.callbackQuery.id,
       };
       for (const handler of this.callbackHandlers) await handler(callback);
     });

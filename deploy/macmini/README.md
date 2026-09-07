@@ -36,7 +36,7 @@ empty one, would be required.
         <key>PORT</key><string>4000</string>
         <key>MEMORY_ROOT</key><string>/Users/<you>/agenthub-data/memory</string>
         <key>TELEGRAM_BOT_TOKEN</key><string><from BotFather, see ../telegram.md></string>
-        <key>TELEGRAM_OWNER_CHAT_ID</key><string><your chat id, see ../telegram.md></string>
+        <key>TELEGRAM_OWNER_CHAT_ID</key><string><your Telegram user id, see ../telegram.md></string>
         <key>BRIEFING_TIME</key><string>08:00</string>
         <key>CHECKIN_TIMES</key><string>13:00,18:00</string>
       </dict>

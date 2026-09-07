@@ -91,7 +91,8 @@ Env vars (see `.env.example`):
 
     MEMORY_ROOT             where the memory bundle lives (default data/memory)
     TELEGRAM_BOT_TOKEN      from @BotFather; see deploy/telegram.md
-    TELEGRAM_OWNER_CHAT_ID  the only chat id the bot will act on; see deploy/telegram.md
+    TELEGRAM_OWNER_CHAT_ID  your own Telegram user id (@userinfobot), the only sender
+                            the bot acts on; see deploy/telegram.md
     BRIEFING_TIME           local HH:MM for the daily briefing (default 08:00)
     CHECKIN_TIMES           comma-separated local HH:MM list (default 13:00,18:00)
 

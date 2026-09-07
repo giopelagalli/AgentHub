@@ -14,18 +14,20 @@ actually runs under (see `deploy/macmini/README.md`'s launchd plist).
 3. BotFather replies with an API token — that's `TELEGRAM_BOT_TOKEN`. Treat
    it like a password: anyone with it can send messages as your bot.
 
-## 2. Find your chat id
+## 2. Find your Telegram user id
 
-The hub only acts on messages from `TELEGRAM_OWNER_CHAT_ID` — every other
-chat is silently ignored, so this has to be your own id, not the bot's.
+The hub only acts on updates whose *sender* is `TELEGRAM_OWNER_CHAT_ID` —
+everyone else is silently ignored. This is your Telegram **user id**, not a
+group or channel id: every update the bot receives (a message or a button
+press) is keyed on who sent it, and the bot replies to that same id, which
+is your private chat with it. A negative number is a group id and will never
+match — the hub logs an error and starts without Telegram if you set one.
 
-1. Send any message to your new bot (search for its username, open the chat,
-   send `hi`).
-2. Fetch `https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates` (in a
-   browser or with `curl`) and look for `message.chat.id` in the response —
-   that number (it may be negative for a group) is `TELEGRAM_OWNER_CHAT_ID`.
-   If the response is empty, send the bot another message and retry — Telegram
-   only returns updates it hasn't handed out yet.
+1. Open a chat with [@userinfobot](https://t.me/userinfobot) and send it any
+   message. It replies with your account's `Id` — a positive number. That's
+   `TELEGRAM_OWNER_CHAT_ID`.
+2. Send your own bot a message too (search for its username, open the chat,
+   send `hi`), so the private chat exists before the hub starts.
 
 ## 3. Set the environment and start the hub
 

@@ -22,10 +22,17 @@ const assistant: AssistantOptions = {
     ...(checkinTimes.length ? { checkinTimes } : {}),
   },
 };
-// The bot needs both halves: a token to talk to Telegram and the owner's chat id to know whose
-// messages count. With either missing the hub still runs — assistant over HTTP, no Telegram.
-if (token && ownerChatId) assistant.telegram = { port: new GrammyPort(token), ownerChatId };
-else console.log('[hub] TELEGRAM_BOT_TOKEN/TELEGRAM_OWNER_CHAT_ID not set; telegram bot disabled');
+// The bot needs both halves: a token to talk to Telegram and the owner's Telegram *user* id to know
+// whose messages count. With either missing the hub still runs — assistant over HTTP, no Telegram.
+// A negative id is a group/channel id, which this allowlist can never match (every update reports
+// the sender's user id), so it is rejected loudly rather than silently ignoring the owner forever.
+if (token && ownerChatId && ownerChatId.startsWith('-')) {
+  console.error(`[hub] TELEGRAM_OWNER_CHAT_ID=${ownerChatId} is a group id; it must be your own Telegram user id (see deploy/telegram.md) — telegram bot disabled`);
+} else if (token && ownerChatId) {
+  assistant.telegram = { port: new GrammyPort(token), ownerChatId };
+} else {
+  console.log('[hub] TELEGRAM_BOT_TOKEN/TELEGRAM_OWNER_CHAT_ID not set; telegram bot disabled');
+}
 
 const hub = createHub({
   dbPath: process.env.HUB_DB ?? 'data/hub.db',

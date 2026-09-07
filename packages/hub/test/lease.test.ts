@@ -99,6 +99,43 @@ describe('LeaseManager', () => {
     expect(leases.acquire(orch)).toEqual({ granted: true, leaseId: expect.any(String) });
   });
 
+  it('a re-acquire at a different priority is a new request, not a renewal', () => {
+    const { leases } = fixture();
+    const held = granted(leases.acquire(sub));
+    // Same id, higher priority: an owner preempts itself rather than renewing the subagent lease.
+    const asOwner = granted(leases.acquire({ kind: 'owner', id: 'sub-1' }));
+    expect(asOwner).not.toBe(held);
+    expect(leases.renew(held)).toBe(false);
+    // Same id at two waiting priorities queues twice — they are different requests.
+    leases.acquire(orch);
+    expect(leases.acquire({ kind: 'subagent', id: 'orch-1' })).toEqual({ queued: true, position: 2 });
+    expect(leases.acquire(orch)).toEqual({ queued: true, position: 1 });
+    expect(leases.queue().map((r) => r.kind)).toEqual(['orchestrator', 'subagent']);
+  });
+
+  it('expires lazily on read: an overdue holder is gone before anyone can act on it', () => {
+    const { leases, advance } = fixture();
+    const id = granted(leases.acquire(sub));
+    leases.acquire(orch);
+    advance(1001);
+    // No sweep has run, but neither reader may hand back the dead lease.
+    expect(leases.holder()?.requester).toEqual(orch);
+    expect(leases.status().holder?.requester).toEqual(orch);
+    expect(leases.renew(id)).toBe(false);
+  });
+
+  it('notifies listeners when a renew triggers expiry and handover', () => {
+    const { leases, advance } = fixture();
+    const seen: LeaseStatus[] = [];
+    const id = granted(leases.acquire(sub));
+    leases.acquire(orch);
+    leases.onChange((s) => seen.push(s));
+    advance(1001);
+    // The sweep never ran; the renew is what discovers the expiry, and watchers must still hear it.
+    expect(leases.renew(id)).toBe(false);
+    expect(seen.map((s) => [s.holder?.requester.id ?? null, s.queue.length])).toEqual([['orch-1', 0]]);
+  });
+
   it('notifies listeners whenever the holder or queue changes', () => {
     const { leases, advance } = fixture();
     const seen: LeaseStatus[] = [];

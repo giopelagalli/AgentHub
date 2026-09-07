@@ -18,7 +18,7 @@ import type { ProjectBundle } from './projects/bundle.js';
 import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
-import { Recorder } from './browser/recorder.js';
+import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
 import { Assistant } from './assistant/assistant.js';
 import { ConfirmationGate } from './assistant/confirm.js';
 import { MemoryStore } from './assistant/memory.js';
@@ -57,8 +57,6 @@ const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
 const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
-// Lease ids are uuids the hub minted; anything else in the recordings path is a client making one up.
-const LEASE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';
 const DEFAULT_BRIEFING_TIME = '08:00';
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
@@ -80,6 +78,8 @@ export interface BrowserOptions {
   recordingsRoot?: string;
   /** Screencast poll interval; floored at 500ms (≤ 2 fps) by the proxy. */
   screencastIntervalMs?: number;
+  /** Injected in tests so lease expiry can be driven without waiting on real time. */
+  now?: () => number;
 }
 
 export interface HubOptions {
@@ -104,9 +104,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
   const loop = new AgentLoop({ gateway, transcript });
-  const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}) });
+  const browserNow = opts.browser?.now ? { now: opts.browser.now } : {};
+  const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow });
   const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
-  const browser = new BrowserProxy({ registry, leases, recorder });
+  const browser = new BrowserProxy({ registry, leases, recorder, ...browserNow });
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
     loop, gateway, queue, registry, transcript, leases, browser,
@@ -123,9 +124,12 @@ export function createHub(opts: HubOptions = {}): Hub {
   // whenever a project changes rather than read from disk per frame.
   let projectList: ProjectManifest[] = [];
 
-  const browserStatus = (nodes = registry.all()): BrowserStatus => ({
+  // `online()` and not `all()`: the proxy resolves the node it forwards to the same way, so a node
+  // whose heartbeat went stale must disappear from the status too rather than be advertised as the
+  // browser while every action against it 503s.
+  const browserStatus = (): BrowserStatus => ({
     ...leases.status(),
-    node: nodes.find((n) => n.status === 'online' && n.browser?.url)?.name ?? null,
+    node: registry.online().find((n) => n.browser?.url)?.name ?? null,
   });
 
   const getState = (): HubState => {
@@ -136,7 +140,7 @@ export function createHub(opts: HubOptions = {}): Hub {
       jobs: queue.list(),
       streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
       projects: projectList,
-      browser: browserStatus(nodes),
+      browser: browserStatus(),
     };
   };
 

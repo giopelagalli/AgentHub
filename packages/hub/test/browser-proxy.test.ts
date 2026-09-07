@@ -18,6 +18,7 @@ const PAGES = {
 let driver: FakeDriver;
 let upstream: FastifyInstance;
 let hub: Hub;
+let upstreamUrl: string;
 let base: string;
 let wsUrl: string;
 let recordings: string;
@@ -36,7 +37,7 @@ beforeEach(async () => {
   driver = new FakeDriver(PAGES);
   upstream = createBrowserServer(driver);
   await upstream.listen({ port: 0, host: '127.0.0.1' });
-  const upstreamUrl = `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`;
+  upstreamUrl = `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`;
 
   recordings = mkdtempSync(join(tmpdir(), 'ah-rec-'));
   hub = createHub({ browser: { recordingsRoot: recordings } });
@@ -120,6 +121,38 @@ describe('browser routes', () => {
     const status = await (await fetch(`${base}/api/browser`)).json();
     expect(status.holder.requester.id).toBe('orch-1');
     expect((await fetch(`${base}/api/browser/lease/${ownerLease.leaseId}`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('drops an expired lease before it can act and hands the browser to the waiter', async () => {
+    // Its own hub, so the clock this test winds forward is the only one it affects.
+    let now = 1_000_000;
+    const timed = createHub({ browser: { recordingsRoot: recordings, ttlMs: 1000, now: () => now } });
+    await timed.app.listen({ port: 0, host: '127.0.0.1' });
+    const timedBase = `http://127.0.0.1:${(timed.app.server.address() as { port: number }).port}`;
+    const to = (path: string, body: unknown) =>
+      fetch(`${timedBase}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    await to('/api/nodes/register', {
+      name: 'macmini', arch: 'arm64', endpoints: [], jobTypes: ['browser-lease'], browser: { url: upstreamUrl },
+    });
+
+    const held = await (await to('/api/browser/lease', { kind: 'subagent', id: 'sub-1' })).json();
+    expect(held.granted).toBe(true);
+    expect(await (await to('/api/browser/lease', { kind: 'orchestrator', id: 'orch-1' })).json())
+      .toEqual({ queued: true, position: 1 });
+
+    // Nothing swept in between: the stale holder's own action is what discovers the expiry.
+    now += 1001;
+    const forwarded = driver.calls.length;
+    const res = await to('/api/browser/act', { leaseId: held.leaseId, op: 'read' });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('lease lost');
+    // The dead lease reached the node with nothing at all — not even the one action it used to get.
+    expect(driver.calls.length).toBe(forwarded);
+
+    const status = await (await fetch(`${timedBase}/api/browser`)).json();
+    expect(status.holder.requester).toEqual({ kind: 'orchestrator', id: 'orch-1' });
+    expect(status.queue).toEqual([]);
+    await timed.stop();
   });
 
   it('rejects malformed lease requests and made-up recording ids', async () => {

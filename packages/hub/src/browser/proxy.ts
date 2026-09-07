@@ -68,11 +68,12 @@ export class BrowserProxy {
   }
 
   async act(leaseId: string, action: BrowserAction): Promise<unknown> {
-    const holder = this.leases.holder();
-    if (!holder || holder.leaseId !== leaseId) throw new BrowserError(409, 'lease lost');
+    // Renewing *is* the check: it fails for a lease that was preempted, released or has run past its
+    // TTL, and it is the same call that pushes the expiry out — so there is no window where an
+    // expired holder is read as live and still forwards one last action to the node.
+    if (!this.leases.renew(leaseId)) throw new BrowserError(409, 'lease lost');
     const node = this.node();
     if (!node) throw new BrowserError(503, 'no browser node online');
-    this.leases.renew(leaseId);
 
     const args = action.args ?? {};
     const at = this.now();

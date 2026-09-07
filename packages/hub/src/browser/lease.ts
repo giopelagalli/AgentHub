@@ -19,7 +19,9 @@ export const DEFAULT_TTL_MS = 120_000;
  * browser, and re-queueing it ahead of requesters who have been waiting would be the wrong order.
  *
  * A lease is only valid until `expiresAt`; every action renews it, so a crashed or hung holder is
- * swept away by `expire()` and the browser goes to whoever is next instead of wedging forever.
+ * swept away and the browser goes to whoever is next instead of wedging forever. Expiry is not the
+ * sweep's alone: every read and every renew runs it first, so nobody can observe or use a lease that
+ * is already overdue in the gap between sweeps.
  *
  * State is in memory on purpose: a hub restart means no agent is mid-session, so leases should not
  * survive it.
@@ -38,18 +40,21 @@ export class LeaseManager {
 
   /**
    * Grants the lease, or returns the caller's 1-based place in the queue. Requests are keyed by
-   * `id`, so an agent polling for its turn re-reads its own position instead of piling up
-   * duplicate entries, and the current holder asking again just renews.
+   * `id` *and* `kind`, so an agent polling for its turn re-reads its own position instead of piling
+   * up duplicate entries, and the current holder asking again just renews. The kind is part of the
+   * key on purpose: the same id coming back as a different kind is a different request at a
+   * different priority — an `orchestrator` re-asking as `owner` preempts rather than renews, and one
+   * re-asking as `subagent` takes a fresh place in the queue instead of inheriting the old one.
    */
   acquire(r: Requester): AcquireResult {
     this.expireInternal();
     if (this.current) {
-      if (this.current.requester.id === r.id) {
+      if (same(this.current.requester, r)) {
         this.current.expiresAt = this.now() + this.ttlMs;
         return { granted: true, leaseId: this.current.leaseId };
       }
       if (r.kind !== 'owner') {
-        const waiting = this.waiting.findIndex((w) => w.id === r.id);
+        const waiting = this.waiting.findIndex((w) => same(w, r));
         if (waiting >= 0) return { queued: true, position: waiting + 1 };
         let i = this.waiting.length;
         while (i > 0 && RANK[this.waiting[i - 1].kind] > RANK[r.kind]) i--;
@@ -81,8 +86,13 @@ export class LeaseManager {
     return true;
   }
 
+  /**
+   * The live holder, or null. Expiry runs here rather than only on the sweep, so a lease that is
+   * past its TTL is never handed back to a caller that is about to act on it.
+   */
   holder(): Lease | null {
-    return this.current ? { ...this.current } : null;
+    this.expireInternal();
+    return this.snapshot().holder;
   }
 
   queue(): Requester[] {
@@ -90,26 +100,37 @@ export class LeaseManager {
   }
 
   status(): LeaseStatus {
-    return { holder: this.holder(), queue: this.queue() };
+    this.expireInternal();
+    return this.snapshot();
   }
 
   /** Called by the hub sweep. Returns the ids it released, having already granted the next in line. */
   expire(now = this.now()): string[] {
-    const released = this.expireInternal(now);
-    if (released.length) this.emit();
-    return released;
+    return this.expireInternal(now);
   }
 
   onChange(cb: (status: LeaseStatus) => void): void {
     this.listeners.push(cb);
   }
 
+  /**
+   * Emits, because every path that drops a lease — the sweep, a renew, an acquire, a plain read —
+   * changes what watchers see. The emit is safe against re-entry: a listener that reads back through
+   * `status()` re-enters here with either no holder and an empty queue, or a freshly granted lease,
+   * so the second pass finds nothing to expire and stops.
+   */
   private expireInternal(now = this.now()): string[] {
     if (!this.current || this.current.expiresAt > now) return [];
     const leaseId = this.current.leaseId;
     this.current = null;
     this.grantNext();
+    this.emit();
     return [leaseId];
+  }
+
+  /** The state as it stands, without running expiry — what `emit()` hands listeners. */
+  private snapshot(): LeaseStatus {
+    return { holder: this.current ? { ...this.current } : null, queue: this.queue() };
   }
 
   private grantNext(): void {
@@ -123,7 +144,12 @@ export class LeaseManager {
   }
 
   private emit(): void {
-    const status = this.status();
+    const status = this.snapshot();
     for (const cb of this.listeners) cb(status);
   }
+}
+
+/** Requests are the same request only when both the requester id and its priority match. */
+function same(a: Requester, b: Requester): boolean {
+  return a.id === b.id && a.kind === b.kind;
 }

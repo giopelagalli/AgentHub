@@ -17,10 +17,21 @@ Local multi-node AI agent hub. See docs/superpowers/specs/2026-09-01-agenthub-pr
 
 ## UI tower
 
-The hub has a browser UI: a pixel-art top-down office tower with six floors
-(B1 server room, 1F lobby, 2F general staff, 3F sample project, 4F vacant,
-PH penthouse) joined by an elevator, showing live nodes, agents and the job
-queue, with streaming chat when you walk up to an agent.
+The hub has a browser UI: a pixel-art top-down office tower — B1 server
+room, 1F lobby, 2F general staff, a floor per active project, 5F screening
+room, PH penthouse — joined by an elevator, showing live nodes, agents and
+the job queue, with streaming chat when you walk up to an agent.
+
+**5F screening room** watches the cluster's shared browser (the Mac mini's
+Chromium, deploy/macmini/README.md). The wall TV plays a live JPEG
+screencast — the hub polls the browser node only while somebody is on the
+floor watching — and the plaque names the current lease holder and the
+queue behind them. One holder at a time, priority owner > orchestrator >
+subagent, renewed by every action and expiring after 120s of silence so a
+dead agent can't wedge it; [Take control] preempts the holder (whose next
+action comes back `lease lost`) and releasing hands the browser to the next
+in the queue. Everything an agent does is recorded frame by frame under
+`data/media/browser/<leaseId>/`.
 
 Dev (three terminals, hot reload):
 
@@ -129,7 +140,8 @@ see `deploy/telegram.md`.
 Beyond `npm run dev:node`'s mock daemon, real nodes each run the node
 daemon against their own config over Tailscale (see deploy/tailscale.md):
 deploy/spark/README.md, deploy/amd/README.md, deploy/macbook/README.md,
-deploy/macmini/README.md (control node — runs the hub, no LLM serving).
+deploy/macmini/README.md (control node — runs the hub and the shared
+browser, no LLM serving by default).
 
 **Bring a node up:** start its serving process(es), then the daemon:
 

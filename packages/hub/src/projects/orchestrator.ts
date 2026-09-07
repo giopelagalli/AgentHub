@@ -3,7 +3,7 @@ import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
-import { bundleTools, hubTools, spawnSubagentTool, workspaceTools } from '../agents/tools.js';
+import { bundleTools, hubTools, spawnSubagentTool, workspaceTools, type Tool } from '../agents/tools.js';
 import { browserTools } from '../agents/browser-tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
@@ -35,6 +35,8 @@ export interface ProjectOrchestratorDeps {
   /** Present once the hub wires the shared browser; absent, the orchestrator gets no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
+  /** The configured external tools; the orchestrator gets them and can hand them to a researcher. */
+  external?: Tool[];
 }
 
 /**
@@ -49,7 +51,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, leases, browser } = this.deps;
+    const { bundle, loop, queue, registry, transcript, leases, browser, external } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -64,8 +66,9 @@ export class ProjectOrchestrator {
         ...workspaceTools(),
         ...bundleTools(),
         ...hubTools(),
+        ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
-        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps }),
+        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external }),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,

@@ -27,6 +27,7 @@ import { ConfirmationGate } from './assistant/confirm.js';
 import { MemoryStore } from './assistant/memory.js';
 import { Planner, type PlannerList } from './assistant/planner.js';
 import { assistantTools } from './assistant/tools.js';
+import { externalTools, ToolAudit, AUDIT_DEFAULT_LIMIT, AUDIT_MAX_LIMIT, type ExternalOptions } from './external/index.js';
 import { Alerts, TELEGRAM_PROJECT, type AlertEvents } from './telegram/alerts.js';
 import type { TelegramPort } from './telegram/port.js';
 import { CommandRouter } from './telegram/router.js';
@@ -99,6 +100,8 @@ export interface HubOptions {
   browser?: BrowserOptions;
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
   auth?: AuthOptions;
+  /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
+  external?: ExternalOptions;
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -116,9 +119,21 @@ export function createHub(opts: HubOptions = {}): Hub {
   const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow });
   const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
   const browser = new BrowserProxy({ registry, leases, recorder, ...browserNow });
+  // The audit ledger and the confirmation gate exist before anything that can call out, so the one
+  // external tool belt is built once and shared: the assistant gets all of it, project agents get
+  // everything that is not outward (posting is the owner's own action, never a project's).
+  const toolAudit = new ToolAudit(db);
+  const gate = new ConfirmationGate();
+  // The "disabled" lines are for the owner starting a real hub, which always passes an `external`
+  // block (however empty); a hub constructed without one — every test — stays quiet.
+  const external = externalTools({
+    audit: toolAudit, gate,
+    ...(opts.external ? { options: opts.external } : { log: () => {} }),
+  });
+  const projectExternal = external.filter((t) => !t.outward);
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
-    loop, gateway, queue, registry, transcript, leases, browser,
+    loop, gateway, queue, registry, transcript, leases, browser, external: projectExternal,
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
@@ -332,13 +347,13 @@ export function createHub(opts: HubOptions = {}): Hub {
     app.post('/api/login', async (req, reply) => {
       const client = req.ip;
       if (loginThrottle.blocked(client)) {
-        app.log.warn(`[auth] throttled login from ${client}`);
+        console.warn(`[auth] throttled login from ${client}`);
         return reply.code(429).send({ error: 'too many attempts' });
       }
       const body = req.body as Partial<{ password: string }> | undefined;
       if (!auth.passwordOk(body?.password)) {
         const count = loginThrottle.fail(client);
-        app.log.warn(`[auth] failed login from ${client} (${count})`);
+        console.warn(`[auth] failed login from ${client} (${count})`);
         return reply.code(401).send({ error: 'invalid password' });
       }
       loginThrottle.succeed(client);
@@ -698,6 +713,22 @@ export function createHub(opts: HubOptions = {}): Hub {
     return { leaseId, actions: await recorder.list(leaseId) };
   });
 
+  // --- external tool audit -------------------------------------------------------
+
+  // Owner-only (the default class for an /api route): the ledger names everything that has left the
+  // owner's machines, so it is read with the session cookie and nothing weaker.
+  app.get('/api/audit', async (req, reply) => {
+    const { limit: raw } = req.query as { limit?: string };
+    let limit = AUDIT_DEFAULT_LIMIT;
+    if (raw !== undefined) {
+      limit = Number(raw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > AUDIT_MAX_LIMIT) {
+        return reply.code(400).send({ error: 'invalid limit' });
+      }
+    }
+    return toolAudit.list(limit);
+  });
+
   // --- assistant ---------------------------------------------------------------
 
   /**
@@ -708,8 +739,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   const initAssistant = async (cfg: AssistantOptions): Promise<AssistantHandle> => {
     const memory = await MemoryStore.open(cfg.memoryRoot);
     const planner = new Planner(join(cfg.memoryRoot, 'planner'), (msg) => memory.commit(msg));
-    const gate = new ConfirmationGate();
-    const tools = assistantTools({ memory, planner, gate, service: projects, master, registry, jobs: queue });
+    const tools = [
+      ...assistantTools({ memory, planner, gate, service: projects, master, registry, jobs: queue }),
+      ...external,
+    ];
     const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript });
 
     const handle: AssistantHandle = { memory, planner, gate, assistant, port: null, router: null, scheduler: null, alerts: null };

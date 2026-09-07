@@ -404,7 +404,7 @@ const SUBAGENT_RESULT_LIMIT = 4000;
  * only, and hands its final report back as the tool result. Parallel fan-out is a later
  * optimization; the caller's tool budget is what bounds how many of these a turn can start.
  */
-export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; browser?: BrowserToolDeps }): Tool {
+export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; browser?: BrowserToolDeps; external?: Tool[] }): Tool {
   return {
     def: {
       type: 'tool', name: 'spawn_subagent',
@@ -422,16 +422,17 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; brow
       const task = str(args, 'task');
       const role = fields(args).role === undefined ? 'coder' : oneOf(args, 'role', SUBAGENT_ROLES);
       if (role === 'browser-operator' && !deps.browser) return 'error: browser-operator is not available in this session';
-      // browser-operator additionally gets the shared browser toolset — every other role stays
-      // scoped to the workspace, as before.
-      const tools = role === 'browser-operator' && deps.browser
-        ? [...workspaceTools(), ...browserOperatorTools(deps.browser)]
-        : workspaceTools();
+      // browser-operator additionally gets the shared browser toolset, and a researcher gets the
+      // configured external tools — every other role stays scoped to the workspace, as before.
+      const extras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
+        : role === 'researcher' ? (deps.external ?? [])
+        : [];
+      const tools = [...workspaceTools(), ...extras];
       const res = await deps.loop.run({
         kind: 'subagent',
         subject: deps.subject,
         tier: 'worker',
-        system: subagentSystemPrompt(role),
+        system: subagentSystemPrompt(role, extras.map((t) => t.def.name)),
         user: task,
         tools,
         // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.

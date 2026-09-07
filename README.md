@@ -125,15 +125,49 @@ Commands:
     /video, /controlnode         coming in Phase 6
 
 Anything else is sent to the assistant, which can read/search memory, edit
-the planner, and manage projects. An outward-facing action (nothing built in
-yet; Phase 6 adds X posting) never runs on its own — the assistant replies
-with inline `[Confirm] [Cancel]` buttons and only Confirm from the owner's
-own chat executes it.
+the planner, and manage projects. An outward-facing action (posting to X) never
+runs on its own — the assistant replies with inline `[Confirm] [Cancel]`
+buttons and only Confirm from the owner's own chat executes it.
 
 Voice notes are not built: `TelegramPort`'s `OutgoingMessage.voice` field and
 a future `VoiceAdapter` interface are where a Kokoro TTS hookup would plug in
 (text in, spoken `Buffer` out, sent instead of/alongside the text reply) —
 see `deploy/telegram.md`.
+
+## External APIs & outbound policy
+
+Agents have **no generic fetch tool**. Exactly three named tools can leave the
+owner's machines, and nothing else in an agent's belt makes a network call —
+the policy is enforced by construction, not by a filter:
+
+    grok_query(prompt)              POST api.x.ai/v1/chat/completions
+    post_to_x(text)                 POST api.x.com/2/tweets       (owner-confirmed)
+    youtube_understand(url, q?)     POST generativelanguage.googleapis.com/.../generateContent
+    web_search(query, n?)           api.search.brave.com or api.tavily.com
+
+`post_to_x` is outward: it proposes through the confirmation gate and returns
+`pending confirmation <id>`; nothing is posted until the owner confirms.
+
+The hub's own non-agent outbound traffic is Telegram (bot API, owner chat
+only); everything else it talks to — node daemons, ComfyUI, the served models
+— is on the tailnet.
+
+Every external call writes one `tool_audit` row: timestamp, session, tool,
+purpose, request and response byte counts, and whether it succeeded (failures
+and timeouts included). Read it as the owner with `GET /api/audit?limit=`.
+
+Keys (hub process on the control node only — daemons never get them):
+
+    XAI_API_KEY             grok_query, and post_to_x's fallback credential
+    X_API_KEY               X API v2 token with tweet.write, for post_to_x
+    GEMINI_API_KEY          youtube_understand
+    SEARCH_PROVIDER         brave | tavily
+    SEARCH_API_KEY          that provider's key
+    XAI_MODEL, GEMINI_MODEL optional overrides (grok-4, gemini-2.5-flash)
+
+A missing key disables its tool with one log line at startup — the hub still
+starts. Endpoints, payload shapes and where to get each key:
+`deploy/external-apis.md`.
 
 ## Cluster (real nodes)
 

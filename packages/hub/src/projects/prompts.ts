@@ -66,8 +66,11 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
   'browser-operator': 'You drive the shared browser to complete the task: acquire the lease, navigate/read/click/type as needed, and report what you found or did.',
 };
 
-/** The subagent's system prompt: one role, one task, workspace tools only (plus the browser for browser-operator). */
-export function subagentSystemPrompt(role: SubagentRole): string {
+/**
+ * The subagent's system prompt: one role, one task, workspace tools only — plus the browser for a
+ * browser-operator and, when they are configured, the external tools a researcher may use.
+ */
+export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = []): string {
   const lines = [
     `You are a ${role} subagent working on one task for a project orchestrator.`,
     ROLE_BRIEFS[role],
@@ -76,6 +79,13 @@ export function subagentSystemPrompt(role: SubagentRole): string {
     `  Do not modify anything outside workspace/ — the project bundle's charter, decision log, task`,
     `  board and briefings belong to the orchestrator. Report what should change there instead.`,
   ];
+  if (role === 'researcher' && extraTools.length) {
+    lines.push(
+      `- You also have the external tools ${extraTools.join(', ')}. They are the only calls that`,
+      `  leave the owner's machines, every one is logged in the owner's audit trail, so use them for`,
+      `  what the task actually asks about and nothing else.`,
+    );
+  }
   if (role === 'browser-operator') {
     lines.push(
       `- You also have the shared browser: acquire_browser, release_browser, browser_navigate,`,

@@ -6,6 +6,7 @@ import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
+import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import { ProjectBundle } from './bundle.js';
@@ -26,6 +27,8 @@ export interface ProjectServiceDeps {
   /** Present once the hub wires the shared browser; absent, orchestrators get no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
+  /** The configured external tools (grok/gemini/search), minus anything outward. */
+  external?: Tool[];
   tickIntervalMs?: number;
   /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
   turnTimeoutMs?: number;
@@ -266,9 +269,9 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, leases, browser } = this.deps;
+    const { loop, gateway, queue, registry, transcript, leases, browser, external } = this.deps;
     const orchestrator = new ProjectOrchestrator({
-      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser,
+      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser, external,
     });
     this.orchestrators.set(slug, orchestrator);
     return orchestrator;

@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AuthOptions } from './auth.js';
+import { SEARCH_PROVIDERS, type ExternalOptions, type SearchProvider } from './external/index.js';
 import { createHub, type AssistantOptions } from './server.js';
 import { GrammyPort } from './telegram/grammy-port.js';
 
@@ -49,11 +50,35 @@ if (password) {
   console.log('[hub] HUB_PASSWORD not set; auth is disabled and every route is open');
 }
 
+// The three sanctioned outbound tools (PRD §12). A key that isn't set removes its tool and costs a
+// single log line from `externalTools` — the hub still starts.
+const searchKey = process.env.SEARCH_API_KEY;
+const searchProvider = (process.env.SEARCH_PROVIDER ?? 'brave').toLowerCase();
+let search: { provider: SearchProvider; key: string } | undefined;
+if (searchKey && SEARCH_PROVIDERS.includes(searchProvider as SearchProvider)) {
+  search = { provider: searchProvider as SearchProvider, key: searchKey };
+} else if (searchKey) {
+  console.log(`[external] SEARCH_PROVIDER=${searchProvider} is not one of ${SEARCH_PROVIDERS.join(', ')}`);
+}
+const external: ExternalOptions = {
+  ...(process.env.XAI_API_KEY ? { xaiKey: process.env.XAI_API_KEY } : {}),
+  ...(process.env.GEMINI_API_KEY ? { geminiKey: process.env.GEMINI_API_KEY } : {}),
+  ...(process.env.X_API_KEY ? { xPostKey: process.env.X_API_KEY } : {}),
+  ...(search ? { search } : {}),
+  ...(process.env.XAI_MODEL || process.env.GEMINI_MODEL
+    ? { models: {
+        ...(process.env.XAI_MODEL ? { xai: process.env.XAI_MODEL } : {}),
+        ...(process.env.GEMINI_MODEL ? { gemini: process.env.GEMINI_MODEL } : {}),
+      } }
+    : {}),
+};
+
 const hub = createHub({
   dbPath: process.env.HUB_DB ?? 'data/hub.db',
   projectsRoot: process.env.PROJECTS_ROOT ?? 'data/projects',
   uiDist,
   assistant,
+  external,
   ...(auth ? { auth } : {}),
 });
 const port = Number(process.env.PORT ?? 4000);

@@ -108,6 +108,47 @@ describe('ProjectService.stop', () => {
     expect(await groupGone(pgid)).toBe(true);
   }, 10_000);
 
+  it('aborts a turn queued behind the one it just stopped, instead of letting it run to completion', async () => {
+    const { service: svc, transcript } = await setup([
+      { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'echo $$ > pid1.txt; sleep 25'] } }] },
+      { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'echo $$ > pid2.txt; sleep 25'] } }] },
+    ]);
+    await svc.create({ slug: 'demo', title: 'Demo', intent: 'ship it' });
+
+    // Two turns on the same slug: the second queues behind the first in the per-slug chain.
+    const turn1 = svc.runTurn('demo');
+    const turn2 = svc.runTurn('demo');
+
+    const bundle = await svc.get('demo');
+    const pid1Path = join(bundle.workspace, 'pid1.txt');
+    const pid2Path = join(bundle.workspace, 'pid2.txt');
+    const pidDeadline = Date.now() + 3000;
+    for (;;) {
+      try {
+        await readFile(pid1Path, 'utf8');
+        break;
+      } catch {
+        if (Date.now() > pidDeadline) throw new Error('shell never started');
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
+
+    const started = Date.now();
+    await svc.stop({ graceMs: 200 });
+    expect(Date.now() - started).toBeLessThan(3000);
+
+    await Promise.all([turn1, turn2]);
+
+    const sessions = transcript.sessions({ kind: 'orchestrator' });
+    expect(sessions).toHaveLength(2);
+    for (const s of sessions) expect(s.outcome).toBe('aborted');
+
+    const pgid = Number((await readFile(pid1Path, 'utf8')).trim());
+    expect(await groupGone(pgid)).toBe(true);
+    // The queued turn should have been aborted before it ever ran a tool call.
+    await expect(readFile(pid2Path, 'utf8')).rejects.toThrow();
+  }, 10_000);
+
   it('resolves promptly when nothing is in flight', async () => {
     const { service: svc } = await setup([]);
     await svc.create({ slug: 'demo', title: 'Demo', intent: 'ship it' });

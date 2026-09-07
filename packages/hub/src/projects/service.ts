@@ -66,6 +66,13 @@ export class ProjectService {
   private tickInFlight: Promise<void> = Promise.resolve();
   private ticking = false;
   private stopped = false;
+  /**
+   * Set once a `stop()` call gives up waiting for `graceMs` and starts aborting in-flight turns. A
+   * turn queued behind one of those (same slug, serialized chain) only starts running afterwards —
+   * with a fresh, unaborted controller — so it needs its own pre-abort here or it would run to
+   * completion unbounded by `stop()`.
+   */
+  private forceAborting = false;
   private readonly tickIntervalMs: number;
   private readonly turnTimeoutMs: number;
 
@@ -146,6 +153,10 @@ export class ProjectService {
   runTurn(slug: string, instruction?: string, signal?: AbortSignal): Promise<Briefing> {
     return this.serialize(slug, async () => {
       const controller = new AbortController();
+      // A turn queued behind an aborted one (same slug, serialized chain) can start running after
+      // stop() has already given up waiting and started aborting — abort it immediately too, so it
+      // exits without doing new work instead of running unbounded by stop()'s grace period.
+      if (this.forceAborting) controller.abort();
       this.turnControllers.set(slug, controller);
       const onCallerAbort = () => controller.abort();
       if (signal) {
@@ -189,6 +200,7 @@ export class ProjectService {
   start(): void {
     if (this.timer) return;
     this.stopped = false;
+    this.forceAborting = false;
     this.timer = setInterval(() => { void this.tick(); }, this.tickIntervalMs);
     // The scheduler must never be the reason the process stays alive.
     this.timer.unref();
@@ -213,6 +225,7 @@ export class ProjectService {
       t.unref?.();
     });
     if ((await Promise.race([pending.then(() => undefined), graceTimer])) === timedOut) {
+      this.forceAborting = true;
       for (const controller of this.turnControllers.values()) controller.abort();
       await pending;
     }

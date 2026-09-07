@@ -71,6 +71,12 @@ API cheatsheet:
 Set `PROJECTS_ROOT` to change where project bundles live (default
 `data/projects`).
 
+Each bundle's git history is its version log: nested checkouts under
+`workspace/` and their `node_modules` are excluded via the scaffolded
+`.gitignore`, and `manifest.yaml`'s `index` lists only knowledge files
+(`manifest.yaml`, `project.md`, `decisions.log.md`, `tasks.yaml`, plus
+`skills/` and `briefings/`), not the workspace.
+
 ## Cluster (real nodes)
 
 Beyond `npm run dev:node`'s mock daemon, real nodes each run the node

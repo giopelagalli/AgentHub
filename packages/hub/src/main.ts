@@ -26,6 +26,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
       process.exit(1);
     }, FORCE_EXIT_MS);
     forceExit.unref();
-    hub.stop().then(() => process.exit(0));
+    hub.stop().then(() => process.exit(0)).catch((err) => {
+      console.error('[hub] stop() failed:', err);
+      process.exit(1);
+    });
   });
 }

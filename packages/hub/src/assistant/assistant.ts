@@ -1,7 +1,7 @@
 import type { ChatMessage } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Tool } from '../agents/tools.js';
-import type { Transcript } from '../agents/transcript.js';
+import type { SessionOutcome, Transcript } from '../agents/transcript.js';
 import type { ConfirmationGate, PendingAction } from './confirm.js';
 import type { MemoryStore } from './memory.js';
 import type { Planner } from './planner.js';
@@ -9,7 +9,10 @@ import type { Planner } from './planner.js';
 const KIND = 'assistant';
 const SUBJECT = 'owner';
 const HISTORY_TURNS = 20;
+const HISTORY_SESSION_LIMIT = 40;
 const MAX_TOOL_CALLS = 8;
+const MEMORY_INDEX_LIMIT = 4000;
+const INDEX_TRUNCATED_MARKER = '\n[index truncated]';
 
 export interface AssistantDeps {
   loop: AgentLoop;
@@ -24,6 +27,14 @@ export interface AssistantReply {
   text: string;
   /** Outward actions this reply proposed; nothing happens until the owner confirms them. */
   pending: PendingAction[];
+  /** How the underlying loop ended; 'stop' is the normal case. */
+  outcome: SessionOutcome;
+}
+
+/** Bounds how much of MEMORY.md the system prompt inlines — a growing index shouldn't crowd out everything else. */
+function cappedIndex(memoryIndex: string): string {
+  if (memoryIndex.length <= MEMORY_INDEX_LIMIT) return memoryIndex;
+  return memoryIndex.slice(0, MEMORY_INDEX_LIMIT) + INDEX_TRUNCATED_MARKER;
 }
 
 function systemPrompt(memoryIndex: string, plannerSnapshot: string): string {
@@ -32,8 +43,8 @@ function systemPrompt(memoryIndex: string, plannerSnapshot: string): string {
     `and for nobody else. Address them directly and take their side.`,
     ``,
     `The memory index and the planner below are in every prompt: always read them before you answer,`,
-    `and call recall to open a note in full when its index line is not enough. Never guess at`,
-    `something memory could tell you.`,
+    `and call recall to search memory by phrase and read back matching snippets when an index line`,
+    `is not enough on its own. Never guess at something memory could tell you.`,
     ``,
     `When you learn something durable about the owner — a preference, a person in their life, a`,
     `routine, a standing goal — call remember to write it down. Passing chatter is not worth a note.`,
@@ -67,7 +78,7 @@ export class Assistant {
 
     const result = await this.deps.loop.run({
       kind: KIND, subject: SUBJECT, tier: 'orchestrator',
-      system: systemPrompt(memoryIndex, plannerSnapshot),
+      system: systemPrompt(cappedIndex(memoryIndex), plannerSnapshot),
       history: this.history(),
       user: text,
       tools: this.deps.tools,
@@ -76,7 +87,17 @@ export class Assistant {
       ...(opts.onToken ? { onToken: opts.onToken } : {}),
     });
 
-    return { text: result.text.trim(), pending: this.deps.gate.pending().filter((a) => !before.has(a.id)) };
+    const trimmed = result.text.trim();
+    // A non-'stop' outcome with no text means the loop gave up mid-turn (budget, gateway error,
+    // abort) — sending an empty Telegram message would look like a silent hang.
+    const replyText = trimmed || (result.outcome === 'stop'
+      ? trimmed
+      : `I hit a problem finishing that (${result.outcome}). Try again or rephrase.`);
+    return {
+      text: replyText,
+      pending: this.deps.gate.pending().filter((a) => !before.has(a.id)),
+      outcome: result.outcome,
+    };
   }
 
   /**
@@ -87,7 +108,7 @@ export class Assistant {
    */
   private history(): ChatMessage[] {
     const { transcript } = this.deps;
-    const sessions = transcript.sessions({ kind: KIND, subject: SUBJECT }).slice(-HISTORY_TURNS);
+    const sessions = transcript.sessions({ kind: KIND, subject: SUBJECT, limit: HISTORY_SESSION_LIMIT }).slice(-HISTORY_TURNS);
     const turns: ChatMessage[] = [];
     for (const session of sessions) {
       for (const msg of transcript.messages(session.id)) {

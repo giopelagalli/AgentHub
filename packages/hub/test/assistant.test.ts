@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { AgentLoop } from '../src/agents/loop.js';
+import type { Tool } from '../src/agents/tools.js';
 import { Assistant } from '../src/assistant/assistant.js';
 import { ConfirmationGate } from '../src/assistant/confirm.js';
 import { MemoryStore } from '../src/assistant/memory.js';
@@ -17,6 +18,7 @@ interface Harness {
   planner: Planner;
   gate: ConfirmationGate;
   mock: MockOpenAI;
+  tools: Tool[];
 }
 
 let hub: Hub | undefined;
@@ -50,7 +52,7 @@ async function setup(script: ScriptStep[] = []): Promise<Harness> {
     service: hub.projects, master: hub.master, registry: hub.registry,
   });
   const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript: hub.transcript });
-  return { assistant, memory, planner, gate, mock };
+  return { assistant, memory, planner, gate, mock, tools };
 }
 
 afterEach(async () => {
@@ -164,5 +166,79 @@ describe('Assistant.reply', () => {
       'assistant: Your sister is Ada.',
       'user: where does she live?',
     ]);
+  });
+
+  it('replays each prior turn exactly once across three consecutive replies', async () => {
+    const { assistant, mock } = await setup([
+      { content: 'first answer' },
+      { content: 'second answer' },
+      { content: 'third answer' },
+    ]);
+
+    await assistant.reply('question one');
+    await assistant.reply('question two');
+    await assistant.reply('question three');
+
+    const nonSystem = messagesOf(mock).filter((m) => m.role !== 'system');
+    expect(nonSystem.map((m) => `${m.role}: ${m.content}`)).toEqual([
+      'user: question one',
+      'assistant: first answer',
+      'user: question two',
+      'assistant: second answer',
+      'user: question three',
+    ]);
+    // No prior turn shows up twice.
+    const contents = nonSystem.map((m) => m.content);
+    expect(new Set(contents).size).toBe(contents.length);
+  });
+
+  it('excludes a tool-using turn\'s tool calls and results from replayed history', async () => {
+    const { assistant, mock } = await setup([
+      { toolCalls: [{ name: 'planner_add', arguments: { list: 'todo', text: 'buy oat milk' } }] },
+      { content: 'Added it.' },
+      { content: 'Sure thing.' },
+    ]);
+
+    await assistant.reply('remind me to buy oat milk');
+    await assistant.reply('anything else?');
+
+    const sent = mock.lastRequest().messages as { role: string; content: string | null; tool_calls?: unknown }[];
+    expect(sent.some((m) => m.role === 'tool')).toBe(false);
+    expect(sent.some((m) => m.role === 'assistant' && m.tool_calls)).toBe(false);
+    // The plain turns from the tool-using session still replay.
+    expect(sent.map((m) => `${m.role}: ${m.content}`)).toContain('assistant: Added it.');
+  });
+
+  it('falls back to an owner-facing message when the loop ends without text', async () => {
+    // Nine tool calls in one model turn blows past MAX_TOOL_CALLS (8): the loop drops the ninth,
+    // ends the session as 'budget-exhausted', and never gets a chance to produce closing text.
+    const nineCalls = Array.from({ length: 9 }, () => ({ name: 'list_memory_index', arguments: {} }));
+    const { assistant } = await setup([{ toolCalls: nineCalls }]);
+
+    const res = await assistant.reply('do a lot of things at once');
+
+    expect(res.outcome).toBe('budget-exhausted');
+    expect(res.text).toBe('I hit a problem finishing that (budget-exhausted). Try again or rephrase.');
+  });
+
+  it('reports the stop outcome and leaves normal replies untouched', async () => {
+    const { assistant } = await setup([{ content: 'all good' }]);
+
+    const res = await assistant.reply('hi');
+
+    expect(res.outcome).toBe('stop');
+    expect(res.text).toBe('all good');
+  });
+
+  it('every outward tool returns a pending-confirmation placeholder, never acting directly', async () => {
+    const { tools } = await setup();
+    const outwardTools = tools.filter((t) => t.outward);
+    expect(outwardTools.length).toBeGreaterThan(0);
+
+    for (const tool of outwardTools) {
+      const args = tool.def.name === 'demo_outward_action' ? { text: 'test message' } : {};
+      const result = await tool.run(args, { sessionId: 0, log: () => {} });
+      expect(result).toMatch(/^pending confirmation /);
+    }
   });
 });

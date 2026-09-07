@@ -83,12 +83,20 @@ export class Transcript {
     });
   }
 
-  sessions(filter: { kind?: SessionKind; subject?: string } = {}): SessionRecord[] {
+  /**
+   * `limit`, when given, fetches the `limit` most recent sessions (newest-first at the SQL level,
+   * cheaper than scanning the whole table) and hands them back oldest-first — same order as the
+   * unlimited call — so every caller can keep reading this as a plain chronological list.
+   */
+  sessions(filter: { kind?: SessionKind; subject?: string; limit?: number } = {}): SessionRecord[] {
     const where: string[] = [];
-    const params: string[] = [];
+    const params: (string | number)[] = [];
     if (filter.kind) { where.push('kind=?'); params.push(filter.kind); }
     if (filter.subject) { where.push('subject=?'); params.push(filter.subject); }
-    const sql = `SELECT * FROM sessions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id`;
-    return (this.db.prepare(sql).all(...params) as SessionRow[]).map(toSession);
+    const order = filter.limit ? 'DESC' : 'ASC';
+    let sql = `SELECT * FROM sessions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id ${order}`;
+    if (filter.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }
+    const rows = (this.db.prepare(sql).all(...params) as SessionRow[]).map(toSession);
+    return filter.limit ? rows.reverse() : rows;
   }
 }

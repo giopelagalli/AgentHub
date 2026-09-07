@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ChatMessage } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb, type Db } from '../src/db.js';
 import { JobQueue } from '../src/queue.js';
@@ -147,6 +148,30 @@ describe('AgentLoop', () => {
       .all(res.sessionId) as { role: string; tool_call_json: string | null }[];
     expect(rows[2].tool_call_json).toContain('read_file');
     expect(rows[0].tool_call_json).toBeNull();
+  });
+
+  it('replays given history to the model without re-persisting it into this session', async () => {
+    const { loop, transcript, mock, ctx } = await setup([{ content: 'reply' }]);
+    const history: ChatMessage[] = [
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'earlier answer' },
+    ];
+
+    const res = await loop.run({ ...runOpts({ history }), ctx });
+
+    expect(res.text).toBe('reply');
+    const sent = mock.lastRequest().messages as { role: string; content: string | null }[];
+    expect(sent.map((m) => `${m.role}: ${m.content}`)).toEqual([
+      expect.stringContaining('system:'),
+      'user: earlier question',
+      'assistant: earlier answer',
+      'user: summarize notes.txt',
+    ]);
+    // This session's own transcript holds only its own turns — the replayed history already lives
+    // under whatever session it came from.
+    const persisted = transcript.messages(res.sessionId);
+    expect(persisted.map((m) => m.role)).toEqual(['system', 'user', 'assistant']);
+    expect(persisted.some((m) => m.content === 'earlier question')).toBe(false);
   });
 
   it('reports an aborted run', async () => {

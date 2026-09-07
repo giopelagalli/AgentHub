@@ -37,6 +37,40 @@ Prod (hub serves the built app itself):
 
 Real-node setup: deploy/spark/README.md, configs/README.md.
 
+## Orchestration
+
+A project is a portable knowledge bundle — a git repo under
+`data/projects/<slug>/` (`manifest.yaml`, `project.md`, `decisions.log.md`,
+`tasks.yaml`, `briefings/`, `skills/`, `workspace/`). One long-lived
+`ProjectOrchestrator` per active project runs bounded *turns*: it rebuilds its
+context from the bundle on disk (never from memory), plans and delegates
+concrete work to ephemeral subagents, keeps `tasks.yaml` and
+`decisions.log.md` current, and ends by publishing a structured briefing —
+every write is a git commit (`agent: <summary>`). Because a turn's whole state
+lives in the bundle, a project can be paused, the hub restarted, and the
+project rehydrates from disk into a coherent next turn.
+
+The `MasterOrchestrator` supervises the fleet of projects but never reads
+their raw context — only the `briefings/latest.json` each one publishes — and
+answers owner commands (pause, resume, reprioritize, run a turn now) by
+calling into the relevant project.
+
+By default a scheduler runs one turn per active project every 15 minutes
+(highest priority first); `POST .../turn` runs one immediately.
+
+API cheatsheet:
+
+    POST /api/projects                        {slug, title, intent, priority?} → create
+    GET  /api/projects/:slug                   → {manifest, briefing, tasks}
+    POST /api/projects/:slug/turn              {instruction?} → Briefing
+    POST /api/projects/:slug/pause             POST /api/projects/:slug/resume
+    GET  /api/projects/:slug/transcript        → this project's agent sessions
+    GET  /api/briefings                        → latest briefing per project
+    POST /api/master/brief                     → the owner's daily briefing
+
+Set `PROJECTS_ROOT` to change where project bundles live (default
+`data/projects`).
+
 ## Cluster (real nodes)
 
 Beyond `npm run dev:node`'s mock daemon, real nodes each run the node

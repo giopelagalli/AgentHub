@@ -13,9 +13,17 @@ export class GrammyPort implements TelegramPort {
   private bot: Bot;
   private messageHandlers: MessageHandler[] = [];
   private callbackHandlers: CallbackHandler[] = [];
+  // Flips false if polling ever dies (bot.start()'s promise rejecting after onStart already
+  // resolved it, or bot.catch failing to recover) — see isRunning().
+  private alive = false;
 
   constructor(token: string) {
     this.bot = new Bot(token);
+
+    // grammY's default error handler logs and rethrows, which stops polling — a single handler
+    // throwing (a bad command, a downstream service down) would otherwise take Telegram out
+    // permanently and silently, since start() has already resolved by the time that happens.
+    this.bot.catch((err) => console.error('[telegram] handler error', err.error ?? err));
 
     this.bot.on('message:text', async (ctx) => {
       const message: IncomingMessage = {
@@ -61,8 +69,18 @@ export class GrammyPort implements TelegramPort {
   /** Resolves once long polling has actually started, not when it stops (which is what `bot.start()`'s own promise waits for). */
   start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.bot.start({ drop_pending_updates: true, onStart: () => resolve() }).catch(reject);
+      const run = this.bot.start({ drop_pending_updates: true, onStart: () => { this.alive = true; resolve(); } });
+      // The promise above only settles once polling *stops* — after onStart it's a long-running
+      // tail, not a rejection this caller should await. Log it here so a later failure isn't
+      // swallowed, and clear `alive` so isRunning() reflects reality.
+      run.then(() => { this.alive = false; })
+        .catch((err) => { this.alive = false; console.error('[telegram] polling stopped', err); reject(err); });
     });
+  }
+
+  /** Whether long polling is currently believed to be running; flips false once `start()`'s underlying promise settles. */
+  isRunning(): boolean {
+    return this.alive;
   }
 
   async stop(): Promise<void> {

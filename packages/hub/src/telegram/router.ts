@@ -8,6 +8,7 @@ import { formatBriefing, formatNodes, formatPlanner, formatProjects, splitMessag
 import type { OutgoingMessage, TelegramPort } from './port.js';
 
 const PLANNER_COMMANDS = new Set(['/goals', '/todo', '/backlog']);
+const HANDLER_ERROR_TEXT = 'Something went wrong handling that — see hub logs.';
 
 const HELP_TEXT = [
   'Commands:',
@@ -50,15 +51,27 @@ export class CommandRouter {
 
   start(): void {
     const { port, ownerChatId } = this.deps;
+    // One bad command (a throwing service call, a malformed callback) must not take the whole
+    // bot down or leave the owner without a reply — log it and tell them, then keep serving.
     port.onMessage(async (m) => {
       if (m.chatId !== ownerChatId) return;
-      for (const msg of await this.handle(m.text)) await port.send(m.chatId, msg);
+      try {
+        for (const msg of await this.handle(m.text)) await port.send(m.chatId, msg);
+      } catch (err) {
+        console.error('[telegram] message handler error', err);
+        await port.send(m.chatId, { text: HANDLER_ERROR_TEXT });
+      }
     });
     port.onCallback(async (c) => {
       if (c.chatId !== ownerChatId) return;
-      const msgs = await this.handleCallback(c.data);
-      await port.answerCallback(c.callbackId);
-      for (const msg of msgs) await port.send(c.chatId, msg);
+      try {
+        const msgs = await this.handleCallback(c.data);
+        await port.answerCallback(c.callbackId);
+        for (const msg of msgs) await port.send(c.chatId, msg);
+      } catch (err) {
+        console.error('[telegram] callback handler error', err);
+        await port.send(c.chatId, { text: HANDLER_ERROR_TEXT });
+      }
     });
   }
 
@@ -96,9 +109,10 @@ export class CommandRouter {
   }
 
   /**
-   * Creates the project, sends the slug straight back, then runs its first turn and returns the
-   * result as a second reply — so the owner sees the project exist immediately and the outcome of
-   * its first turn once that (potentially slow) turn actually finishes.
+   * Creates the project and replies with the slug immediately — before the first turn has run.
+   * The turn itself is kicked off in the background: `handle()` (and so the message handler)
+   * returns as soon as the project exists, and the second reply, with the turn's outcome, arrives
+   * whenever that (potentially slow) turn actually finishes.
    */
   private async handleNew(rest: string): Promise<OutgoingMessage[]> {
     const m = rest.match(/^(.+?):\s*(.+)$/s);
@@ -107,9 +121,11 @@ export class CommandRouter {
     if (!title || !intent) return [{ text: 'usage: /new <title>: <intent>' }];
 
     const manifest = await this.deps.service.create({ slug: kebab(title), title, intent });
-    await this.deps.port.send(this.deps.ownerChatId, { text: `Created ${manifest.slug}. Running the first turn…` });
-    const briefing = await this.deps.service.runTurn(manifest.slug);
-    return [{ text: `First turn for ${briefing.slug} done: ${briefing.summary}` }];
+    const { service, port, ownerChatId } = this.deps;
+    void service.runTurn(manifest.slug)
+      .then((briefing) => port.send(ownerChatId, { text: `First turn for ${briefing.slug} done: ${briefing.summary}` }))
+      .catch((err) => port.send(ownerChatId, { text: `First turn failed: ${(err as Error).message}` }));
+    return [{ text: `Created ${manifest.slug}. Running the first turn…` }];
   }
 
   private async handleFreeform(text: string): Promise<OutgoingMessage[]> {

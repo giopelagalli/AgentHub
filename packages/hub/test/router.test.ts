@@ -11,7 +11,7 @@ import { Planner } from '../src/assistant/planner.js';
 import { assistantTools } from '../src/assistant/tools.js';
 import { createHub, type Hub } from '../src/server.js';
 import { CommandRouter } from '../src/telegram/router.js';
-import { FakeTelegramPort } from '../src/telegram/port.js';
+import { FakeTelegramPort, type OutgoingMessage } from '../src/telegram/port.js';
 
 const OWNER = 'owner-chat';
 const STRANGER = 'stranger-chat';
@@ -70,6 +70,18 @@ afterEach(async () => {
   for (const dir of [projectsRoot, memoryRoot]) if (dir) await rm(dir, { recursive: true, force: true });
   hub = undefined; mock = undefined; projectsRoot = undefined; memoryRoot = undefined;
 });
+
+/** Polls `port.sent` until it holds at least `count` messages, for asserting on a fire-and-forget reply. */
+async function waitForMessage(
+  port: FakeTelegramPort, count: number, timeoutMs = 2000,
+): Promise<{ chatId: string; msg: OutgoingMessage }> {
+  const deadline = Date.now() + timeoutMs;
+  while (port.sent.length < count) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for message #${count}; got ${port.sent.length}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return port.sent[count - 1]!;
+}
 
 /** Creates a project and publishes one briefing for it, without going through the model. */
 async function seed(h: Hub, slug: string, title: string): Promise<void> {
@@ -171,11 +183,65 @@ describe('CommandRouter', () => {
 
     await port.simulateMessage(OWNER, '/new My New Project: build something great');
 
-    expect(port.sent).toHaveLength(2);
+    // The ack comes back before the first turn has even started — handle() returns without
+    // awaiting it, so only one message has landed by the time simulateMessage resolves.
+    expect(port.sent).toHaveLength(1);
     expect(port.sent[0]!.msg.text).toContain('my-new-project');
-    expect(port.sent[1]!.msg.text).toContain('First turn for my-new-project done');
     const manifest = await (await hub.projects.get('my-new-project')).manifest();
     expect(manifest.title).toBe('My New Project');
+
+    const briefing = await waitForMessage(port, 2);
+    expect(briefing.msg.text).toContain('First turn for my-new-project done');
+  });
+
+  it('/new reports the failure if the first turn throws, without blocking the ack', async () => {
+    const { port, hub } = await setup();
+    // A real delay (not just a rejected-microtask race) so the ack is unambiguously observed
+    // before the failure, proving handle() didn't wait on this promise to settle.
+    hub.projects.runTurn = (async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      throw new Error('gateway is down');
+    }) as typeof hub.projects.runTurn;
+
+    await port.simulateMessage(OWNER, '/new Another Project: get it done');
+
+    expect(port.sent).toHaveLength(1);
+    expect(port.sent[0]!.msg.text).toContain('another-project');
+
+    const failure = await waitForMessage(port, 2);
+    expect(failure.msg.text).toBe('First turn failed: gateway is down');
+  });
+
+  it('a throwing service does not take the bot down: the owner gets an error reply and the next command still works', async () => {
+    const { port, hub } = await setup();
+    hub.registry.all = () => { throw new Error('registry exploded'); };
+
+    await port.simulateMessage(OWNER, '/nodes');
+
+    expect(port.sent).toHaveLength(1);
+    expect(port.sent[0]!.msg.text).toBe('Something went wrong handling that — see hub logs.');
+
+    await port.simulateMessage(OWNER, '/help');
+
+    expect(port.sent).toHaveLength(2);
+    expect(port.sent[1]!.msg.text).toContain('/brief');
+  });
+
+  it('a throwing service in a callback replies with the error text and later callbacks still work', async () => {
+    const { port, hub } = await setup();
+    await seed(hub, 'demo', 'Demo');
+    hub.projects.pause = async () => { throw new Error('db exploded'); };
+
+    await port.simulateCallback(OWNER, 'proj:pause:demo');
+
+    expect(port.sent).toHaveLength(1);
+    expect(port.sent[0]!.msg.text).toBe('Something went wrong handling that — see hub logs.');
+
+    // A different callback, hitting an untouched code path, still goes through fine.
+    await port.simulateCallback(OWNER, 'proj:resume:demo');
+
+    expect(port.sent).toHaveLength(2);
+    expect(port.sent[1]!.msg.text).toContain('Demo (demo)');
   });
 
   it('a proj:pause callback pauses the project and reports back the updated list', async () => {

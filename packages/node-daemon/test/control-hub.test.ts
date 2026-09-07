@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -140,6 +140,86 @@ describe('daemon control-node endpoints', () => {
     const body = await res.json();
     expect(body.error).toMatch(/exited during start-up/);
     expect(body.running).toBe(false);
+  }, 30000);
+
+  it('hands the hub the allowlisted environment, its node name and the adopted checkpoint', async () => {
+    hub = createHub({ staleMs: 60000, projectsRoot: join(tmpDir(), 'projects') });
+    await hub.projects.stop();
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+
+    const dir = tmpDir();
+    const dataRoot = join(dir, 'data');
+    mkdirSync(dataRoot, { recursive: true });
+    // The synced snapshot, and the torn live copy plus a stale sidecar it must replace.
+    writeFileSync(join(dataRoot, 'checkpoint.db'), 'the snapshot');
+    writeFileSync(join(dataRoot, 'hub.db'), 'a torn copy');
+    writeFileSync(join(dataRoot, 'hub.db-wal'), 'a stale wal');
+
+    const marker = join(dir, 'env.json');
+    const fakeHubPort = await getEphemeralPort();
+    const fakeHub = join(dir, 'fake-hub.cjs');
+    writeFileSync(fakeHub, [
+      `require('fs').writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.env));`,
+      `require('http').createServer((req, res) => { res.statusCode = req.url === '/api/health' ? 200 : 404; res.end('{}'); })`,
+      `  .listen(${fakeHubPort}, '127.0.0.1');`,
+    ].join('\n'));
+
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: strix', '  arch: x86_64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'hubToken: daemon-tok',
+      'heartbeatMs: 1000',
+      'controlPort: 0',
+      'controlNode:',
+      `  hubCmd: ["${process.execPath}", "${fakeHub}"]`,
+      `  dataRoot: ${dataRoot}`,
+      `  hubUrl: http://127.0.0.1:${fakeHubPort}`,
+      '  env:',
+      '    HUB_PASSWORD: from-config',
+      '    TELEGRAM_BOT_TOKEN: bot-token',
+      '    CONTROL_NODE_NAME: stale-name',
+    ].join('\n'));
+
+    // Set on the daemon's own process, the way a launchd/systemd Environment block would.
+    process.env.HUB_SESSION_SECRET = 'from-the-daemon-environment';
+    process.env.XAI_API_KEY = 'xai-key';
+    try {
+      daemon = new Daemon(loadConfig(cfgPath));
+      await daemon.start();
+      const controlUrl = daemon.registration().control!.url;
+      const auth = { authorization: 'Bearer daemon-tok' };
+
+      // A password reachable at all is what `authConfigured` reports — the switch refuses a target
+      // that would bring an authenticated hub back up open.
+      expect(await (await fetch(`${controlUrl}/control/hub`, { headers: auth })).json())
+        .toMatchObject({ running: false, authConfigured: true });
+
+      expect((await fetch(`${controlUrl}/control/hub/start`, { method: 'POST', headers: auth })).status).toBe(200);
+      const env = JSON.parse(readFileSync(marker, 'utf8')) as Record<string, string>;
+      expect(env.HUB_PASSWORD).toBe('from-config');
+      expect(env.TELEGRAM_BOT_TOKEN).toBe('bot-token');
+      expect(env.HUB_SESSION_SECRET).toBe('from-the-daemon-environment');
+      expect(env.XAI_API_KEY).toBe('xai-key');
+      // The node's own name always wins, so the new hub can't offer this node as its own target.
+      expect(env.CONTROL_NODE_NAME).toBe('strix');
+      expect(env.DATA_ROOT).toBe(dataRoot);
+      expect(env.HUB_DB).toBe(join(dataRoot, 'hub.db'));
+
+      // The snapshot is now the database, and the sidecar that would have been replayed onto it is gone
+      expect(readFileSync(join(dataRoot, 'hub.db'), 'utf8')).toBe('the snapshot');
+      expect(existsSync(join(dataRoot, 'checkpoint.db'))).toBe(false);
+      expect(existsSync(join(dataRoot, 'hub.db-wal'))).toBe(false);
+
+      // A second start would put two hubs on one data root: refused, not silently reported as fine.
+      const again = await fetch(`${controlUrl}/control/hub/start`, { method: 'POST', headers: auth });
+      expect(again.status).toBe(409);
+      expect((await again.json()).error).toMatch(/already/);
+    } finally {
+      delete process.env.HUB_SESSION_SECRET;
+      delete process.env.XAI_API_KEY;
+    }
   }, 30000);
 
   it('rejects a controlNode config without an argv or a data root', () => {

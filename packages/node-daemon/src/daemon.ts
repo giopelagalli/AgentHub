@@ -9,7 +9,7 @@ import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
 import { Supervisor, entryName } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
-import { HubProcess } from './hub-process.js';
+import { HubBusyError, HubProcess } from './hub-process.js';
 import { safeEqual } from './shell-task.js';
 
 // Bounds Daemon.stop()'s wait for the runner's in-flight execution to actually settle, so a real
@@ -22,6 +22,22 @@ const DEFAULT_CONTROL_PORT = 8131;
 
 /** Bounds each browser teardown call so a hung close() can't block the runner/supervisor shutdown below. */
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
+
+/** Consecutive failed heartbeats before the daemon goes looking for the hub somewhere else. */
+const REDISCOVER_AFTER_FAILURES = 3;
+/** Bounds the health probe each rediscovery candidate gets. */
+const REDISCOVER_PROBE_MS = 3000;
+
+/**
+ * Reads (and so releases) a response nobody cares about. Undici keeps the connection — and the
+ * socket behind it — alive until a body is consumed or cancelled, which is what used to leave the
+ * daemon's fire-and-forget calls holding a keep-alive socket open through teardown.
+ */
+async function drain(res: Response): Promise<void> {
+  try {
+    await res.arrayBuffer();
+  } catch { /* already consumed or aborted */ }
+}
 
 export interface DaemonDeps {
   /** Swapped for a `FakeDriver` in tests, so no test ever launches a real browser. */
@@ -49,11 +65,21 @@ export class Daemon {
   private readonly token?: string;
   /** Present only on a hub candidate: the hub this node can be asked to run (spec §4.2). */
   private readonly hubProcess?: HubProcess;
+  /**
+   * Where the hub is *now*. It starts at `cfg.hub` and moves when a control-node switch takes the
+   * hub to another machine (see `rediscoverHub`), which is why nothing else reads `cfg.hub`.
+   */
+  private hubUrl: string;
+  private hubFailures = 0;
+  private rediscovering = false;
   constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
     const token = cfg.hubToken ?? process.env.DAEMON_TOKEN;
     this.token = token || undefined;
     this.authHeaders = token ? { authorization: `Bearer ${token}` } : {};
-    if (cfg.controlNode) this.hubProcess = new HubProcess(cfg.controlNode, cfg.advertiseHost ?? '127.0.0.1');
+    this.hubUrl = cfg.hub;
+    if (cfg.controlNode) {
+      this.hubProcess = new HubProcess(cfg.controlNode, cfg.advertiseHost ?? '127.0.0.1', { nodeName: cfg.node.name });
+    }
     this.supervisor = new Supervisor(cfg.serving ?? [], (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
       void this.stop().then(() => process.exit(1));
@@ -138,7 +164,8 @@ export class Daemon {
       try {
         return await hub.start();
       } catch (err) {
-        return reply.code(502).send({ error: (err as Error).message, ...hub.status() });
+        const status = err instanceof HubBusyError ? 409 : 502;
+        return reply.code(status).send({ error: (err as Error).message, ...hub.status() });
       }
     });
     app.post('/control/hub/stop', async (req, reply) => {
@@ -173,7 +200,9 @@ export class Daemon {
       this.controlPort = this.browserPort;
       return;
     }
-    this.controlApp = Fastify();
+    // A control call the hub abandoned (a timed-out switch probe) must not keep its socket — and so
+    // `close()` — alive: the daemon's shutdown is what the hub's own teardown waits behind.
+    this.controlApp = Fastify({ forceCloseConnections: true });
     this.registerControlRoutes(this.controlApp);
     const host = this.cfg.advertiseHost ?? '127.0.0.1';
     await this.controlApp.listen({ port: this.cfg.controlPort ?? DEFAULT_CONTROL_PORT, host });
@@ -194,21 +223,28 @@ export class Daemon {
     await this.supervisor.startAll();
     if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
     if (this.cfg.profiles || this.cfg.controlNode) await this.startControlServer();
-    const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
+    const res = await fetch(`${this.hubUrl}/api/nodes/register`, {
       method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
     });
+    await drain(res);
     if (!res.ok) throw new Error(`hub registration failed: ${res.status}`);
     const interval = this.cfg.heartbeatMs ?? 5000;
     this.timer = setInterval(() => {
-      fetch(`${this.cfg.hub}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST', headers: this.authHeaders })
-        .then((res) => { if (res.status === 404) void this.reregister('heartbeat'); })
-        .catch(() => { /* hub temporarily unreachable; keep beating */ });
+      fetch(`${this.hubUrl}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST', headers: this.authHeaders })
+        .then(async (res) => {
+          await drain(res);
+          if (res.status === 404) { this.hubFailures = 0; void this.reregister('heartbeat'); return; }
+          // 503 is the hub telling us it is handing itself over; anything else that isn't a 2xx is
+          // a hub that can't serve this node either way.
+          if (res.ok) this.hubFailures = 0; else this.noteHubFailure();
+        })
+        .catch(() => { this.noteHubFailure(); });
     }, interval);
 
     const jobTypes = this.cfg.jobTypes ?? [];
     if (jobTypes.length > 0) {
       this.runner = new JobRunner({
-        hub: this.cfg.hub,
+        hub: this.hubUrl,
         node: this.cfg.node.name,
         types: jobTypes,
         workspaceRoot: this.cfg.workspaceRoot ?? join(process.cwd(), 'workspace'),
@@ -221,19 +257,65 @@ export class Daemon {
     }
   }
 
+  /**
+   * A heartbeat that didn't land. A run of them means the hub is no longer where this daemon last
+   * saw it — most often because it was handed to the other control node — so after
+   * `REDISCOVER_AFTER_FAILURES` in a row the daemon goes looking for it.
+   */
+  private noteHubFailure(): void {
+    this.hubFailures++;
+    if (this.hubFailures >= REDISCOVER_AFTER_FAILURES) void this.rediscoverHub();
+  }
+
+  /**
+   * Follows the hub. The configured `hub` is re-probed first — a tailnet alias (`hub.internal`) is
+   * repointed at the new control node and needs nothing else — and only if that is still down are
+   * `hubCandidates` tried in order. The first one that answers `/api/health` becomes this daemon's
+   * hub, for the heartbeat and for the job runner alike, and the move is logged once.
+   */
+  private async rediscoverHub(): Promise<void> {
+    if (this.rediscovering) return;
+    this.rediscovering = true;
+    try {
+      for (const candidate of [this.hubUrl, this.cfg.hub, ...(this.cfg.hubCandidates ?? [])]) {
+        if (!(await this.hubAlive(candidate))) continue;
+        this.hubFailures = 0;
+        if (candidate === this.hubUrl) return;
+        console.error(`[daemon] hub moved: following it from ${this.hubUrl} to ${candidate}`);
+        this.hubUrl = candidate;
+        this.runner?.setHub(candidate);
+        await this.reregister('rediscovery');
+        return;
+      }
+    } finally {
+      this.rediscovering = false;
+    }
+  }
+
+  private async hubAlive(url: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(REDISCOVER_PROBE_MS) });
+      await drain(res);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // Re-registers with the hub after it stops recognizing this node — most notably a hub restart
   // (fresh in-memory registry), surfaced as a 404 from heartbeat or claim. Guarded against overlap
   // (a heartbeat tick and a claim tick can both notice this around the same time); register itself
   // is idempotent (NodeRegistry.register upserts by name), so a skipped, overlapping occurrence is
   // covered by the in-flight call.
-  private async reregister(reason: 'heartbeat' | 'claim'): Promise<void> {
+  private async reregister(reason: 'heartbeat' | 'claim' | 'rediscovery'): Promise<void> {
     if (this.reregistering) return;
     this.reregistering = true;
     console.error(`[daemon] hub doesn't know node ${this.cfg.node.name} (${reason} 404) — re-registering`);
     try {
-      const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
+      const res = await fetch(`${this.hubUrl}/api/nodes/register`, {
         method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
       });
+      await drain(res);
       if (!res.ok) console.error(`[daemon] re-registration failed: ${res.status}`);
     } catch (err) {
       console.error('[daemon] re-registration failed:', err);

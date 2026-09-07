@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { dataStamp } from '@agenthub/shared/data-stamp';
 import type { NodeInfo } from '@agenthub/shared';
 import type { Db } from './db.js';
@@ -12,6 +14,14 @@ export type SyncFn = (fromDir: string, target: SyncTarget) => Promise<void>;
 
 /** Placeholders substituted into the configured sync argv. */
 const DEFAULT_RSYNC = ['rsync', '-a', '--delete', '{from}/', '{host}:{dataRoot}/'];
+
+/**
+ * The consistent copy of the database the target actually opens. `VACUUM INTO` writes a complete,
+ * self-contained snapshot while this hub keeps running, so the live `hub.db` — which the sync reads
+ * while it is still being written — never has to be trusted (`HubProcess.adoptCheckpoint` renames
+ * this one over it on the far side).
+ */
+export const CHECKPOINT_DB = 'checkpoint.db';
 
 const DEFAULT_CONTROL_TIMEOUT_MS = 30_000;
 /** Starting a hub includes its own health probe on the far side, so this window is the generous one. */
@@ -41,6 +51,19 @@ export interface ControlSwitchDeps {
   rsyncCmd?: string[];
   /** True while a video job is running — the switch refuses rather than stranding it on a node. */
   videoRunning?: () => boolean;
+  /**
+   * True when *this* hub has auth on. A target whose daemon reports `authConfigured: false` would
+   * bring the hub back up open to the tailnet, so the switch refuses rather than doing that quietly.
+   */
+  authConfigured?: boolean;
+  /**
+   * Stops everything that writes without an HTTP request behind it — the project ticker, the
+   * assistant scheduler, the Telegram port — for the switch window. The 503 hook covers the API;
+   * this covers the rest, so the snapshot is taken of a database nothing is still changing.
+   * `resume` undoes it on every path that leaves this hub serving.
+   */
+  quiesce?: () => Promise<void>;
+  resume?: () => void;
   controlTimeoutMs?: number;
   startTimeoutMs?: number;
   log?: (line: string) => void;
@@ -117,10 +140,21 @@ export class ControlSwitch {
     try {
       const target = await this.hubStatus(node);
       if (target.running) throw new SwitchError(409, `${nodeName} is already running a hub`);
+      // A hub with a password must not come back up without one. The daemon derives this from the
+      // environment it would actually hand the hub, so this is the real answer and not a promise.
+      if (this.deps.authConfigured && target.authConfigured === false) {
+        throw new SwitchError(412, `${nodeName} would start the hub with no HUB_PASSWORD; set the hub's environment there first (deploy/controlnode.md)`);
+      }
 
+      // Everything that writes stops here — the API is already 503ing, this is the rest — so the
+      // snapshot below is of a database nobody is still changing. Telegram's long poll is part of
+      // it: two hubs polling one bot token would both consume the owner's updates.
+      await this.deps.quiesce?.();
       // The WAL is the part of the state that isn't in the file yet; folding it in makes the data
-      // root, and only the data root, the thing worth copying.
+      // root, and only the data root, the thing worth copying. The snapshot beside it is what the
+      // target opens: the live file is read by the sync while the process still holds it open.
       this.deps.db.pragma('wal_checkpoint(TRUNCATE)');
+      await this.snapshot();
       await this.sync(this.deps.dataRoot, { node: nodeName, host: hostOf(node.control.url), dataRoot: target.dataRoot });
 
       const local = await dataStamp(this.deps.dataRoot);
@@ -134,19 +168,39 @@ export class ControlSwitch {
       return { switchedTo: nodeName, hubUrl: started.hubUrl };
     } catch (err) {
       // Nothing was started on the target on any of these paths, so this hub simply goes back to
-      // serving — the flag has to come off or it would 503 every write from here on.
+      // serving — the flag has to come off, and the paused writers have to come back, or it would
+      // 503 every write and schedule nothing from here on.
       this.inProgress = false;
+      try {
+        this.deps.resume?.();
+      } catch (resumeErr) {
+        this.log(`[controlnode] resuming after a failed switch: ${(resumeErr as Error).message}`);
+      }
       throw err;
     }
   }
 
-  private async hubStatus(node: NodeInfo): Promise<{ running: boolean; dataRoot: string; hubUrl: string }> {
+  /**
+   * Writes the database snapshot the target will adopt. `VACUUM INTO` refuses an existing file, so
+   * a leftover from an earlier switch goes first.
+   */
+  private async snapshot(): Promise<void> {
+    const path = join(this.deps.dataRoot, CHECKPOINT_DB);
+    await rm(path, { force: true });
+    this.deps.db.prepare(`VACUUM INTO ?`).run(path);
+  }
+
+  private async hubStatus(node: NodeInfo): Promise<{ running: boolean; dataRoot: string; hubUrl: string; authConfigured?: boolean }> {
     const body = await this.call(node, 'GET', '/control/hub', this.deps.controlTimeoutMs ?? DEFAULT_CONTROL_TIMEOUT_MS) as
-      Partial<{ running: boolean; dataRoot: string; hubUrl: string }>;
+      Partial<{ running: boolean; dataRoot: string; hubUrl: string; authConfigured: boolean }>;
     if (typeof body.dataRoot !== 'string' || typeof body.hubUrl !== 'string') {
       throw new SwitchError(502, `${node.name} returned no hub status`);
     }
-    return { running: body.running === true, dataRoot: body.dataRoot, hubUrl: body.hubUrl };
+    return {
+      running: body.running === true, dataRoot: body.dataRoot, hubUrl: body.hubUrl,
+      // Left undefined by a daemon too old to report it; only an explicit `false` refuses a switch.
+      ...(typeof body.authConfigured === 'boolean' ? { authConfigured: body.authConfigured } : {}),
+    };
   }
 
   private async remoteStamp(node: NodeInfo): Promise<string> {
@@ -175,7 +229,12 @@ export class ControlSwitch {
     } catch (err) {
       throw new SwitchError(502, `${method} ${path} on ${node.name} failed: ${(err as Error).message}`);
     }
-    if (!res.ok) throw new SwitchError(502, `${method} ${path} on ${node.name} failed: ${res.status}`);
+    if (!res.ok) {
+      // Undici holds the socket until the body is read or cancelled; an error reply nobody reads
+      // would otherwise keep a keep-alive connection open past this hub's own shutdown.
+      await res.body?.cancel().catch(() => {});
+      throw new SwitchError(502, `${method} ${path} on ${node.name} failed: ${res.status}`);
+    }
     return res.json();
   }
 }

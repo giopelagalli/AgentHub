@@ -7,16 +7,33 @@ export interface ServingConfig { tier: Tier; model: string; port: number; maxStr
 export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
 /**
  * Marks this node as a hub candidate (spec §4.2). `hubCmd` is the argv that starts the hub itself
- * (e.g. `["node", "packages/hub/dist/main.js"]`); it inherits this process's environment plus the
- * data-root variables derived from `dataRoot`. `hubUrl` is where the started hub answers its health
- * probe; it defaults to `http://<advertiseHost>:4000`.
+ * (e.g. `["node", "packages/hub/dist/main.js"]`); it is given the data-root variables derived from
+ * `dataRoot` plus the allowlisted hub variables (`HUB_ENV_KEYS`), so a hub started here comes back
+ * up configured the way the one it replaces was. `hubUrl` is where the started hub answers its
+ * health probe; it defaults to `http://<advertiseHost>:4000`.
  */
-export interface ControlNodeConfig { hubCmd: string[]; dataRoot: string; hubUrl?: string; }
+export interface ControlNodeConfig {
+  hubCmd: string[];
+  dataRoot: string;
+  hubUrl?: string;
+  /**
+   * Values for the variables the hub reads (`HUB_ENV_KEYS` in `hub-process.ts`), for a deployment
+   * that would rather keep the hub's secrets in this file than in the daemon's own service unit.
+   * Each name here wins over the daemon's environment; anything absent falls back to it.
+   */
+  env?: Record<string, string>;
+}
 /** Local ComfyUI used by the `video-gen` executor. `workflow` is a path to the JSON template. */
 export interface VideoConfig { comfyUrl: string; workflow?: string; }
 export interface DaemonConfig {
   node: { name: string; arch: string };
   hub: string;
+  /**
+   * Where else the hub may be after a control-node switch, tried in order once `hub` has stopped
+   * answering. Give the tailnet alias (`http://hub.internal:4000`) first: it follows the hub on its
+   * own and makes this list a backstop rather than the mechanism.
+   */
+  hubCandidates?: string[];
   /** Bearer token for every hub call; falls back to the `DAEMON_TOKEN` env var. */
   hubToken?: string;
   advertiseHost?: string;
@@ -74,7 +91,11 @@ export function loadConfig(path: string): DaemonConfig {
       throw new Error('daemon config: controlNode.hubCmd must be a non-empty argv list');
     if (typeof cn.dataRoot !== 'string' || !cn.dataRoot)
       throw new Error('daemon config: controlNode.dataRoot required');
+    if (cn.env !== undefined && (typeof cn.env !== 'object' || cn.env === null || Object.values(cn.env).some((v) => typeof v !== 'string')))
+      throw new Error('daemon config: controlNode.env must be a map of string values');
   }
+  if (raw.hubCandidates !== undefined && (!Array.isArray(raw.hubCandidates) || !raw.hubCandidates.every((h) => typeof h === 'string')))
+    throw new Error('daemon config: hubCandidates must be a list of hub urls');
   const hasJobTypes = Array.isArray(raw.jobTypes) && raw.jobTypes.length > 0;
   if (serving.length === 0 && !raw.browser?.enabled && !hasJobTypes && !raw.controlNode)
     throw new Error('daemon config: no capability (serving, jobTypes, browser or controlNode) declared');

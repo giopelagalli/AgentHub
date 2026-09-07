@@ -111,5 +111,8 @@ export function openDb(path: string): Db {
   relaxMessagesAgentId(db);
   ensureColumn(db, 'messages', 'session_id', `INTEGER`);
   ensureColumn(db, 'messages', 'tool_call_json', `TEXT`);
+  // Run after the session_id column is guaranteed to exist — on an old DB, this column doesn't exist
+  // until the ensureColumn call directly above adds it.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)`);
   return db;
 }

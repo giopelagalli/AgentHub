@@ -156,6 +156,14 @@ describe('POST /api/video', () => {
       payload: { type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['true'] } },
     })).json() as Job;
     expect((await uploadArtifact(h, shell.id, CLIP)).statusCode).toBe(400);
+
+    // A repeated `?node=` names no single uploader; that is a malformed request, not a stale runner.
+    const repeated = await h.app.inject({
+      method: 'POST', url: `/api/jobs/${job.id}/artifact?node=spark&node=mb`,
+      headers: { 'content-type': 'application/octet-stream' }, payload: CLIP,
+    });
+    expect(repeated.statusCode).toBe(400);
+    expect(repeated.json().error).toBe('invalid node');
   });
 
   it('takes the clip only from the node the job is running on, and only while it runs', async () => {

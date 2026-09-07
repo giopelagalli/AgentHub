@@ -1,6 +1,6 @@
 import { videoPayloadFrom, type Job, type VideoPayload } from '@agenthub/shared';
 import type { Assistant } from '../assistant/assistant.js';
-import type { ConfirmationGate } from '../assistant/confirm.js';
+import { ConfirmationGate } from '../assistant/confirm.js';
 import type { Planner, PlannerList } from '../assistant/planner.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { MasterOrchestrator } from '../projects/master.js';
@@ -9,6 +9,12 @@ import { formatBriefing, formatNodes, formatPlanner, formatProjects, splitMessag
 import type { OutgoingMessage, TelegramPort } from './port.js';
 
 const PLANNER_COMMANDS = new Set(['/goals', '/todo', '/backlog']);
+
+/**
+ * How long a `/controlnode <name>` confirmation button stays live. The buttons sit in the owner's
+ * chat history forever, so without an expiry a tap on last week's message would move the hub.
+ */
+const CONTROL_NODE_CONFIRM_TTL_MS = 10 * 60_000;
 const HANDLER_ERROR_TEXT = 'Something went wrong handling that — see hub logs.';
 
 const HELP_TEXT = [
@@ -44,6 +50,8 @@ export interface CommandRouterDeps {
   enqueueVideo?: (payload: VideoPayload) => Job;
   /** Drives `/controlnode`; absent, the command says switching isn't configured on this hub. */
   controlNodes?: ControlNodeDeps;
+  /** Injected in tests so a confirmation can be aged past its expiry without waiting. */
+  now?: () => number;
 }
 
 export interface ControlNodeDeps {
@@ -60,8 +68,20 @@ export interface ControlNodeDeps {
 export class CommandRouter {
   /** One promise chain per chat: see `dispatch`. */
   private chains = new Map<string, Promise<void>>();
+  /**
+   * Nonces for the `/controlnode` confirmation buttons — the same gate the outward tools use, held
+   * separately because a hub move gets a much shorter window than a tweet does. A confirmation is
+   * single-use (the nonce is spent when it is taken) and dies with the window, so an old button and
+   * a double tap both land on the same "expired" reply rather than on a second switch.
+   */
+  private readonly cnConfirmations: ConfirmationGate;
 
-  constructor(private deps: CommandRouterDeps) {}
+  constructor(private deps: CommandRouterDeps) {
+    this.cnConfirmations = new ConfirmationGate({
+      ttlMs: CONTROL_NODE_CONFIRM_TTL_MS,
+      ...(deps.now ? { now: deps.now } : {}),
+    });
+  }
 
   start(): void {
     const { port, ownerChatId } = this.deps;
@@ -184,9 +204,10 @@ export class CommandRouter {
     if (!candidates.some((c) => c.name === wanted)) {
       return { text: `${wanted} is not a control-node candidate.` };
     }
+    const nonce = this.cnConfirmations.propose(`move the hub to ${wanted}`, async () => wanted).id;
     return {
       text: `Move the hub to ${wanted}? This stops the hub here once the new one is up.`,
-      buttons: [[{ text: 'Confirm', data: `cn:go:${wanted}` }, { text: 'Cancel', data: 'cn:cancel' }]],
+      buttons: [[{ text: 'Confirm', data: `cn:go:${wanted}:${nonce}` }, { text: 'Cancel', data: 'cn:cancel' }]],
     };
   }
 
@@ -247,8 +268,18 @@ export class CommandRouter {
     }
     if (data === 'cn:cancel') return [{ text: 'Cancelled.' }];
     if (data.startsWith('cn:go:')) {
-      const node = data.slice('cn:go:'.length);
+      // `cn:go:<node>:<nonce>`; the node name can't contain a colon, but splitting from the right
+      // is what makes that a property of this format rather than an assumption about node names.
+      const rest = data.slice('cn:go:'.length);
+      const split = rest.lastIndexOf(':');
+      const node = split > 0 ? rest.slice(0, split) : rest;
+      const nonce = split > 0 ? rest.slice(split + 1) : '';
       if (!this.deps.controlNodes) return [{ text: 'Control-node switching is not configured on this hub.' }];
+      // Spending the nonce is what makes this the one confirmation that counts: a second tap, or a
+      // button older than the window, finds nothing left to spend.
+      if (!this.cnConfirmations.cancel(nonce)) {
+        return [{ text: `That confirmation has expired — run /controlnode ${node} again.` }];
+      }
       try {
         const { switchedTo, hubUrl } = await this.deps.controlNodes.switchTo(node);
         return [{ text: `Hub moved to ${switchedTo}: ${hubUrl}` }];

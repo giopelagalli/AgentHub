@@ -292,7 +292,7 @@ describe('phase 6 acceptance: video, external tools and the control-node switch,
 
     await port.simulateMessage(OWNER, '/controlnode strix');
     await handle.router!.idle();
-    const confirm = port.sent.at(-1)!.msg.buttons!.flat().find((b) => b.data === 'cn:go:strix');
+    const confirm = port.sent.at(-1)!.msg.buttons!.flat().find((b) => b.data.startsWith('cn:go:strix:'));
     expect(confirm).toBeTruthy();
     // Nothing has moved on the button alone.
     expect(target.calls).toHaveLength(0);

@@ -129,6 +129,15 @@ export class ResourceManager {
         continue;
       }
       this.held.set(node, jobId);
+      // A node whose last heartbeat is already stale is offline for slot purposes: its serving is
+      // not up to be parked, and parking it here would black the tier out on a machine that may
+      // never come back. The slot stays held (the job is still running as far as the queue knows)
+      // and `reconcile` re-applies the park on the node's first heartbeat — or the sweep releases
+      // the slot when it gives up on the node instead.
+      if (this.deps.registry.byName(node)?.status !== 'online') {
+        this.log(`[resources] ${node} holds the video slot for job ${jobId} but its heartbeat is stale; not parking until it reports in`);
+        continue;
+      }
       this.deps.gateway.park(node, PARKED_TIERS);
       this.log(`[resources] restored the video slot on ${node} for job ${jobId}`);
     }
@@ -144,15 +153,26 @@ export class ResourceManager {
    */
   async reconcile(nodeName: string, force = false): Promise<void> {
     if (!force && this.reconciled.has(nodeName)) return;
-    this.reconciled.add(nodeName);
     await this.lock(nodeName, async () => {
       const node = this.deps.registry.byName(nodeName);
       if (!node?.control?.url || !node.profiles?.includes(VIDEO_PROFILE)) return;
-      const live = await this.readProfile(node);
-      if (live === null) return;
+      const read = await this.readProfile(node);
+      // A profile that could not be read is not a reconciled node: leaving the mark off means the
+      // next heartbeat tries again instead of trusting a hub-restart-shaped silence forever.
+      if (read === null) return;
+      this.reconciled.add(nodeName);
+      const live = read.profile;
       const holder = this.held.get(nodeName);
       try {
-        if (live === VIDEO_PROFILE && holder === undefined) {
+        if (live === null) {
+          // The daemon restarted and has applied no profile at all, so its serving is whatever its
+          // config starts by default. Say it explicitly, either way — both switches are idempotent.
+          const wanted = holder === undefined ? LLM_PROFILE : VIDEO_PROFILE;
+          this.log(`[resources] ${nodeName} reports no active profile; applying ${wanted}`);
+          if (wanted === VIDEO_PROFILE) this.deps.gateway.park(nodeName, PARKED_TIERS);
+          await this.switchProfile(nodeName, wanted);
+          if (wanted === LLM_PROFILE) this.deps.gateway.unpark(nodeName);
+        } else if (live === VIDEO_PROFILE && holder === undefined) {
           this.log(`[resources] ${nodeName} was left on the video profile with no job holding it; restoring llm`);
           await this.switchProfile(nodeName, LLM_PROFILE);
           this.deps.gateway.unpark(nodeName);
@@ -267,16 +287,23 @@ export class ResourceManager {
     }
   }
 
-  /** The node's live profile, or null when it can't be read — reconciliation then does nothing. */
-  private async readProfile(node: NodeInfo): Promise<string | null> {
+  /**
+   * What the node says it is serving. The outer null is "couldn't ask" (unreachable, refused);
+   * `{ profile: null }` is the node answering that it has applied no profile at all — a daemon that
+   * restarted — which is a reconcilable state and not a reason to give up.
+   */
+  private async readProfile(node: NodeInfo): Promise<{ profile: string | null } | null> {
     try {
       const res = await this.fetchImpl(`${node.control!.url.replace(/\/$/, '')}/control/profile`, {
         headers: this.deps.daemonToken ? { authorization: `Bearer ${this.deps.daemonToken}` } : {},
         signal: AbortSignal.timeout(this.deps.controlTimeoutMs ?? DEFAULT_CONTROL_TIMEOUT_MS),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        return null;
+      }
       const body = await res.json() as { profile?: unknown };
-      return typeof body.profile === 'string' ? body.profile : null;
+      return { profile: typeof body.profile === 'string' ? body.profile : null };
     } catch (err) {
       this.log(`[resources] reading the profile of ${node.name} failed: ${(err as Error).message}`);
       return null;
@@ -296,6 +323,9 @@ export class ResourceManager {
       body: JSON.stringify({ name: profile }),
       signal: AbortSignal.timeout(this.deps.controlTimeoutMs ?? DEFAULT_CONTROL_TIMEOUT_MS),
     });
+    // Read either way: undici keeps the socket — and so the hub's own shutdown — waiting on a body
+    // nobody consumed.
+    await res.arrayBuffer().catch(() => {});
     if (!res.ok) throw new Error(`profile switch to ${profile} on ${nodeName} failed: ${res.status}`);
   }
 }

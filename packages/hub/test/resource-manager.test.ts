@@ -216,6 +216,67 @@ describe('ResourceManager', () => {
     expect(fake.calls).toEqual(['llm']);
   });
 
+  it('applies a profile to a node that reports none, and only marks it reconciled once it answered', async () => {
+    const fake = await startControl();
+    // A restarted daemon: its serving is whatever its config started, and it has applied no profile.
+    fake.live = null;
+
+    // No slot held: the node belongs on llm.
+    const idle = setup(fake.url);
+    await idle.manager.reconcile('spark');
+    expect(fake.calls).toEqual(['llm']);
+
+    // A slot held for it: the node belongs on video, parked.
+    fake.live = null;
+    fake.calls.length = 0;
+    const busy = setup(fake.url, { store: (() => { const st = sqliteSlotStore(openDb(':memory:')); st.save('spark', 21); return st; })() });
+    busy.manager.restore(() => true);
+    await busy.manager.reconcile('spark');
+    expect(fake.calls).toEqual(['video']);
+    expect(busy.gateway.parkedKeys()).toEqual(['spark|worker|http://127.0.0.1:8001']);
+  });
+
+  it('does not count an unreachable node as reconciled', async () => {
+    const fake = await startControl();
+    const { registry, manager } = setup(fake.url);
+    await fake.app.close();
+    control = undefined;
+
+    await manager.reconcile('spark'); // nothing to do: the read failed
+    expect(fake.calls).toEqual([]);
+
+    // The node comes back stranded on video — the retry has to still happen, so the first, failed
+    // attempt must not have consumed this node's one reconciliation.
+    const back = await startControl();
+    back.live = 'video';
+    registry.register(registration(back.url));
+    await manager.reconcile('spark');
+    expect(back.calls).toEqual(['llm']);
+  });
+
+  it('leaves a node whose heartbeat is already stale unparked until it reports in', async () => {
+    const fake = await startControl();
+    const { db, registry, gateway } = setup(fake.url);
+    // The node was last heard from long before this hub came up: offline for slot purposes.
+    registry.register(registration(fake.url), Date.now() - 120_000);
+    registry.sweep();
+
+    const store = sqliteSlotStore(db);
+    store.save('spark', 14);
+    const restarted = new ResourceManager({ registry, gateway, store, daemonToken: TOKEN, log: () => {} });
+    restarted.restore(() => true);
+
+    // The slot is still owned by the running job, but nothing is parked on a node that is not serving.
+    expect(restarted.holder('spark')).toBe(14);
+    expect(gateway.parkedKeys()).toEqual([]);
+
+    // Its first heartbeat is what puts the park (and the video profile) back.
+    registry.register(registration(fake.url));
+    await restarted.reconcile('spark');
+    expect(fake.calls).toEqual(['video']);
+    expect(gateway.parkedKeys()).toEqual(['spark|worker|http://127.0.0.1:8001']);
+  });
+
   it('re-applies the video profile to a node that holds a slot but reports llm', async () => {
     const fake = await startControl();
     const { db, registry, gateway } = setup(fake.url);

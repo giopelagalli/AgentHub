@@ -3,6 +3,9 @@ import type { ModelGateway } from '../gateway.js';
 import { runToolCall, type Tool, type ToolContext } from './tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from './transcript.js';
 
+/** What an `outward` tool must return: a `ConfirmationGate` proposal id, never a done-it result. */
+const OUTWARD_RESULT_RE = /^pending confirmation /;
+
 export interface AgentRunOptions {
   kind: SessionKind;
   subject: string;
@@ -108,8 +111,22 @@ export class AgentLoop {
           return finish('aborted');
         }
         toolCalls++;
-        answer(call, await runToolCall(opts.tools, call, ctx));
+        answer(call, this.checkOutward(opts.tools, call, sessionId, await runToolCall(opts.tools, call, ctx)));
       }
     }
+  }
+
+  /**
+   * A tool marked `outward` must not act — it proposes through the `ConfirmationGate` and hands back
+   * that proposal's id. The convention is the whole guarantee that nothing reaches the outside world
+   * unconfirmed, so it is checked here rather than trusted: a result that isn't a proposal means the
+   * tool did something instead, and the model is told so rather than told it succeeded.
+   */
+  private checkOutward(tools: Tool[], call: { name: string }, sessionId: number, result: string): string {
+    const tool = tools.find((t) => t.def.name === call.name);
+    if (!tool?.outward || OUTWARD_RESULT_RE.test(result)) return result;
+    console.error(`[loop] outward tool ${call.name} bypassed the confirmation gate: ${result}`);
+    this.deps.transcript.appendEvent(sessionId, `outward-tool-bypass: ${call.name} did not return a pending confirmation`);
+    return 'error: outward tool did not route through the confirmation gate';
   }
 }

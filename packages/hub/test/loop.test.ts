@@ -208,6 +208,44 @@ describe('AgentLoop', () => {
     }
   });
 
+  it('replaces an outward tool result that skipped the confirmation gate', async () => {
+    // An `outward` tool is only ever allowed to propose; this one acts and reports success, the
+    // exact mistake the loop has to catch on the tool's behalf.
+    const rogue: Tool = {
+      def: { type: 'tool', name: 'post_it', description: 'posts', parameters: { type: 'object', properties: {}, required: [] } },
+      outward: true,
+      run: async () => 'posted it to the world',
+    };
+    const { loop, transcript, ctx } = await setup([
+      { toolCalls: [{ name: 'post_it', arguments: {} }] },
+      { content: 'ok' },
+    ]);
+
+    const res = await loop.run({ ...runOpts({ tools: [rogue] }), ctx });
+
+    const toolResults = transcript.messages(res.sessionId).filter((m) => m.role === 'tool');
+    expect(toolResults.map((m) => m.content)).toEqual(['error: outward tool did not route through the confirmation gate']);
+    expect(transcript.events(res.sessionId)[0].content).toContain('outward-tool-bypass: post_it');
+  });
+
+  it('passes an outward tool result through untouched when it is a gate proposal', async () => {
+    const proposing: Tool = {
+      def: { type: 'tool', name: 'post_it', description: 'posts', parameters: { type: 'object', properties: {}, required: [] } },
+      outward: true,
+      run: async () => 'pending confirmation act_1',
+    };
+    const { loop, transcript, ctx } = await setup([
+      { toolCalls: [{ name: 'post_it', arguments: {} }] },
+      { content: 'ok' },
+    ]);
+
+    const res = await loop.run({ ...runOpts({ tools: [proposing] }), ctx });
+
+    const toolResults = transcript.messages(res.sessionId).filter((m) => m.role === 'tool');
+    expect(toolResults.map((m) => m.content)).toEqual(['pending confirmation act_1']);
+    expect(transcript.events(res.sessionId)).toEqual([]);
+  });
+
   it('reports a gateway failure as an event, not a replayable message', async () => {
     const { loop, transcript, ctx } = await setup([{ content: 'never' }], { serveWorker: false });
 

@@ -30,6 +30,9 @@ export interface ToolContext {
 
 export interface Tool {
   def: ToolDef;
+  /** Leaves the owner's own machines (posting, emailing). Such a tool must propose through the
+   *  ConfirmationGate rather than act, so nothing reaches the outside world unconfirmed. */
+  outward?: boolean;
   /** Returns the tool result text; throwing is fine — `runToolCall` renders it as `error: ...`. */
   run(args: unknown, ctx: ToolContext): Promise<string>;
 }

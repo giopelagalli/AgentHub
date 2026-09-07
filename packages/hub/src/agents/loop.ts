@@ -9,6 +9,11 @@ export interface AgentRunOptions {
   tier: Tier;
   system: string;
   user: string;
+  /**
+   * Earlier turns replayed to the model ahead of `user`. Already persisted under the sessions they
+   * came from, so this run's transcript records only its own system and user messages.
+   */
+  history?: ChatMessage[];
   tools: Tool[];
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
   maxToolCalls: number;
@@ -41,11 +46,10 @@ export class AgentLoop {
     const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal };
     const toolDefs = opts.tools.map((t) => t.def);
 
-    const messages: ChatMessage[] = [
-      { role: 'system', content: opts.system },
-      { role: 'user', content: opts.user },
-    ];
-    for (const m of messages) transcript.append(sessionId, m);
+    const system: ChatMessage = { role: 'system', content: opts.system };
+    const user: ChatMessage = { role: 'user', content: opts.user };
+    const messages: ChatMessage[] = [system, ...(opts.history ?? []), user];
+    for (const m of [system, user]) transcript.append(sessionId, m);
 
     let toolCalls = 0;
     let text = '';

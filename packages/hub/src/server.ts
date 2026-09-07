@@ -70,6 +70,8 @@ const DEFAULT_BRIEFING_TIME = '08:00';
 /** How long the answered `/api/controlnode` waits before this hub stops itself. */
 const DEFAULT_SWITCH_STOP_DELAY_MS = 2000;
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
+/** How long in-flight project turns get to end on their own when a switch pauses the fleet. */
+const QUIESCE_GRACE_MS = 1000;
 
 export interface AssistantOptions {
   /** Root of the git-versioned memory bundle (MEMORY.md, notes/, planner/). */
@@ -172,11 +174,32 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
   // Only a hub told where its data root is can hand it over; without the option the switch routes
   // answer 501 and nothing else in the hub changes.
+  /**
+   * Everything that writes to the data root without an HTTP request behind it, stopped for the
+   * switch window: the project ticker, the assistant's scheduled briefings, and the Telegram long
+   * poll — that last one before the new hub starts, so the two never both consume the owner's
+   * updates. `resumeWriters` puts them back on the paths where this hub keeps serving.
+   */
+  const quiesceWriters = async (): Promise<void> => {
+    await projects.stop({ graceMs: QUIESCE_GRACE_MS });
+    const handle = await assistantReady?.catch(() => null);
+    handle?.scheduler?.stop();
+    await handle?.port?.stop().catch((err: unknown) => app.log.error(`pausing telegram for the switch failed: ${(err as Error).message}`));
+  };
+  const resumeWriters = (): void => {
+    projects.start();
+    void assistantReady?.then((handle) => {
+      handle.scheduler?.start();
+      return handle.port?.start();
+    }).catch((err: unknown) => app.log.error(`resuming after a failed switch: ${(err as Error).message}`));
+  };
   const controlSwitch = opts.controlNode
     ? new ControlSwitch({
         db, registry, dataRoot: opts.controlNode.dataRoot,
+        quiesce: quiesceWriters, resume: resumeWriters,
         ...(opts.controlNode.name ? { self: opts.controlNode.name } : {}),
         ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
+        ...(opts.auth?.password ? { authConfigured: true } : {}),
         ...(opts.controlNode.sync ? { sync: opts.controlNode.sync } : {}),
         ...(opts.controlNode.rsync ? { rsyncCmd: opts.controlNode.rsync } : {}),
         // A clip in flight lives on a node's GPU and lands as an artifact on *this* hub's disk; a
@@ -230,7 +253,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   }
   // Once a switch is under way this hub's data root is being copied elsewhere: anything that writes
   // now would land in a database the new hub will never see. Reads keep working (the UI stays up
-  // until the process stops), and so does the switch route itself, which reports the 409.
+  // until the process stops); every write, `POST /api/controlnode` included, answers 503 — so a
+  // second switch request while one is running is refused here, before `ControlSwitch`'s own 409
+  // ever sees it.
   if (controlSwitch) {
     app.addHook('onRequest', async (req, reply) => {
       if (!controlSwitch.switching || req.method === 'GET' || req.method === 'HEAD') return;
@@ -389,7 +414,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
   };
 
-  const sweeper = setInterval(() => { sweepAndRequeue(); leases.expire(); broadcastState(); }, opts.sweepIntervalMs ?? 5000);
+  // The sweep writes (it requeues jobs), so it stays off for the switch window like every other
+  // writer — the snapshot on its way to the other control node must not move under the copy.
+  const sweeper = setInterval(() => {
+    if (controlSwitch?.switching) return;
+    sweepAndRequeue();
+    leases.expire();
+    broadcastState();
+  }, opts.sweepIntervalMs ?? 5000);
   sweeper.unref();
 
   // --- auth ---------------------------------------------------------------------
@@ -587,7 +619,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     // Only the node the job is running on may write its clip, and only while it is still the runner
     // of record: a late upload from a node whose job was requeued elsewhere would otherwise
     // overwrite the real runner's output.
-    const { node } = req.query as { node?: string };
+    const { node } = req.query as { node?: unknown };
+    // A repeated `?node=` arrives as an array; it names no single uploader, so it is a bad request
+    // rather than a silent "not the current runner".
+    if (node !== undefined && typeof node !== 'string') return reply.code(400).send({ error: 'invalid node' });
     const uploader = node ? registry.byName(node) : null;
     if (!uploader || job.status !== 'running' || job.nodeId !== uploader.id) {
       return reply.code(409).send({ error: 'not the current runner' });

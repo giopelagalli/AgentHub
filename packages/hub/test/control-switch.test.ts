@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dataStamp } from '@agenthub/shared/data-stamp';
+import type { AuthOptions } from '../src/auth.js';
+import { openDb } from '../src/db.js';
 import { createHub, type Hub } from '../src/server.js';
 import { CommandRouter, type ControlNodeDeps } from '../src/telegram/router.js';
 import { FakeTelegramPort } from '../src/telegram/port.js';
@@ -27,12 +29,17 @@ class FakeControlNode {
   running = false;
   /** Set to make the node report a stamp the hub's own data root can never match. */
   stampOverride?: string;
+  /** What the node says about the environment it would hand a hub; undefined = an older daemon. */
+  authConfigured?: boolean;
   private port = 0;
 
   constructor(readonly dataRoot: string, readonly hubUrl = 'http://fake-node:4000') {
     this.app.get('/control/hub', async () => {
       this.calls.push('GET /control/hub');
-      return { running: this.running, dataRoot: this.dataRoot, hubUrl: this.hubUrl };
+      return {
+        running: this.running, dataRoot: this.dataRoot, hubUrl: this.hubUrl,
+        ...(this.authConfigured === undefined ? {} : { authConfigured: this.authConfigured }),
+      };
     });
     this.app.get('/control/hub/data-stamp', async () => {
       this.calls.push('GET /control/hub/data-stamp');
@@ -65,7 +72,7 @@ async function tmpDir(prefix: string): Promise<string> {
 
 interface Harness { hub: Hub; node: FakeControlNode; dataRoot: string; synced: { from: string; to: string }[] }
 
-async function setup(opts: { sync?: (from: string, to: string) => Promise<void>; stopDelayMs?: number } = {}): Promise<Harness> {
+async function setup(opts: { sync?: (from: string, to: string) => Promise<void>; stopDelayMs?: number; auth?: AuthOptions } = {}): Promise<Harness> {
   const dataRoot = await tmpDir('agenthub-cn-local-');
   const remoteRoot = join(await tmpDir('agenthub-cn-remote-'), 'data');
   node = new FakeControlNode(remoteRoot);
@@ -75,6 +82,7 @@ async function setup(opts: { sync?: (from: string, to: string) => Promise<void>;
   hub = createHub({
     dbPath: join(dataRoot, 'hub.db'),
     projectsRoot: join(dataRoot, 'projects'),
+    ...(opts.auth ? { auth: opts.auth } : {}),
     controlNode: {
       dataRoot, name: 'mini',
       stopDelayMs: opts.stopDelayMs ?? 60_000,
@@ -161,6 +169,79 @@ describe('control-node switch', () => {
       payload: { type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['true'] } },
     });
     expect(write.statusCode).toBe(201);
+  });
+
+  it('hands over a consistent snapshot even while something keeps writing during the sync', async () => {
+    let stopWriting = false;
+    const h = await setup({
+      sync: async (from, to) => {
+        // A writer the 503 hook can't reach: it holds the database directly, the way the project
+        // ticker or a scheduled turn does, and it runs for the whole copy.
+        const writing = (async () => {
+          while (!stopWriting) {
+            hub!.queue.enqueue({ type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['true'] } });
+            await new Promise((r) => setTimeout(r, 1));
+          }
+        })();
+        await rm(to, { recursive: true, force: true });
+        await cp(from, to, { recursive: true });
+        stopWriting = true;
+        await writing;
+      },
+    });
+    const before = h.hub.queue.enqueue({ type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['before'] } });
+
+    const res = await h.hub.app.inject({ method: 'POST', url: '/api/controlnode', payload: { node: 'strix' } });
+    expect(res.statusCode).toBe(200);
+
+    // The database the target adopts is the snapshot, not the live file the copy read underneath a
+    // writer: it opens clean and holds exactly the state as of the checkpoint.
+    const snapshot = openDb(join(h.node.dataRoot, 'checkpoint.db'));
+    try {
+      expect(snapshot.pragma('integrity_check')).toEqual([{ integrity_check: 'ok' }]);
+      const ids = (snapshot.prepare('SELECT id FROM jobs ORDER BY id').all() as { id: number }[]).map((r) => r.id);
+      expect(ids).toEqual([before.id]);
+    } finally {
+      snapshot.close();
+    }
+    // ...while the live file did keep taking writes right through the switch.
+    expect(h.hub.queue.list().length).toBeGreaterThan(1);
+  });
+
+  it('refuses with 412 when a single byte of the snapshot did not survive the copy', async () => {
+    const h = await setup({
+      sync: async (from, to) => {
+        await rm(to, { recursive: true, force: true });
+        await cp(from, to, { recursive: true });
+        // The size stays identical, so only a content check can see this.
+        const path = join(to, 'checkpoint.db');
+        const bytes = await readFile(path);
+        bytes[bytes.length - 1] ^= 0xff;
+        await writeFile(path, bytes);
+      },
+    });
+
+    const res = await h.hub.app.inject({ method: 'POST', url: '/api/controlnode', payload: { node: 'strix' } });
+    expect(res.statusCode).toBe(412);
+    expect(res.json().error).toMatch(/stale/);
+    expect(h.node.calls).not.toContain('POST /control/hub/start');
+  });
+
+  it('refuses a target that would bring an authenticated hub back up with no password', async () => {
+    const h = await setup({ auth: { password: 'hunter2', daemonToken: 'daemon-tok', sessionSecret: 'secret' } });
+    h.node.authConfigured = false;
+    const login = await h.hub.app.inject({ method: 'POST', url: '/api/login', payload: { password: 'hunter2' } });
+    const headers = { cookie: login.headers['set-cookie'] as string };
+
+    const res = await h.hub.app.inject({ method: 'POST', url: '/api/controlnode', payload: { node: 'strix' }, headers });
+    expect(res.statusCode).toBe(412);
+    expect(res.json().error).toMatch(/HUB_PASSWORD/);
+    expect(h.synced).toEqual([]);
+    expect(h.node.calls).toEqual(['GET /control/hub']);
+
+    // ...and the same hub hands over happily once the target reports a configured environment.
+    h.node.authConfigured = true;
+    expect((await h.hub.app.inject({ method: 'POST', url: '/api/controlnode', payload: { node: 'strix' }, headers })).statusCode).toBe(200);
   });
 
   it('refuses with 409 while a video job is running', async () => {
@@ -259,7 +340,11 @@ describe('/controlnode over Telegram', () => {
     await port.simulateMessage(OWNER, '/controlnode strix');
     await r.idle();
     expect(port.sent[1]!.msg.text).toMatch(/Move the hub to strix\?/);
-    expect(port.sent[1]!.msg.buttons).toEqual([[{ text: 'Confirm', data: 'cn:go:strix' }, { text: 'Cancel', data: 'cn:cancel' }]]);
+    // The confirm button carries a one-shot nonce, so the buttons are matched by shape.
+    const confirm = port.sent[1]!.msg.buttons!.flat()[0]!;
+    expect(confirm.text).toBe('Confirm');
+    expect(confirm.data).toMatch(/^cn:go:strix:\w+$/);
+    expect(port.sent[1]!.msg.buttons![0]![1]).toEqual({ text: 'Cancel', data: 'cn:cancel' });
     expect(switched).toEqual([]);
 
     await port.simulateCallback(OWNER, 'cn:cancel');
@@ -267,10 +352,47 @@ describe('/controlnode over Telegram', () => {
     expect(port.sent[2]!.msg.text).toBe('Cancelled.');
     expect(switched).toEqual([]);
 
-    await port.simulateCallback(OWNER, 'cn:go:strix');
+    await port.simulateCallback(OWNER, confirm.data);
     await r.idle();
     expect(switched).toEqual(['strix']);
     expect(port.sent[3]!.msg.text).toBe('Hub moved to strix: http://strix:4000');
+
+    // The nonce is spent: tapping the same button again moves nothing.
+    await port.simulateCallback(OWNER, confirm.data);
+    await r.idle();
+    expect(switched).toEqual(['strix']);
+    expect(port.sent[4]!.msg.text).toBe('That confirmation has expired — run /controlnode strix again.');
+  });
+
+  it('expires a confirmation button after ten minutes', async () => {
+    const port = new FakeTelegramPort();
+    const switched: string[] = [];
+    let now = Date.UTC(2026, 0, 1, 9, 0, 0);
+    const r = new CommandRouter({
+      port, ownerChatId: OWNER,
+      assistant: {} as unknown as Assistant,
+      service: {} as unknown as ProjectService,
+      master: {} as unknown as MasterOrchestrator,
+      planner: {} as unknown as Planner,
+      gate: {} as unknown as ConfirmationGate,
+      registry: {} as unknown as NodeRegistry,
+      now: () => now,
+      controlNodes: {
+        list: () => ({ current: 'mini', candidates: [{ name: 'strix', status: 'online', current: false }] }),
+        switchTo: async (node) => { switched.push(node); return { switchedTo: node, hubUrl: 'http://strix:4000' }; },
+      },
+    });
+    r.start();
+
+    await port.simulateMessage(OWNER, '/controlnode strix');
+    await r.idle();
+    const stale = port.sent[0]!.msg.buttons!.flat()[0]!.data;
+
+    now += 11 * 60_000;
+    await port.simulateCallback(OWNER, stale);
+    await r.idle();
+    expect(switched).toEqual([]);
+    expect(port.sent[1]!.msg.text).toBe('That confirmation has expired — run /controlnode strix again.');
   });
 
   it('refuses a node that is not a candidate, and reports a failed switch', async () => {
@@ -284,8 +406,10 @@ describe('/controlnode over Telegram', () => {
     await r.idle();
     expect(port.sent[0]!.msg.text).toBe('elsewhere is not a control-node candidate.');
 
-    await port.simulateCallback(OWNER, 'cn:go:strix');
+    await port.simulateMessage(OWNER, '/controlnode strix');
     await r.idle();
-    expect(port.sent[1]!.msg.text).toBe('Switch to strix failed: a video job is running');
+    await port.simulateCallback(OWNER, port.sent[1]!.msg.buttons!.flat()[0]!.data);
+    await r.idle();
+    expect(port.sent[2]!.msg.text).toBe('Switch to strix failed: a video job is running');
   });
 });

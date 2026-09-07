@@ -50,12 +50,23 @@ class ManualClock implements Clock {
   }
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting for condition');
-    await new Promise((r) => setTimeout(r, 10));
+/**
+ * Advances the real Node event loop one `setImmediate` turn — letting genuine async work (the
+ * fetch to the mock OpenAI HTTP server that `Assistant.reply`/`master.dailyBriefing` make) actually
+ * settle. Unlike a wall-clock sleep this is deterministic: it doesn't race against a fixed duration,
+ * it just gives the pending I/O another chance to resolve.
+ */
+async function flush(): Promise<void> {
+  await new Promise<void>((r) => setImmediate(r));
+}
+
+/** Polls `predicate` across a bounded number of event-loop turns — never a timed sleep. */
+async function waitFor(predicate: () => boolean, maxIterations = 2000): Promise<void> {
+  for (let i = 0; i < maxIterations; i++) {
+    if (predicate()) return;
+    await flush();
   }
+  throw new Error('timed out waiting for condition');
 }
 
 interface Harness {
@@ -164,6 +175,70 @@ describe('Scheduler.nextFire', () => {
   });
 });
 
+/**
+ * Independent of `epochForTz`: looks up the real UTC offset `Intl` reports for `tz` at a given
+ * local wall-clock time and builds the expected UTC epoch from it directly, rather than duplicating
+ * the production two-pass guess-and-correct algorithm. Safe near a DST transition as long as the
+ * probe time (here, always same-day local `h:mi`) lands on the correct side of it, which every case
+ * below does — the transition itself always falls in the small hours, well before `09:00`.
+ */
+function offsetMinutes(tz: string, y: number, mo: number, d: number, h: number, mi: number): number {
+  const probe = new Date(Date.UTC(y, mo, d, h, mi, 0));
+  const part = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+    .formatToParts(probe)
+    .find((p) => p.type === 'timeZoneName')!.value; // e.g. "GMT-5" or "GMT-4"
+  const m = /GMT([+-]\d+)/.exec(part);
+  if (!m) throw new Error(`unexpected timeZoneName part: "${part}"`);
+  return Number(m[1]) * 60;
+}
+
+function localToUtc(tz: string, y: number, mo: number, d: number, h: number, mi: number): number {
+  return Date.UTC(y, mo, d, h, mi, 0) - offsetMinutes(tz, y, mo, d, h, mi) * 60_000;
+}
+
+describe('Scheduler.nextFire — DST transitions (America/New_York)', () => {
+  const TZ = 'America/New_York';
+
+  it('spring-forward (2026-03-08): 09:00 local resolves to the post-transition EDT instant', async () => {
+    const { hub: h, port, assistant } = await setup();
+    const scheduler = new Scheduler({
+      clock: new ManualClock(0), port, ownerChatId: OWNER, master: h.master, service: h.projects, assistant,
+      briefingTime: '09:00', checkinTimes: ['13:00'], tz: TZ,
+    });
+    // Clocks spring forward at 2am local on 2026-03-08, well before the 09:00 fire time, so `from`
+    // (06:00 local, same day) and the expected fire time are both already on the EDT side.
+    const from = localToUtc(TZ, 2026, 2, 8, 6, 0);
+    const expected = localToUtc(TZ, 2026, 2, 8, 9, 0);
+    expect(scheduler.nextFire('briefing', from)).toBe(expected);
+  });
+
+  it('fall-back (2026-11-01): 09:00 local resolves to the post-transition EST instant', async () => {
+    const { hub: h, port, assistant } = await setup();
+    const scheduler = new Scheduler({
+      clock: new ManualClock(0), port, ownerChatId: OWNER, master: h.master, service: h.projects, assistant,
+      briefingTime: '09:00', checkinTimes: ['13:00'], tz: TZ,
+    });
+    // Clocks fall back at 2am local on 2026-11-01, so 06:00 and 09:00 local that day are both
+    // already on the EST side of the transition.
+    const from = localToUtc(TZ, 2026, 10, 1, 6, 0);
+    const expected = localToUtc(TZ, 2026, 10, 1, 9, 0);
+    expect(scheduler.nextFire('briefing', from)).toBe(expected);
+  });
+
+  it('with no tz configured, falls back to the host-local interpretation of HH:MM', async () => {
+    const { hub: h, port, assistant } = await setup();
+    const scheduler = new Scheduler({
+      clock: new ManualClock(0), port, ownerChatId: OWNER, master: h.master, service: h.projects, assistant,
+      briefingTime: '09:00', checkinTimes: ['13:00'],
+    });
+    // Built with plain `Date` local-time semantics — the same ones `nextFire` uses without a `tz` —
+    // so this holds on any machine regardless of its configured timezone.
+    const from = new Date(2026, 5, 15, 6, 0, 0, 0).getTime();
+    const expected = new Date(2026, 5, 15, 9, 0, 0, 0).getTime();
+    expect(scheduler.nextFire('briefing', from)).toBe(expected);
+  });
+});
+
 describe('Scheduler firing', () => {
   it('fires the daily briefing exactly once per day boundary and sends it to the owner', async () => {
     const { hub: h, port, assistant } = await setup();
@@ -269,7 +344,11 @@ describe('Alerts', () => {
 
     clock.advanceTo(29 * 60_000);
     events.emitNodeOffline(node('mb'), 1);
-    await new Promise((r) => setTimeout(r, 20));
+    // Negative check: nothing here does real I/O (the fake port just records to an array), so a
+    // handful of event-loop turns is enough to be confident a second send isn't merely still in
+    // flight — bounded by iteration count, not a wall-clock guess.
+    await flush();
+    await flush();
     expect(port.sent).toHaveLength(1);
 
     clock.advanceTo(31 * 60_000);
@@ -307,7 +386,9 @@ describe('Alerts', () => {
       summary: 'moving', progress: { done: 1, total: 4 }, blockers: [], nextSteps: [], updatedAt: 0,
     };
     events.emitBriefing(active);
-    await new Promise((r) => setTimeout(r, 20));
+    // Same negative-check rationale as above: no real I/O involved, so a bounded flush suffices.
+    await flush();
+    await flush();
     expect(port.sent).toHaveLength(0);
   });
 });

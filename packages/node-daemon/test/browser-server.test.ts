@@ -174,7 +174,7 @@ describe('daemon browser capability', () => {
   it('rejects a config with no serving, jobTypes or browser capability declared', () => {
     const path = join(tmpDir(), 'daemon.yaml');
     writeFileSync(path, ['node:', '  name: x', '  arch: arm64', 'hub: http://127.0.0.1:1'].join('\n'));
-    expect(() => loadConfig(path)).toThrow(/daemon config: no capability \(serving, jobTypes or browser\) declared/);
+    expect(() => loadConfig(path)).toThrow(/daemon config: no capability \(serving, jobTypes, browser or controlNode\) declared/);
   });
 
   it('serves the browser API and registers its url with the hub, then tears both down on stop', async () => {

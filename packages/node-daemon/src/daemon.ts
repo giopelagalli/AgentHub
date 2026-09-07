@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { dataStamp } from '@agenthub/shared/data-stamp';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { NodeRegistration } from '@agenthub/shared';
 import type { BrowserConfig, DaemonConfig } from './config.js';
@@ -8,6 +9,7 @@ import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
 import { Supervisor, entryName } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
+import { HubProcess } from './hub-process.js';
 import { safeEqual } from './shell-task.js';
 
 // Bounds Daemon.stop()'s wait for the runner's in-flight execution to actually settle, so a real
@@ -45,10 +47,13 @@ export class Daemon {
   private readonly authHeaders: Record<string, string>;
   /** The same secret the hub uses for daemon calls; also guards this daemon's control endpoints. */
   private readonly token?: string;
+  /** Present only on a hub candidate: the hub this node can be asked to run (spec §4.2). */
+  private readonly hubProcess?: HubProcess;
   constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
     const token = cfg.hubToken ?? process.env.DAEMON_TOKEN;
     this.token = token || undefined;
     this.authHeaders = token ? { authorization: `Bearer ${token}` } : {};
+    if (cfg.controlNode) this.hubProcess = new HubProcess(cfg.controlNode, cfg.advertiseHost ?? '127.0.0.1');
     this.supervisor = new Supervisor(cfg.serving ?? [], (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
       void this.stop().then(() => process.exit(1));
@@ -65,6 +70,7 @@ export class Daemon {
       profiles: Object.keys(this.cfg.profiles ?? {}),
       video: this.cfg.video !== undefined,
       ...(this.controlPort !== undefined ? { control: { url: `http://${host}:${this.controlPort}` } } : {}),
+      ...(this.cfg.controlNode ? { controlNode: true } : {}),
     };
   }
 
@@ -80,8 +86,9 @@ export class Daemon {
   }
 
   /**
-   * The daemon's local control API. It exists only when the node declares `profiles` — the hub
-   * drives the Spark exclusivity swap (spec §4.3) through it — and reuses the browser server's app
+   * The daemon's local control API. It exists when the node declares `profiles` — the hub drives the
+   * Spark exclusivity swap (spec §4.3) through it — or `controlNode`, which adds the hub start/stop
+   * endpoints a control-node switch needs (spec §4.2). It reuses the browser server's app
    * when that one is running, so a node binds at most one extra port. Every route requires the same
    * bearer token the daemon uses towards the hub; with no token configured the endpoint refuses
    * everything rather than serving an unauthenticated switch.
@@ -108,6 +115,35 @@ export class Daemon {
     app.get('/control/profile', async (req, reply) => {
       if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
       return { profile: this.activeProfile ?? null, entries: this.supervisor.activeEntries() };
+    });
+    if (this.hubProcess) this.registerHubRoutes(app, this.hubProcess, this.cfg.controlNode!.dataRoot);
+  }
+
+  /**
+   * The control-node half of the switch (spec §4.2). The hub that is handing over syncs its data
+   * root here, compares `data-stamp` against its own to prove the copy arrived intact, and only then
+   * asks this node to start the hub; `start` does not answer until the new hub is actually healthy.
+   */
+  private registerHubRoutes(app: FastifyInstance, hub: HubProcess, dataRoot: string): void {
+    app.get('/control/hub', async (req, reply) => {
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
+      return hub.status();
+    });
+    app.get('/control/hub/data-stamp', async (req, reply) => {
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
+      return { stamp: await dataStamp(dataRoot), dataRoot };
+    });
+    app.post('/control/hub/start', async (req, reply) => {
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
+      try {
+        return await hub.start();
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message, ...hub.status() });
+      }
+    });
+    app.post('/control/hub/stop', async (req, reply) => {
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
+      return hub.stop();
     });
   }
 
@@ -157,7 +193,7 @@ export class Daemon {
   async start(): Promise<void> {
     await this.supervisor.startAll();
     if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
-    if (this.cfg.profiles) await this.startControlServer();
+    if (this.cfg.profiles || this.cfg.controlNode) await this.startControlServer();
     const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
       method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
     });
@@ -229,6 +265,7 @@ export class Daemon {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.hubProcess) await this.closeWithTimeout('hub process', async () => { await this.hubProcess!.stop(); });
     if (this.controlApp) await this.closeWithTimeout('control app', () => this.controlApp!.close());
     if (this.browserApp) await this.closeWithTimeout('browser app', () => this.browserApp!.close());
     if (this.browserDriver) await this.closeWithTimeout('browser driver', () => this.browserDriver!.close());

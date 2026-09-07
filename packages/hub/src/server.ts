@@ -6,6 +6,7 @@ import fastifyStatic from '@fastify/static';
 import type { BrowserRequesterKind, BrowserStatus, HubState, Job, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier, VideoPayload } from '@agenthub/shared';
 import { PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
+import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
@@ -66,6 +67,8 @@ const DEFAULT_MEMORY_ROOT = 'data/memory';
 /** Cap on an uploaded clip. A 15s 1080p MiniMax-H3 render is a few tens of MB. */
 const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const DEFAULT_BRIEFING_TIME = '08:00';
+/** How long the answered `/api/controlnode` waits before this hub stops itself. */
+const DEFAULT_SWITCH_STOP_DELAY_MS = 2000;
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
 
 export interface AssistantOptions {
@@ -104,6 +107,21 @@ export interface HubOptions {
   external?: ExternalOptions;
   /** Video slot knobs: how long a node is passed over after a failed swap, and the clock that times it. */
   video?: { cooldownMs?: number; now?: () => number };
+  /**
+   * Present when this hub runs on a control node, which is what enables `/api/controlnode` (PRD
+   * §4.2). `dataRoot` is the directory holding everything the hub owns; `name` is the node this hub
+   * is running on, so it can't be offered as its own switch target.
+   */
+  controlNode?: {
+    dataRoot: string;
+    name?: string;
+    /** The rsync argv template (`{from}`, `{host}`, `{dataRoot}`). */
+    rsync?: string[];
+    /** Replaces rsync entirely; tests inject a local copy. */
+    sync?: SyncFn;
+    /** How long the answered switch waits before this hub stops itself. */
+    stopDelayMs?: number;
+  };
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -152,6 +170,20 @@ export function createHub(opts: HubOptions = {}): Hub {
     const job = queue.get(jobId);
     return job?.type === 'video-gen' && job.status === 'running';
   });
+  // Only a hub told where its data root is can hand it over; without the option the switch routes
+  // answer 501 and nothing else in the hub changes.
+  const controlSwitch = opts.controlNode
+    ? new ControlSwitch({
+        db, registry, dataRoot: opts.controlNode.dataRoot,
+        ...(opts.controlNode.name ? { self: opts.controlNode.name } : {}),
+        ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
+        ...(opts.controlNode.sync ? { sync: opts.controlNode.sync } : {}),
+        ...(opts.controlNode.rsync ? { rsyncCmd: opts.controlNode.rsync } : {}),
+        // A clip in flight lives on a node's GPU and lands as an artifact on *this* hub's disk; a
+        // switch mid-render would lose it, so the switch waits rather than racing the job.
+        videoRunning: () => queue.list().some((j) => j.type === 'video-gen' && j.status === 'running'),
+      })
+    : null;
   const app = Fastify();
 
   // Finished clips arrive as raw bytes on POST /api/jobs/:id/artifact; Fastify's 1MB default body
@@ -194,6 +226,20 @@ export function createHub(opts: HubOptions = {}): Hub {
       return reply.code(401).send({ error: 'unauthorized' });
     });
   }
+  // Once a switch is under way this hub's data root is being copied elsewhere: anything that writes
+  // now would land in a database the new hub will never see. Reads keep working (the UI stays up
+  // until the process stops), and so does the switch route itself, which reports the 409.
+  if (controlSwitch) {
+    app.addHook('onRequest', async (req, reply) => {
+      if (!controlSwitch.switching || req.method === 'GET' || req.method === 'HEAD') return;
+      const route = req.routeOptions?.url;
+      if (route === '/api' || route?.startsWith('/api/')) {
+        return reply.code(503).send({ error: 'control-node switch in progress' });
+      }
+      return;
+    });
+  }
+
   /** A cookie is only marked Secure when the request actually arrived over TLS, directly or via a proxy. */
   const isHttps = (req: FastifyRequest): boolean =>
     req.protocol === 'https' || req.headers['x-forwarded-proto'] === 'https';
@@ -763,6 +809,44 @@ export function createHub(opts: HubOptions = {}): Hub {
     return toolAudit.list(limit);
   });
 
+  // --- control node --------------------------------------------------------------
+
+  /**
+   * Answers the switch, then stops this hub: the reply has to reach the owner (and the Telegram
+   * chat) before the process that would send it goes away, and the new hub is already healthy by
+   * the time `switchTo` resolves, so the gap is only a handover, not an outage.
+   */
+  const scheduleSelfStop = (): number => {
+    const delay = opts.controlNode?.stopDelayMs ?? DEFAULT_SWITCH_STOP_DELAY_MS;
+    const timer = setTimeout(() => {
+      hub.stop().catch((err) => app.log.error(`stopping after the control-node switch failed: ${(err as Error).message}`));
+    }, delay);
+    timer.unref?.();
+    return delay;
+  };
+
+  const runSwitch = async (node: string): Promise<{ switchedTo: string; hubUrl: string; stoppingInMs: number }> => {
+    const result = await controlSwitch!.switchTo(node);
+    return { ...result, stoppingInMs: scheduleSelfStop() };
+  };
+
+  app.get('/api/controlnode', async (req, reply) => {
+    if (!controlSwitch) return reply.code(501).send({ error: 'control-node switching is not configured' });
+    return controlSwitch.candidates();
+  });
+
+  app.post('/api/controlnode', async (req, reply) => {
+    if (!controlSwitch) return reply.code(501).send({ error: 'control-node switching is not configured' });
+    const { node } = (req.body ?? {}) as { node?: unknown };
+    if (typeof node !== 'string' || !node) return reply.code(400).send({ error: 'node required' });
+    try {
+      return await runSwitch(node);
+    } catch (err) {
+      if (err instanceof SwitchError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
+
   // --- assistant ---------------------------------------------------------------
 
   /**
@@ -787,6 +871,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const router = new CommandRouter({
       port, ownerChatId, assistant, service: projects, master, planner, registry, gate,
       enqueueVideo: (payload) => enqueueVideo(payload, TELEGRAM_PROJECT),
+      ...(controlSwitch ? { controlNodes: { list: () => controlSwitch.candidates(), switchTo: runSwitch } } : {}),
     });
     const scheduler = new Scheduler({
       clock, port, ownerChatId, master, service: projects, assistant,
@@ -815,6 +900,9 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     return handle;
   };
+
+  /** Set by the first `stop()`; every later call awaits the same shutdown rather than repeating it. */
+  let stopping: Promise<void> | undefined;
 
   const assistantReady = opts.assistant ? initAssistant(opts.assistant) : null;
   // Nothing awaits the wiring until the first request, so a failure would otherwise surface as an
@@ -928,23 +1016,29 @@ export function createHub(opts: HubOptions = {}): Hub {
     return { items: await handle.planner.list(which) };
   });
 
-  return {
+  const hub: Hub = {
     app, db, registry, queue, gateway, runtime, transcript, projects, master, leases, browser, resources,
     assistant() {
       if (!assistantReady) return Promise.reject(new Error('assistant not configured'));
       return assistantReady;
     },
-    async stop(opts) {
-      clearInterval(sweeper);
-      screencast.stop();
-      // A failed wiring has already been logged; stopping must still tear the rest of the hub down.
-      const handle = await assistantReady?.catch(() => null);
-      handle?.scheduler?.stop();
-      await handle?.port?.stop();
-      await projects.stop(opts);
-      await Promise.all([...refreshes]);
-      await app.close();
-      db.close();
+    // Idempotent: after a control-node switch the hub stops itself, and the owner's own shutdown
+    // path (or a test's cleanup) may well call this again.
+    stop(opts) {
+      stopping ??= (async () => {
+        clearInterval(sweeper);
+        screencast.stop();
+        // A failed wiring has already been logged; stopping must still tear the rest of the hub down.
+        const handle = await assistantReady?.catch(() => null);
+        handle?.scheduler?.stop();
+        await handle?.port?.stop();
+        await projects.stop(opts);
+        await Promise.all([...refreshes]);
+        await app.close();
+        db.close();
+      })();
+      return stopping;
     },
   };
+  return hub;
 }

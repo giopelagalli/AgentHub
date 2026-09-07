@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import type { JobType, NodeInfo, NodeRegistration, ServingEndpoint } from '@agenthub/shared';
 
-interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; }
+interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; control_node: number; }
 
 const toInfo = (r: Row): NodeInfo => ({
   id: r.id, name: r.name, arch: r.arch, status: r.status,
@@ -11,6 +11,7 @@ const toInfo = (r: Row): NodeInfo => ({
   profiles: JSON.parse(r.profiles_json) as string[],
   video: r.video === 1,
   ...(r.control_json ? { control: JSON.parse(r.control_json) as { url: string } } : {}),
+  controlNode: r.control_node === 1,
 });
 
 export class NodeRegistry {
@@ -20,16 +21,16 @@ export class NodeRegistry {
   register(reg: NodeRegistration, now = Date.now()): NodeInfo {
     this.db.prepare(`
       INSERT INTO nodes (name, arch, endpoints_json, status, last_heartbeat, job_types_json, browser_json,
-                         profiles_json, video, control_json)
-        VALUES (?,?,?, 'online', ?, ?, ?, ?, ?, ?)
+                         profiles_json, video, control_json, control_node)
+        VALUES (?,?,?, 'online', ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET arch=excluded.arch, endpoints_json=excluded.endpoints_json,
         status='online', last_heartbeat=excluded.last_heartbeat, job_types_json=excluded.job_types_json,
         browser_json=excluded.browser_json, profiles_json=excluded.profiles_json, video=excluded.video,
-        control_json=excluded.control_json
+        control_json=excluded.control_json, control_node=excluded.control_node
     `).run(reg.name, reg.arch, JSON.stringify(reg.endpoints), now, JSON.stringify(reg.jobTypes ?? []),
            reg.browser ? JSON.stringify(reg.browser) : null,
            JSON.stringify(reg.profiles ?? []), reg.video ? 1 : 0,
-           reg.control ? JSON.stringify(reg.control) : null);
+           reg.control ? JSON.stringify(reg.control) : null, reg.controlNode ? 1 : 0);
     return this.byName(reg.name)!;
   }
 

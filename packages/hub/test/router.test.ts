@@ -234,10 +234,10 @@ describe('CommandRouter', () => {
     expect(port.sent[0]!.msg.text).toBe('usage: /video <prompt>');
   });
 
-  it('/controlnode still replies that it is coming in Phase 6', async () => {
+  it('/controlnode says so when this hub cannot switch control nodes', async () => {
     const { port } = await setup();
     await deliver(port, OWNER, '/controlnode');
-    expect(port.sent[0]!.msg.text).toBe('coming in Phase 6');
+    expect(port.sent[0]!.msg.text).toBe('Control-node switching is not configured on this hub.');
   });
 
   it('/new creates a project and replies twice, the second once the first turn completes', async () => {

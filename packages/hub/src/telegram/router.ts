@@ -19,7 +19,7 @@ const HELP_TEXT = [
   '/new <title>: <intent> — start a new project',
   '/nodes — cluster health',
   '/video <prompt> — queue a video generation job; the clip arrives when it is done',
-  '/controlnode — coming in Phase 6',
+  '/controlnode [name] — list the control nodes, or move the hub to one',
   '/help — this message',
   '',
   'Anything else is sent to the assistant.',
@@ -42,6 +42,13 @@ export interface CommandRouterDeps {
   gate: ConfirmationGate;
   /** Enqueues a `video-gen` job for `/video`; absent, the command says video isn't configured. */
   enqueueVideo?: (payload: VideoPayload) => Job;
+  /** Drives `/controlnode`; absent, the command says switching isn't configured on this hub. */
+  controlNodes?: ControlNodeDeps;
+}
+
+export interface ControlNodeDeps {
+  list: () => { current: string | null; candidates: { name: string; status: 'online' | 'offline'; current: boolean }[] };
+  switchTo: (node: string) => Promise<{ switchedTo: string; hubUrl: string }>;
 }
 
 /**
@@ -140,7 +147,7 @@ export class CommandRouter {
     if (cmd === '/new') return this.handleNew(rest);
     if (cmd === '/nodes') return [formatNodes(this.deps.registry.all(), {})];
     if (cmd === '/video') return [this.handleVideo(rest)];
-    if (cmd === '/controlnode') return [{ text: 'coming in Phase 6' }];
+    if (cmd === '/controlnode') return [this.handleControlNode(rest)];
     return [{ text: HELP_TEXT }];
   }
 
@@ -156,6 +163,31 @@ export class CommandRouter {
     if (!payload) return { text: 'usage: /video <prompt>' };
     const job = this.deps.enqueueVideo(payload);
     return { text: `Queued video job #${job.id}: ${payload.prompt}` };
+  }
+
+  /**
+   * Listing is harmless; switching is not — it moves the hub to another machine and takes this
+   * process down with it — so a named node only produces the confirmation buttons, and the switch
+   * itself runs from the callback.
+   */
+  private handleControlNode(rest: string): OutgoingMessage {
+    const deps = this.deps.controlNodes;
+    if (!deps) return { text: 'Control-node switching is not configured on this hub.' };
+    const { current, candidates } = deps.list();
+    const wanted = rest.trim();
+    if (!wanted) {
+      const lines = candidates.length
+        ? candidates.map((c) => `${c.current ? '*' : '-'} ${c.name} (${c.status})`)
+        : ['(no control-node candidates registered)'];
+      return { text: [`Control node: ${current ?? 'unknown'}`, ...lines, '', 'Switch with /controlnode <name>'].join('\n') };
+    }
+    if (!candidates.some((c) => c.name === wanted)) {
+      return { text: `${wanted} is not a control-node candidate.` };
+    }
+    return {
+      text: `Move the hub to ${wanted}? This stops the hub here once the new one is up.`,
+      buttons: [[{ text: 'Confirm', data: `cn:go:${wanted}` }, { text: 'Cancel', data: 'cn:cancel' }]],
+    };
   }
 
   private async handlePlanner(which: PlannerList, rest: string): Promise<OutgoingMessage[]> {
@@ -212,6 +244,17 @@ export class CommandRouter {
       else if (action === 'resume') await this.deps.service.resume(slug);
       else await this.deps.service.runTurn(slug);
       return [formatProjects(await this.deps.service.briefings())];
+    }
+    if (data === 'cn:cancel') return [{ text: 'Cancelled.' }];
+    if (data.startsWith('cn:go:')) {
+      const node = data.slice('cn:go:'.length);
+      if (!this.deps.controlNodes) return [{ text: 'Control-node switching is not configured on this hub.' }];
+      try {
+        const { switchedTo, hubUrl } = await this.deps.controlNodes.switchTo(node);
+        return [{ text: `Hub moved to ${switchedTo}: ${hubUrl}` }];
+      } catch (err) {
+        return [{ text: `Switch to ${node} failed: ${(err as Error).message}` }];
+      }
     }
     if (data.startsWith('confirm:')) {
       const id = data.slice('confirm:'.length);

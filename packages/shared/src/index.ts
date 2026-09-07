@@ -24,6 +24,8 @@ export interface NodeRegistration {
   video?: boolean;
   /** Present only when the node runs a control server; `url` is its `/control/*` base. */
   control?: { url: string };
+  /** True when the node can host the hub itself — a control-node switch target (spec §4.2). */
+  controlNode?: boolean;
 }
 
 export interface NodeInfo extends NodeRegistration {

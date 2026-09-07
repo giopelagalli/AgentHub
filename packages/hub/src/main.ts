@@ -73,6 +73,12 @@ const external: ExternalOptions = {
     : {}),
 };
 
+// The control-node switch needs to know what to copy and who this node is; without `DATA_ROOT` the
+// hub still runs, it just can't hand itself over (`/api/controlnode` answers 501).
+const dataRoot = process.env.DATA_ROOT;
+const controlNodeName = process.env.CONTROL_NODE_NAME;
+if (!dataRoot) console.log('[hub] DATA_ROOT not set; control-node switching is disabled');
+
 const hub = createHub({
   dbPath: process.env.HUB_DB ?? 'data/hub.db',
   projectsRoot: process.env.PROJECTS_ROOT ?? 'data/projects',
@@ -80,6 +86,7 @@ const hub = createHub({
   assistant,
   external,
   ...(auth ? { auth } : {}),
+  ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
 });
 const port = Number(process.env.PORT ?? 4000);
 hub.app.listen({ port, host: '0.0.0.0' }).then((addr) => console.log(`[hub] listening at ${addr}`)).catch((err) => {

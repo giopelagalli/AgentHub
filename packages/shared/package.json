@@ -5,6 +5,7 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./shell": "./src/shell-task.ts"
+    "./shell": "./src/shell-task.ts",
+    "./data-stamp": "./src/data-stamp.ts"
   }
 }

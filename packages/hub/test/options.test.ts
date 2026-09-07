@@ -1,0 +1,61 @@
+import { describe, it, expect } from 'vitest';
+import { join } from 'node:path';
+import { optionsFromEnv } from '../src/options.js';
+
+/**
+ * The environment → `createHub` mapping `main.ts` is built on. It matters on its own because a
+ * control-node switch hands the new hub an environment and nothing else: whatever this function
+ * fails to read is a capability the hub silently loses when it moves.
+ */
+const quiet = () => {};
+
+describe('optionsFromEnv', () => {
+  it('roots everything the hub writes under DATA_ROOT', () => {
+    const { options } = optionsFromEnv({ DATA_ROOT: '/srv/agenthub', CONTROL_NODE_NAME: 'strix' }, quiet);
+    expect(options.dbPath).toBe(join('/srv/agenthub', 'hub.db'));
+    expect(options.projectsRoot).toBe(join('/srv/agenthub', 'projects'));
+    expect(options.assistant?.memoryRoot).toBe(join('/srv/agenthub', 'memory'));
+    // Browser recordings included: a switched hub must not leave the owner's timelines behind.
+    expect(options.browser?.recordingsRoot).toBe(join('/srv/agenthub', 'media', 'browser'));
+    expect(options.controlNode).toEqual({ dataRoot: '/srv/agenthub', name: 'strix' });
+  });
+
+  it('lets the explicit roots win, and disables switching without DATA_ROOT', () => {
+    const { options } = optionsFromEnv({ HUB_DB: '/tmp/x.db', PROJECTS_ROOT: '/tmp/p', MEMORY_ROOT: '/tmp/m' }, quiet);
+    expect(options.dbPath).toBe('/tmp/x.db');
+    expect(options.projectsRoot).toBe('/tmp/p');
+    expect(options.assistant?.memoryRoot).toBe('/tmp/m');
+    expect(options.controlNode).toBeUndefined();
+    expect(options.browser).toBeUndefined();
+  });
+
+  it('binds 0.0.0.0 by default and the address HUB_HOST names otherwise', () => {
+    expect(optionsFromEnv({}, quiet)).toMatchObject({ host: '0.0.0.0', port: 4000 });
+    expect(optionsFromEnv({ HUB_HOST: '100.101.102.103', PORT: '4100' }, quiet))
+      .toMatchObject({ host: '100.101.102.103', port: 4100 });
+  });
+
+  it('turns auth on with a password and reads the proxy trust in both forms', () => {
+    const open = optionsFromEnv({}, quiet);
+    expect(open.options.auth).toBeUndefined();
+
+    const guarded = optionsFromEnv({ HUB_PASSWORD: 'p', HUB_SESSION_SECRET: 's', DAEMON_TOKEN: 'd', TRUST_PROXY: '1' }, quiet);
+    expect(guarded.options.auth).toEqual({ password: 'p', sessionSecret: 's', daemonToken: 'd', trustProxy: true });
+    expect(optionsFromEnv({ HUB_PASSWORD: 'p', TRUST_PROXY: '100.64.0.1' }, quiet).options.auth?.trustProxy).toBe('100.64.0.1');
+    expect(optionsFromEnv({ HUB_PASSWORD: 'p' }, quiet).options.auth?.trustProxy).toBeUndefined();
+  });
+
+  it('reports the telegram pair only when both halves are a private chat', () => {
+    expect(optionsFromEnv({ TELEGRAM_BOT_TOKEN: 't' }, quiet).telegram).toBeNull();
+    expect(optionsFromEnv({ TELEGRAM_BOT_TOKEN: 't', TELEGRAM_OWNER_CHAT_ID: '-100' }, quiet).telegram).toBeNull();
+    expect(optionsFromEnv({ TELEGRAM_BOT_TOKEN: 't', TELEGRAM_OWNER_CHAT_ID: '42' }, quiet).telegram)
+      .toEqual({ token: 't', ownerChatId: '42' });
+  });
+
+  it('keeps an external tool only when its key is present and its provider is known', () => {
+    const { options } = optionsFromEnv({ XAI_API_KEY: 'x', SEARCH_API_KEY: 'k', SEARCH_PROVIDER: 'tavily' }, quiet);
+    expect(options.external).toMatchObject({ xaiKey: 'x', search: { provider: 'tavily', key: 'k' } });
+    expect(optionsFromEnv({ SEARCH_API_KEY: 'k', SEARCH_PROVIDER: 'nope' }, quiet).options.external?.search).toBeUndefined();
+    expect(optionsFromEnv({}, quiet).options.external).toEqual({});
+  });
+});

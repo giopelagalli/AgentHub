@@ -113,6 +113,29 @@ export interface ProjectManifest {
   index: string[]; // relative paths of bundle files
 }
 
+export type BrowserRequesterKind = 'owner' | 'orchestrator' | 'subagent';
+
+/** Who wants the browser. `id` identifies the requester across polls (agent id, or `owner`). */
+export interface BrowserRequester {
+  kind: BrowserRequesterKind;
+  id: string;
+  project?: string;
+}
+
+export interface BrowserLease {
+  leaseId: string;
+  requester: BrowserRequester;
+  expiresAt: number;
+}
+
+/** The browser room as the UI sees it: who holds the lease, who is waiting, which node it runs on. */
+export interface BrowserStatus {
+  holder: BrowserLease | null;
+  queue: BrowserRequester[];
+  /** Name of the online node advertising the browser capability, null when none is up. */
+  node: string | null;
+}
+
 export interface HubState {
   nodes: NodeInfo[];
   agents: { id: number; name: string; tier: Tier; systemPrompt: string }[];
@@ -120,8 +143,13 @@ export interface HubState {
   streams: Record<string, number>;
   /** Optional so a hub (or a UI) built before project bundles still satisfies the type. */
   projects?: ProjectManifest[];
+  /** Optional for the same reason: a UI built before the browser lease still satisfies the type. */
+  browser?: BrowserStatus;
 }
 
 export type WsMessage =
   | { type: 'state'; state: HubState }
-  | { type: 'agent-busy'; agentId: number; busy: boolean };
+  | { type: 'agent-busy'; agentId: number; busy: boolean }
+  // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
+  // clients are not looking at the screening room.
+  | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number };

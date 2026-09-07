@@ -2,7 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
 import { PRIORITY_RANK } from '@agenthub/shared';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
@@ -16,6 +16,9 @@ import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
+import { LeaseManager, type Requester } from './browser/lease.js';
+import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
+import { Recorder } from './browser/recorder.js';
 import { Assistant } from './assistant/assistant.js';
 import { ConfirmationGate } from './assistant/confirm.js';
 import { MemoryStore } from './assistant/memory.js';
@@ -43,6 +46,7 @@ export interface AssistantHandle {
 export interface Hub {
   app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
   runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
+  leases: LeaseManager; browser: BrowserProxy;
   /** Resolves once the assistant is wired; rejects when no `assistant` option was given. */
   assistant(): Promise<AssistantHandle>;
   stop(opts?: StopOptions): Promise<void>;
@@ -52,6 +56,10 @@ const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
+const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
+// Lease ids are uuids the hub minted; anything else in the recordings path is a client making one up.
+const LEASE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';
 const DEFAULT_BRIEFING_TIME = '08:00';
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
 
@@ -65,6 +73,15 @@ export interface AssistantOptions {
   clock?: Clock;
 }
 
+export interface BrowserOptions {
+  /** Lease lifetime; every action renews it. */
+  ttlMs?: number;
+  /** Where screenshot timelines land: `<root>/<leaseId>/`. */
+  recordingsRoot?: string;
+  /** Screencast poll interval; floored at 500ms (≤ 2 fps) by the proxy. */
+  screencastIntervalMs?: number;
+}
+
 export interface HubOptions {
   dbPath?: string;
   staleMs?: number;
@@ -73,6 +90,7 @@ export interface HubOptions {
   projectsRoot?: string;
   tickIntervalMs?: number;
   assistant?: AssistantOptions;
+  browser?: BrowserOptions;
 }
 
 export function createHub(opts: HubOptions = {}): Hub {
@@ -92,6 +110,9 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
+  const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}) });
+  const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
+  const browser = new BrowserProxy({ registry, leases, recorder });
   const app = Fastify();
 
   if (opts.uiDist && existsSync(opts.uiDist)) {
@@ -102,17 +123,36 @@ export function createHub(opts: HubOptions = {}): Hub {
   // whenever a project changes rather than read from disk per frame.
   let projectList: ProjectManifest[] = [];
 
-  const getState = (): HubState => ({
-    nodes: registry.all(),
-    agents: runtime.listAgents(),
-    jobs: queue.list(),
-    streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
-    projects: projectList,
+  const browserStatus = (nodes = registry.all()): BrowserStatus => ({
+    ...leases.status(),
+    node: nodes.find((n) => n.status === 'online' && n.browser?.url)?.name ?? null,
   });
+
+  const getState = (): HubState => {
+    const nodes = registry.all();
+    return {
+      nodes,
+      agents: runtime.listAgents(),
+      jobs: queue.list(),
+      streams: Object.fromEntries(TIERS.map((tier) => [tier, gateway.activeStreams(tier)])),
+      projects: projectList,
+      browser: browserStatus(nodes),
+    };
+  };
 
   // In-flight busy agents, so a socket that connects mid-stream can be caught up.
   const busyAgents = new Set<number>();
-  const { broadcastState, broadcast } = registerWs(app, getState, () => [...busyAgents]);
+  // Frames are only produced while somebody is watching the screening room, so the browser node is
+  // left alone until the first `subscribe` and stops being polled after the last unsubscribe/close.
+  const { broadcastState, broadcast, broadcastTo } = registerWs(app, getState, () => [...busyAgents], {
+    onTopicCount: (topic, count) => {
+      if (topic !== 'browser') return;
+      if (count > 0) screencast.start(); else screencast.stop();
+    },
+  });
+  const screencast = browser.screencast(opts.browser?.screencastIntervalMs);
+  screencast.onFrame((frame) => broadcastTo('browser', { type: 'browser-frame', ...frame }));
+  leases.onChange(() => broadcastState());
 
   // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
   const refreshes = new Set<Promise<void>>();
@@ -159,7 +199,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
   };
 
-  const sweeper = setInterval(() => { sweepAndRequeue(); broadcastState(); }, opts.sweepIntervalMs ?? 5000);
+  const sweeper = setInterval(() => { sweepAndRequeue(); leases.expire(); broadcastState(); }, opts.sweepIntervalMs ?? 5000);
   sweeper.unref();
 
   app.post('/api/nodes/register', async (req) => {
@@ -390,6 +430,64 @@ export function createHub(opts: HubOptions = {}): Hub {
     return result;
   });
 
+  // --- browser lease ------------------------------------------------------------
+
+  /** Reads `{kind,id,project}` off a lease request; replies 400 and returns null when it's malformed. */
+  const parseRequester = (body: unknown, reply: FastifyReply, kind?: BrowserRequesterKind): Requester | null => {
+    const b = (body ?? {}) as Partial<{ kind: BrowserRequesterKind; id: string; project: string }>;
+    const wanted = kind ?? b.kind;
+    if (wanted === undefined || !REQUESTER_KINDS.includes(wanted)
+      || typeof b.id !== 'string' || !b.id
+      || (b.project !== undefined && typeof b.project !== 'string')) {
+      reply.code(400).send({ error: 'invalid lease request' });
+      return null;
+    }
+    return { kind: wanted, id: b.id, ...(b.project ? { project: b.project } : {}) };
+  };
+
+  app.get('/api/browser', async () => {
+    leases.expire();
+    return browserStatus();
+  });
+
+  app.post('/api/browser/lease', async (req, reply) => {
+    const requester = parseRequester(req.body, reply);
+    if (!requester) return reply;
+    return leases.acquire(requester);
+  });
+
+  // The owner never queues: this preempts whoever is holding the browser, and their next action 409s.
+  app.post('/api/browser/preempt', async (req, reply) => {
+    const requester = parseRequester(req.body, reply, 'owner');
+    if (!requester) return reply;
+    return leases.acquire(requester);
+  });
+
+  app.delete('/api/browser/lease/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    if (!leases.release(id)) return reply.code(404).send({ error: 'not the lease holder' });
+    return { released: true };
+  });
+
+  app.post('/api/browser/act', async (req, reply) => {
+    const body = req.body as Partial<{ leaseId: string; op: BrowserOp; args: Record<string, unknown> }> | undefined;
+    if (!body || typeof body.leaseId !== 'string' || body.op === undefined || !BROWSER_OPS.includes(body.op)) {
+      return reply.code(400).send({ error: 'invalid browser action' });
+    }
+    try {
+      return await browser.act(body.leaseId, { op: body.op, ...(body.args ? { args: body.args } : {}) });
+    } catch (err) {
+      if (err instanceof BrowserError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  app.get('/api/browser/recordings/:leaseId', async (req, reply) => {
+    const { leaseId } = req.params as { leaseId: string };
+    if (!LEASE_ID_RE.test(leaseId)) return reply.code(400).send({ error: 'invalid lease id' });
+    return { leaseId, actions: await recorder.list(leaseId) };
+  });
+
   // --- assistant ---------------------------------------------------------------
 
   /**
@@ -551,13 +649,14 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
 
   return {
-    app, db, registry, queue, gateway, runtime, transcript, projects, master,
+    app, db, registry, queue, gateway, runtime, transcript, projects, master, leases, browser,
     assistant() {
       if (!assistantReady) return Promise.reject(new Error('assistant not configured'));
       return assistantReady;
     },
     async stop(opts) {
       clearInterval(sweeper);
+      screencast.stop();
       // A failed wiring has already been logged; stopping must still tear the rest of the hub down.
       const handle = await assistantReady?.catch(() => null);
       handle?.scheduler?.stop();

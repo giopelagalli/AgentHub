@@ -12,7 +12,7 @@ import { ModelGateway } from './gateway.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript } from './agents/transcript.js';
-import { ProjectService } from './projects/service.js';
+import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
@@ -21,7 +21,7 @@ import { registerWs } from './ws.js';
 export interface Hub {
   app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
   runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
-  stop(): Promise<void>;
+  stop(opts?: StopOptions): Promise<void>;
 }
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
@@ -345,9 +345,9 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   return {
     app, db, registry, queue, gateway, runtime, transcript, projects, master,
-    async stop() {
+    async stop(opts) {
       clearInterval(sweeper);
-      await projects.stop();
+      await projects.stop(opts);
       await Promise.all([...refreshes]);
       await app.close();
       db.close();

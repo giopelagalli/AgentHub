@@ -15,4 +15,17 @@ hub.app.listen({ port, host: '0.0.0.0' }).then((addr) => console.log(`[hub] list
   console.error('[hub] failed to start:', err);
   process.exit(1);
 });
-for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => hub.stop().then(() => process.exit(0)));
+const FORCE_EXIT_MS = 10_000;
+
+for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(sig, () => {
+    // Safety net, not the happy path: unref'd so a clean, timely stop() lets the process exit on its
+    // own; if stop() hangs (a turn that won't unwind), this fires and forces the exit anyway.
+    const forceExit = setTimeout(() => {
+      console.error(`[hub] stop() did not finish within ${FORCE_EXIT_MS}ms; forcing exit`);
+      process.exit(1);
+    }, FORCE_EXIT_MS);
+    forceExit.unref();
+    hub.stop().then(() => process.exit(0));
+  });
+}

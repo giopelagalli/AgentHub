@@ -11,6 +11,8 @@ import { ProjectOrchestrator } from './orchestrator.js';
 import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
 
 const DEFAULT_TICK_MS = 15 * 60_000;
+const DEFAULT_TURN_TIMEOUT_MS = 20 * 60_000;
+const DEFAULT_STOP_GRACE_MS = 5000;
 
 export interface ProjectServiceDeps {
   root: string;
@@ -20,6 +22,13 @@ export interface ProjectServiceDeps {
   registry: NodeRegistry;
   transcript: Transcript;
   tickIntervalMs?: number;
+  /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
+  turnTimeoutMs?: number;
+}
+
+export interface StopOptions {
+  /** How long to let in-flight turns finish on their own before aborting them. Defaults to 5s. */
+  graceMs?: number;
 }
 
 export interface ProjectInit {
@@ -50,15 +59,19 @@ export class ProjectService {
   private orchestrators = new Map<string, ProjectOrchestrator>();
   /** Per-slug promise chain: the tail each new turn for that slug waits behind. */
   private chains = new Map<string, Promise<unknown>>();
+  /** One controller per in-flight turn, keyed by slug — `stop()` aborts whatever's still running. */
+  private turnControllers = new Map<string, AbortController>();
   private listeners: BriefingListener[] = [];
   private timer: NodeJS.Timeout | undefined;
   private tickInFlight: Promise<void> = Promise.resolve();
   private ticking = false;
   private stopped = false;
   private readonly tickIntervalMs: number;
+  private readonly turnTimeoutMs: number;
 
   constructor(private deps: ProjectServiceDeps) {
     this.tickIntervalMs = deps.tickIntervalMs ?? DEFAULT_TICK_MS;
+    this.turnTimeoutMs = deps.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
   }
 
   /** Notified whenever a turn lands a briefing. Phase 4 hangs owner alerts off this. */
@@ -125,16 +138,35 @@ export class ProjectService {
    * Runs one orchestrator turn. Turns for one project are serialized — a second caller (the owner
    * while the scheduler is mid-tick, say) queues behind the first rather than racing it through the
    * same bundle and git index.
+   *
+   * The turn owns an AbortController for its whole lifetime: `stop()` can abort it on shutdown, and
+   * it self-aborts if it outruns `turnTimeoutMs`. A caller-supplied `signal` is merged in — aborting
+   * either one aborts the turn.
    */
   runTurn(slug: string, instruction?: string, signal?: AbortSignal): Promise<Briefing> {
     return this.serialize(slug, async () => {
-      const orchestrator = await this.orchestratorFor(slug);
-      const briefing = await orchestrator.turn({
-        ...(instruction ? { instruction } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      for (const listener of this.listeners) listener(briefing);
-      return briefing;
+      const controller = new AbortController();
+      this.turnControllers.set(slug, controller);
+      const onCallerAbort = () => controller.abort();
+      if (signal) {
+        if (signal.aborted) controller.abort();
+        else signal.addEventListener('abort', onCallerAbort);
+      }
+      const deadline = setTimeout(() => controller.abort(), this.turnTimeoutMs);
+      deadline.unref?.();
+      try {
+        const orchestrator = await this.orchestratorFor(slug);
+        const briefing = await orchestrator.turn({
+          ...(instruction ? { instruction } : {}),
+          signal: controller.signal,
+        });
+        for (const listener of this.listeners) listener(briefing);
+        return briefing;
+      } finally {
+        clearTimeout(deadline);
+        signal?.removeEventListener('abort', onCallerAbort);
+        if (this.turnControllers.get(slug) === controller) this.turnControllers.delete(slug);
+      }
     });
   }
 
@@ -162,12 +194,28 @@ export class ProjectService {
     this.timer.unref();
   }
 
-  /** Stops scheduling and waits for the in-flight tick and every queued turn to finish. */
-  async stop(): Promise<void> {
+  /**
+   * Stops scheduling and waits for the in-flight tick and every queued turn to finish. Turns get
+   * `graceMs` (default 5s) to end on their own before their controllers are aborted — at which point
+   * `stop()` still waits for the aborted turns to actually unwind (tool calls to notice the signal,
+   * child processes to die) rather than returning out from under them.
+   */
+  async stop(opts: StopOptions = {}): Promise<void> {
+    const graceMs = opts.graceMs ?? DEFAULT_STOP_GRACE_MS;
     this.stopped = true;
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
     await this.tickInFlight;
-    await Promise.all([...this.chains.values()]);
+
+    const pending = Promise.all([...this.chains.values()]);
+    const timedOut = Symbol('grace-timeout');
+    const graceTimer = new Promise<typeof timedOut>((resolve) => {
+      const t = setTimeout(() => resolve(timedOut), graceMs);
+      t.unref?.();
+    });
+    if ((await Promise.race([pending.then(() => undefined), graceTimer])) === timedOut) {
+      for (const controller of this.turnControllers.values()) controller.abort();
+      await pending;
+    }
   }
 
   private async tick(): Promise<void> {

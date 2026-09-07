@@ -18,6 +18,12 @@ export interface NodeRegistration {
   jobTypes?: JobType[];
   /** Present only on a node running the browser capability; `url` is its local browser server. */
   browser?: { url: string };
+  /** Serving profiles this node can switch between (spec §4.3); empty when it has none. */
+  profiles?: string[];
+  /** True when the node has a local ComfyUI configured for `video-gen` jobs. */
+  video?: boolean;
+  /** Present only when the node runs a control server; `url` is its `/control/*` base. */
+  control?: { url: string };
 }
 
 export interface NodeInfo extends NodeRegistration {

@@ -51,3 +51,73 @@ ComfyUI + MiniMax-H3 (spec §11) — video jobs only ever land here. `advertiseH
 must be the Spark's own tailnet name (see ../tailscale.md), since the hub
 tells the gateway to route agent traffic straight to it — not the control
 node's name, and not `127.0.0.1`.
+
+## Video generation (ComfyUI + MiniMax-H3)
+
+The `video-gen` job type is executed by the daemon against a ComfyUI instance
+running on the Spark itself. Add to `configs/spark.yaml`:
+
+    video:
+      comfyUrl: http://127.0.0.1:8188
+      workflow: /home/<you>/AgentHub/deploy/spark/minimax-h3-t2v.json
+
+`comfyUrl` may also come from the `COMFY_URL` env var. `workflow` defaults to
+the repo's own `deploy/spark/minimax-h3-t2v.json`.
+
+### Workflow template
+
+`minimax-h3-t2v.json` is a ComfyUI **API-format** workflow (the "Save (API
+format)" export, node-id keyed — not the editor's graph format) with four
+nodes: loader → text encode → sampler → SaveVideo. The `_meta.title` of each
+node documents its role. The daemon fills these placeholders before posting to
+`/prompt`:
+
+| placeholder      | from the job payload | note                              |
+|------------------|----------------------|-----------------------------------|
+| `{{prompt}}`     | `prompt`             | JSON-escaped                      |
+| `{{mode}}`       | `mode`               | `t2v` \| `i2v` \| `ref2v`          |
+| `{{duration}}`   | `durationSec`        | 4–15, substituted **unquoted**    |
+| `{{aspect}}`     | `aspect`             | e.g. `16:9`                       |
+| `{{resolution}}` | `resolution`         | `768p` \| `1080p`                  |
+| `{{imagePath}}`  | `imagePath`          | empty string for `t2v`            |
+
+The file is therefore not valid JSON until substituted. The `class_type` names
+are the ones this recipe assumes; match them to the H3 node pack actually
+installed on the box (`/object_info` lists them) and keep the placeholders and
+the node-id wiring as they are — the executor only cares that the final node
+produces a video output, which it downloads from `/view` into
+`<workspace>/<project>/media/video/<jobId>.mp4`.
+
+Steps/cfg (12 steps, low-res + SPAN upscale) follow the published Spark recipe;
+a 15s 1080p clip takes roughly 12 minutes.
+
+### Serving profiles (Spark exclusivity, PRD §4.3)
+
+A video job needs the worker-tier vLLM parked. The daemon exposes named
+profiles over serving entry names:
+
+    serving:
+      - name: worker-vllm
+        tier: worker
+        ...
+      - name: orchestrator-vllm
+        tier: orchestrator
+        ...
+    profiles:
+      llm: [worker-vllm, orchestrator-vllm]
+      video: [orchestrator-vllm]
+    controlPort: 8131
+
+The hub switches with `POST http://<spark>:8131/control/profile {"name":"video"}`
+carrying `Authorization: Bearer $DAEMON_TOKEN`; the daemon stops the entries
+outside the profile and starts the ones in it (both idempotent), and answers
+with the active profile. Unknown profile → 404, missing/wrong token → 401. On a
+node that also runs the browser server the control routes share its port.
+
+### License note (PRD §11)
+
+The MiniMax-H3 community license **excludes use in the US, EU, UK and South
+Korea** without separate authorization from MiniMax, and requires "MiniMax H3"
+attribution in commercial products. The owner acknowledges and owns this
+decision. The 7900XTX becomes video-eligible once Comfy-Org/ComfyUI#15314
+(RDNA3 noise) is fixed.

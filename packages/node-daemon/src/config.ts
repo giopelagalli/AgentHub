@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import type { JobType, Tier } from '@agenthub/shared';
 
-export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; }
+export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; name?: string; }
 /** Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one. */
 export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
+/** Local ComfyUI used by the `video-gen` executor. `workflow` is a path to the JSON template. */
+export interface VideoConfig { comfyUrl: string; workflow?: string; }
 export interface DaemonConfig {
   node: { name: string; arch: string };
   hub: string;
@@ -17,6 +19,11 @@ export interface DaemonConfig {
   workspaceRoot?: string;
   claimIntervalMs?: number;
   browser?: BrowserConfig;
+  /** Named sets of serving entry names the hub can switch between (spec §4.3 exclusivity). */
+  profiles?: Record<string, string[]>;
+  /** Port for the local control server; ignored when the browser server is present (shared). */
+  controlPort?: number;
+  video?: VideoConfig;
 }
 
 export function loadConfig(path: string): DaemonConfig {
@@ -33,6 +40,21 @@ export function loadConfig(path: string): DaemonConfig {
   }
   if (raw.browser !== undefined && typeof raw.browser.enabled !== 'boolean')
     throw new Error('daemon config: browser.enabled must be a boolean');
+  if (raw.profiles !== undefined) {
+    const names = new Set(serving.map((s) => s.name ?? `${s.tier}:${s.port}`));
+    for (const [profile, entries] of Object.entries(raw.profiles)) {
+      if (!Array.isArray(entries)) throw new Error(`daemon config: profile ${profile} must be a list of serving entry names`);
+      for (const entry of entries) {
+        if (!names.has(entry)) throw new Error(`daemon config: profile ${profile} references unknown serving entry ${entry}`);
+      }
+    }
+  }
+  if (raw.video !== undefined) {
+    // `COMFY_URL` is the per-node env fallback (plan Global Constraints) for the same value.
+    const comfyUrl = raw.video.comfyUrl ?? process.env.COMFY_URL;
+    if (!comfyUrl) throw new Error('daemon config: video.comfyUrl (or COMFY_URL) required');
+    raw.video = { ...raw.video, comfyUrl };
+  }
   const hasJobTypes = Array.isArray(raw.jobTypes) && raw.jobTypes.length > 0;
   if (serving.length === 0 && !raw.browser?.enabled && !hasJobTypes)
     throw new Error('daemon config: no capability (serving, jobTypes or browser) declared');

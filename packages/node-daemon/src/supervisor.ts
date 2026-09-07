@@ -15,49 +15,97 @@ function killGroup(child: ChildProcess, sig: NodeJS.Signals): void {
   try { process.kill(-child.pid, sig); } catch { /* group already gone (ESRCH) */ }
 }
 
+/** Profiles address serving entries by name; an unnamed entry falls back to `<tier>:<port>`. */
+export function entryName(s: ServingConfig): string {
+  return s.name ?? `${s.tier}:${s.port}`;
+}
+
+interface Running { cfg: ServingConfig; child: ChildProcess; stopping: boolean; }
+
 export class Supervisor {
-  private children: ChildProcess[] = [];
-  private stopping = false;
+  private running = new Map<string, Running>();
 
   constructor(private serving: ServingConfig[], private onChildExit?: (cfg: ServingConfig) => void) {}
 
+  /** Names of the entries currently supervised — the node's live profile. */
+  activeEntries(): string[] {
+    return [...this.running.keys()];
+  }
+
   async startAll(timeoutMs = 15000): Promise<void> {
-    const spawnErrors: Error[] = [];
-    for (const s of this.serving) {
-      const [cmd, ...args] = s.cmd;
-      // detached: true makes the child a process-group leader (setsid), so its pid doubles as its
-      // group id — matches job-runner/shell-task's discipline, letting stopAll below kill a whole
-      // serving tree (e.g. an `npx` wrapper and the process it execs) via a negative-pid signal.
-      const child = spawn(cmd, args, { stdio: 'inherit', detached: true });
-      child.on('error', (err) => { spawnErrors.push(err); });
-      child.on('exit', () => {
-        if (!this.stopping) this.onChildExit?.(s);
-      });
-      this.children.push(child);
-    }
     try {
-      await Promise.all(this.serving.map(async (s, i) => {
-        const child = this.children[i];
-        const deadline = Date.now() + timeoutMs;
-        for (;;) {
-          if (spawnErrors.length) throw spawnErrors[0];
-          try {
-            const res = await fetch(`http://127.0.0.1:${s.port}/v1/models`);
-            if (res.ok && child.exitCode === null && child.signalCode === null) return;
-          } catch { /* not up yet */ }
-          if (Date.now() > deadline) throw new Error(`serving process on port ${s.port} failed health check`);
-          await sleep(250);
-        }
-      }));
+      await this.spawnAndAwait(this.serving, timeoutMs);
     } catch (err) {
       await this.stopAll();
       throw err;
     }
   }
 
+  /**
+   * Starts the named entries (unknown names and already-running ones are no-ops), health-checking
+   * each the same way `startAll` does. On failure only the entries this call started are torn down —
+   * a profile switch must not take down entries that were already serving.
+   */
+  async startEntries(names: string[], timeoutMs = 15000): Promise<void> {
+    const wanted = this.serving.filter((s) => names.includes(entryName(s)) && !this.running.has(entryName(s)));
+    if (wanted.length === 0) return;
+    try {
+      await this.spawnAndAwait(wanted, timeoutMs);
+    } catch (err) {
+      await this.stopEntries(wanted.map(entryName));
+      throw err;
+    }
+  }
+
+  /** Stops the named entries. Unknown or already-stopped names are no-ops. */
+  async stopEntries(names: string[]): Promise<void> {
+    await Promise.all(names.map((name) => {
+      const rec = this.running.get(name);
+      return rec ? this.terminate(name, rec) : Promise.resolve();
+    }));
+  }
+
   async stopAll(): Promise<void> {
-    this.stopping = true;
-    await Promise.all(this.children.map((child) => new Promise<void>((resolve) => {
+    await this.stopEntries([...this.running.keys()]);
+  }
+
+  private async spawnAndAwait(entries: ServingConfig[], timeoutMs: number): Promise<void> {
+    const spawnErrors: Error[] = [];
+    const started: Running[] = [];
+    for (const s of entries) {
+      const [cmd, ...args] = s.cmd;
+      // detached: true makes the child a process-group leader (setsid), so its pid doubles as its
+      // group id — matches job-runner/shell-task's discipline, letting stopEntries below kill a whole
+      // serving tree (e.g. an `npx` wrapper and the process it execs) via a negative-pid signal.
+      const child = spawn(cmd, args, { stdio: 'inherit', detached: true });
+      const rec: Running = { cfg: s, child, stopping: false };
+      child.on('error', (err) => { spawnErrors.push(err); });
+      child.on('exit', () => {
+        if (this.running.get(entryName(s)) === rec) this.running.delete(entryName(s));
+        if (!rec.stopping) this.onChildExit?.(s);
+      });
+      this.running.set(entryName(s), rec);
+      started.push(rec);
+    }
+    await Promise.all(started.map(async ({ cfg, child }) => {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        if (spawnErrors.length) throw spawnErrors[0];
+        try {
+          const res = await fetch(`http://127.0.0.1:${cfg.port}/v1/models`);
+          if (res.ok && child.exitCode === null && child.signalCode === null) return;
+        } catch { /* not up yet */ }
+        if (Date.now() > deadline) throw new Error(`serving process on port ${cfg.port} failed health check`);
+        await sleep(250);
+      }
+    }));
+  }
+
+  private terminate(name: string, rec: Running): Promise<void> {
+    rec.stopping = true;
+    this.running.delete(name);
+    const { child } = rec;
+    return new Promise<void>((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) return resolve();
       // A SIGTERM'd child reports exitCode === null (its exit is signal-driven, not code-driven), so
       // checking exitCode alone can't tell us the escalation is moot — clear the timer explicitly
@@ -69,8 +117,6 @@ export class Supervisor {
       killTimer.unref();
       child.once('exit', () => { clearTimeout(killTimer); resolve(); });
       killGroup(child, 'SIGTERM');
-    })));
-    this.children = [];
-    this.stopping = false;
+    });
   }
 }

@@ -1,5 +1,7 @@
+import { join } from 'node:path';
 import type { Job, JobResult, JobType, ShellTaskPayload } from '@agenthub/shared';
 import { runShellTask } from './shell-task.js';
+import { parseVideoPayload, runVideoGen } from './video-gen.js';
 
 type Execute = (job: Job, log: (line: string) => void) => Promise<JobResult>;
 
@@ -8,8 +10,11 @@ class UnsupportedJobTypeError extends Error {
 }
 
 class InvalidPayloadError extends Error {
-  constructor() { super('invalid shell-task payload'); }
+  constructor(type: JobType) { super(`invalid ${type} payload`); }
 }
+
+/** A capability the node advertises but isn't configured for — failing this again would not help. */
+class MissingCapabilityError extends Error {}
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -23,6 +28,8 @@ export interface JobRunnerOptions {
   claimIntervalMs: number;
   /** `Authorization` header for the hub, when it has auth enabled; empty or absent when it doesn't. */
   authHeaders?: Record<string, string>;
+  /** Required to execute `video-gen` jobs; absent on nodes without a local ComfyUI. */
+  video?: { comfyUrl: string; workflowTemplate: string };
   execute?: Execute;
   // Called each time the hub returns 404 from /api/jobs/claim (it doesn't know this node) — lets the
   // daemon re-register itself after e.g. a hub restart.
@@ -51,15 +58,32 @@ export class JobRunner {
   }
 
   private defaultExecute: Execute = (job, log) => {
-    if (job.type !== 'shell-task') return Promise.reject(new UnsupportedJobTypeError());
-    const payload = job.payload as ShellTaskPayload;
-    if (!Array.isArray(payload?.cmd) || payload.cmd.length === 0) return Promise.reject(new InvalidPayloadError());
-    return runShellTask(payload, {
-      workspaceRoot: this.opts.workspaceRoot,
-      project: job.project,
-      onLine: log,
-      signal: this.currentAbort?.signal,
-    });
+    if (job.type === 'shell-task') {
+      const payload = job.payload as ShellTaskPayload;
+      if (!Array.isArray(payload?.cmd) || payload.cmd.length === 0) return Promise.reject(new InvalidPayloadError(job.type));
+      return runShellTask(payload, {
+        workspaceRoot: this.opts.workspaceRoot,
+        project: job.project,
+        onLine: log,
+        signal: this.currentAbort?.signal,
+      });
+    }
+    if (job.type === 'video-gen') {
+      const video = this.opts.video;
+      if (!video) return Promise.reject(new MissingCapabilityError('video capability not configured on this node'));
+      const payload = parseVideoPayload(job.payload);
+      if (!payload) return Promise.reject(new InvalidPayloadError(job.type));
+      return runVideoGen(payload, {
+        comfyUrl: video.comfyUrl,
+        workflowTemplate: video.workflowTemplate,
+        // Global Constraints: workspace/media/video/<jobId>.mp4 in the requesting project.
+        outDir: join(this.opts.workspaceRoot, job.project ?? '_default', 'media', 'video'),
+        jobId: job.id,
+        onLine: log,
+        ...(this.currentAbort ? { signal: this.currentAbort.signal } : {}),
+      });
+    }
+    return Promise.reject(new UnsupportedJobTypeError());
   };
 
   start(): void {
@@ -150,6 +174,7 @@ export class JobRunner {
     } catch (err) {
       if (err instanceof UnsupportedJobTypeError) outcome = { ok: false, error: err.message, requeue: false };
       else if (err instanceof InvalidPayloadError) outcome = { ok: false, error: err.message, requeue: false };
+      else if (err instanceof MissingCapabilityError) outcome = { ok: false, error: err.message, requeue: false };
       else outcome = { ok: false, error: err instanceof Error ? err.message : String(err), requeue: true };
     }
 

@@ -1,0 +1,47 @@
+{
+  "1": {
+    "class_type": "MiniMaxH3ModelLoader",
+    "_meta": { "title": "1/4 loader — MiniMax-H3 NVFP4 + SageAttention 2.2 (PRD 11)" },
+    "inputs": {
+      "model": "minimax-h3-nvfp4",
+      "attention": "sageattention_2.2",
+      "mode": "{{mode}}"
+    }
+  },
+  "2": {
+    "class_type": "MiniMaxH3TextEncode",
+    "_meta": { "title": "2/4 conditioning — the job's prompt" },
+    "inputs": {
+      "model": ["1", 0],
+      "prompt": "{{prompt}}",
+      "negative_prompt": ""
+    }
+  },
+  "3": {
+    "class_type": "MiniMaxH3Sampler",
+    "_meta": { "title": "3/4 sampler — 12 steps low-res, then SPAN upscale to {{resolution}}" },
+    "inputs": {
+      "model": ["1", 0],
+      "conditioning": ["2", 0],
+      "steps": 12,
+      "cfg": 6.0,
+      "seed": 0,
+      "seconds": {{duration}},
+      "fps": 24,
+      "aspect_ratio": "{{aspect}}",
+      "resolution": "{{resolution}}",
+      "upscale": "span",
+      "reference_image": "{{imagePath}}"
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "_meta": { "title": "4/4 output — mp4 the daemon downloads from /view" },
+    "inputs": {
+      "images": ["3", 0],
+      "filename_prefix": "agenthub",
+      "format": "video/h264-mp4",
+      "fps": 24
+    }
+  }
+}

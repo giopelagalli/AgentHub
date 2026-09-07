@@ -1,11 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import type { NodeRegistration } from '@agenthub/shared';
 import type { BrowserConfig, DaemonConfig } from './config.js';
 import type { BrowserDriver } from './browser/driver.js';
 import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
-import { Supervisor } from './supervisor.js';
+import { Supervisor, entryName } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
 
 // Bounds Daemon.stop()'s wait for the runner's in-flight execution to actually settle, so a real
@@ -14,6 +15,7 @@ import { JobRunner } from './job-runner.js';
 const RUNNER_STOP_WAIT_MS = 6000;
 
 const DEFAULT_BROWSER_PORT = 8130;
+const DEFAULT_CONTROL_PORT = 8131;
 
 /** Bounds each browser teardown call so a hung close() can't block the runner/supervisor shutdown below. */
 const BROWSER_CLOSE_TIMEOUT_MS = 5000;
@@ -32,10 +34,19 @@ export class Daemon {
   private browserDriver?: BrowserDriver;
   /** The port the browser server actually bound, which differs from config when it asked for 0. */
   private browserPort?: number;
+  /** Owned only when the control server isn't sharing the browser app. */
+  private controlApp?: FastifyInstance;
+  private controlPort?: number;
+  /** Serializes profile switches so two overlapping calls can't interleave start/stop of one entry. */
+  private profileSwitch: Promise<unknown> = Promise.resolve();
+  private activeProfile?: string;
   /** Sent on every hub call once the hub has auth enabled; empty when this node has no token. */
   private readonly authHeaders: Record<string, string>;
+  /** The same secret the hub uses for daemon calls; also guards this daemon's control endpoints. */
+  private readonly token?: string;
   constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
     const token = cfg.hubToken ?? process.env.DAEMON_TOKEN;
+    this.token = token || undefined;
     this.authHeaders = token ? { authorization: `Bearer ${token}` } : {};
     this.supervisor = new Supervisor(cfg.serving ?? [], (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
@@ -50,6 +61,9 @@ export class Daemon {
       endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams })),
       jobTypes: this.cfg.jobTypes ?? [],
       ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
+      profiles: Object.keys(this.cfg.profiles ?? {}),
+      video: this.cfg.video !== undefined,
+      ...(this.controlPort !== undefined ? { control: { url: `http://${host}:${this.controlPort}` } } : {}),
     };
   }
 
@@ -64,9 +78,71 @@ export class Daemon {
     this.browserPort = (this.browserApp.server.address() as { port: number }).port;
   }
 
+  /**
+   * The daemon's local control API. It exists only when the node declares `profiles` — the hub
+   * drives the Spark exclusivity swap (spec §4.3) through it — and reuses the browser server's app
+   * when that one is running, so a node binds at most one extra port. Every route requires the same
+   * bearer token the daemon uses towards the hub; with no token configured the endpoint refuses
+   * everything rather than serving an unauthenticated switch.
+   */
+  private registerControlRoutes(app: FastifyInstance): void {
+    const profiles = this.cfg.profiles ?? {};
+    app.post('/control/profile', async (req, reply) => {
+      if (!this.token || req.headers.authorization !== `Bearer ${this.token}`) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      const { name } = (req.body ?? {}) as { name?: unknown };
+      if (typeof name !== 'string' || !(name in profiles)) return reply.code(404).send({ error: 'unknown profile' });
+      try {
+        await this.applyProfile(name);
+      } catch (err) {
+        return reply.code(502).send({ error: (err as Error).message, profile: this.activeProfile ?? null });
+      }
+      return { profile: this.activeProfile, entries: this.supervisor.activeEntries() };
+    });
+  }
+
+  /** Stops every entry outside the profile, then starts the ones it names. Both halves are idempotent. */
+  private applyProfile(name: string): Promise<void> {
+    const wanted = this.cfg.profiles?.[name] ?? [];
+    const run = this.profileSwitch.then(async () => {
+      const drop = (this.cfg.serving ?? []).map(entryName).filter((e) => !wanted.includes(e));
+      await this.supervisor.stopEntries(drop);
+      await this.supervisor.startEntries(wanted);
+      this.activeProfile = name;
+    });
+    // Keep the chain alive for the next caller even when this switch failed.
+    this.profileSwitch = run.catch(() => undefined);
+    return run;
+  }
+
+  private async startControlServer(): Promise<void> {
+    if (this.browserApp) {
+      this.registerControlRoutes(this.browserApp);
+      this.controlPort = this.browserPort;
+      return;
+    }
+    this.controlApp = Fastify();
+    this.registerControlRoutes(this.controlApp);
+    const host = this.cfg.advertiseHost ?? '127.0.0.1';
+    await this.controlApp.listen({ port: this.cfg.controlPort ?? DEFAULT_CONTROL_PORT, host });
+    this.controlPort = (this.controlApp.server.address() as { port: number }).port;
+  }
+
+  /**
+   * Reads the ComfyUI workflow template once at start-up (a missing or unreadable file should stop
+   * the daemon, not surface one job at a time). Falls back to the repo's documented MiniMax-H3
+   * template when the config names no path.
+   */
+  private loadWorkflowTemplate(video: { workflow?: string }): string {
+    const path = video.workflow ?? new URL('../../../deploy/spark/minimax-h3-t2v.json', import.meta.url).pathname;
+    return readFileSync(path, 'utf8');
+  }
+
   async start(): Promise<void> {
     await this.supervisor.startAll();
     if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
+    if (this.cfg.profiles) await this.startControlServer();
     const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
       method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
     });
@@ -87,6 +163,7 @@ export class Daemon {
         workspaceRoot: this.cfg.workspaceRoot ?? join(process.cwd(), 'workspace'),
         claimIntervalMs: this.cfg.claimIntervalMs ?? 1000,
         authHeaders: this.authHeaders,
+        ...(this.cfg.video ? { video: { comfyUrl: this.cfg.video.comfyUrl, workflowTemplate: this.loadWorkflowTemplate(this.cfg.video) } } : {}),
         onNodeNotFound: () => { void this.reregister('claim'); },
       });
       this.runner.start();
@@ -137,6 +214,7 @@ export class Daemon {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.controlApp) await this.closeWithTimeout('control app', () => this.controlApp!.close());
     if (this.browserApp) await this.closeWithTimeout('browser app', () => this.browserApp!.close());
     if (this.browserDriver) await this.closeWithTimeout('browser driver', () => this.browserDriver!.close());
     if (this.runner) {

@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/openai-mock.ts",
-    "./daemon-config": "./src/daemon-config.ts"
+    "./daemon-config": "./src/daemon-config.ts",
+    "./comfy": "./src/comfy-mock.ts"
   },
   "dependencies": {
     "@agenthub/shared": "*",

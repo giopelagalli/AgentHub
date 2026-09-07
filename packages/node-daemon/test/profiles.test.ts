@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -108,6 +108,13 @@ describe('daemon serving profiles', () => {
     });
     expect(unknown.status).toBe(404);
 
+    // an inherited Object.prototype name isn't mistaken for a configured profile
+    const prototypePollution = await fetch(`${controlUrl}/control/profile`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer daemon-tok' },
+      body: JSON.stringify({ name: 'toString' }),
+    });
+    expect(prototypePollution.status).toBe(404);
+
     // switch to video: the worker entry is stopped, the orchestrator one keeps serving
     const toVideo = await fetch(`${controlUrl}/control/profile`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer daemon-tok' },
@@ -134,7 +141,78 @@ describe('daemon serving profiles', () => {
     expect(toLlm.status).toBe(200);
     expect(await serving(workerPort)).toBe(true);
     expect(await serving(orchPort)).toBe(true);
+
+    // GET reports the same state without switching anything, and is gated the same way as POST
+    const getUnauthorized = await fetch(`${controlUrl}/control/profile`);
+    expect(getUnauthorized.status).toBe(401);
+    const getState = await fetch(`${controlUrl}/control/profile`, { headers: { authorization: 'Bearer daemon-tok' } });
+    expect(getState.status).toBe(200);
+    const state = await getState.json();
+    expect(state.profile).toBe('llm');
+    expect(state.entries.sort()).toEqual(['orchestrator-vllm', 'worker-vllm']);
   }, 60000);
+
+  it('reports no active profile (and the entries actually left running) after a partial switch failure', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+    const stablePort = await getEphemeralPort();
+    const flakyPort = await getEphemeralPort();
+
+    const dir = tmpDir();
+    // A tiny wrapper script for the "flaky" entry: works until the test deletes it, then any respawn
+    // attempt fails with ENOENT — a fast, deterministic way to make one entry of a switch fail.
+    const flakyScript = join(dir, 'flaky.sh');
+    writeFileSync(flakyScript, `#!/bin/sh\nexec node "${TSX_CLI}" "${MOCK_SERVE}" "${flakyPort}"\n`);
+    chmodSync(flakyScript, 0o755);
+
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: partial-fail', '  arch: arm64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'hubToken: daemon-tok',
+      'heartbeatMs: 1000',
+      'controlPort: 0',
+      'serving:',
+      '  - name: stable', '    tier: worker', '    model: mock-model', `    port: ${stablePort}`, '    maxStreams: 4',
+      `    cmd: ["node", "${TSX_CLI}", "${MOCK_SERVE}", "${stablePort}"]`,
+      '  - name: flaky', '    tier: orchestrator', '    model: mock-model', `    port: ${flakyPort}`, '    maxStreams: 4',
+      `    cmd: ["${flakyScript}"]`,
+      'profiles:',
+      '  both: [stable, flaky]',
+      '  stableOnly: [stable]',
+    ].join('\n'));
+
+    daemon = new Daemon(loadConfig(cfgPath));
+    await daemon.start();
+    const controlUrl = daemon.registration().control!.url;
+    expect(await serving(stablePort)).toBe(true);
+    expect(await serving(flakyPort)).toBe(true);
+
+    // drop to stableOnly: flaky stops cleanly
+    const toStableOnly = await fetch(`${controlUrl}/control/profile`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer daemon-tok' },
+      body: JSON.stringify({ name: 'stableOnly' }),
+    });
+    expect(await toStableOnly.json()).toEqual({ profile: 'stableOnly', entries: ['stable'] });
+    expect(await waitUntil(() => serving(flakyPort), false)).toBe(true);
+
+    // break the flaky entry's binary, then ask for it back
+    rmSync(flakyScript);
+    const toBoth = await fetch(`${controlUrl}/control/profile`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer daemon-tok' },
+      body: JSON.stringify({ name: 'both' }),
+    });
+    expect(toBoth.status).toBe(502);
+    const body = await toBoth.json();
+    expect(body.profile).toBeNull();
+    expect(body.entries).toEqual(['stable']); // still serving what it had — not the requested profile
+
+    // the node no longer claims to be on any named profile, though `stable` is still up
+    const state = await fetch(`${controlUrl}/control/profile`, { headers: { authorization: 'Bearer daemon-tok' } });
+    expect(await state.json()).toEqual({ profile: null, entries: ['stable'] });
+    expect(await serving(stablePort)).toBe(true);
+  }, 30000);
 
   it('rejects a profile naming an unknown serving entry at load time', () => {
     const cfgPath = join(tmpDir(), 'daemon.yaml');
@@ -147,5 +225,17 @@ describe('daemon serving profiles', () => {
       '  llm: [b]',
     ].join('\n'));
     expect(() => loadConfig(cfgPath)).toThrow(/unknown serving entry b/);
+  });
+
+  it('rejects duplicate serving entry names at load time', () => {
+    const cfgPath = join(tmpDir(), 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: n', '  arch: arm64',
+      'hub: http://127.0.0.1:1',
+      'serving:',
+      '  - name: a', '    tier: worker', '    model: m', '    port: 9', '    maxStreams: 1', '    cmd: ["true"]',
+      '  - name: a', '    tier: orchestrator', '    model: m2', '    port: 10', '    maxStreams: 1', '    cmd: ["true"]',
+    ].join('\n'));
+    expect(() => loadConfig(cfgPath)).toThrow(/duplicate serving entry name a/);
   });
 });

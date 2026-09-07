@@ -86,6 +86,25 @@ describe('runVideoGen', () => {
     expect(parseVideoPayload({ ...PAYLOAD, resolution: '4k' })).toBeNull();
     expect(parseVideoPayload({ prompt: 'hi' })).toBeNull();
   });
+
+  it('rejects i2v/ref2v payloads without an imagePath', () => {
+    expect(parseVideoPayload({ ...PAYLOAD, mode: 'i2v' })).toBeNull();
+    expect(parseVideoPayload({ ...PAYLOAD, mode: 'ref2v' })).toBeNull();
+    expect(parseVideoPayload({ ...PAYLOAD, mode: 'i2v', imagePath: 'ref.png' })).toEqual({ ...PAYLOAD, mode: 'i2v', imagePath: 'ref.png' });
+  });
+
+  it('throws immediately on a failed ComfyUI run instead of polling to the deadline', async () => {
+    comfy = createComfyMock({ failAfterPolls: 1 });
+    await comfy.listen({ port: 0, host: '127.0.0.1' });
+    const comfyUrl = `http://127.0.0.1:${(comfy.server.address() as { port: number }).port}`;
+    const outDir = join(tmpDir(), 'media', 'video');
+
+    await expect(runVideoGen(PAYLOAD, {
+      comfyUrl, workflowTemplate: WORKFLOW, outDir, jobId: 9,
+      onLine: () => {}, pollIntervalMs: 10, maxWaitMs: 60_000,
+    })).rejects.toThrow(/comfy job failed/);
+    expect(existsSync(join(outDir, '9.mp4'))).toBe(false);
+  });
 });
 
 describe('JobRunner video-gen dispatch', () => {
@@ -126,6 +145,43 @@ describe('JobRunner video-gen dispatch', () => {
     expect(j.status).toBe('failed');
     expect(j.error).toMatch(/invalid video-gen payload/);
     expect(comfy!.prompts).toHaveLength(0); // never reached ComfyUI
+  });
+
+  it('fails a broken ComfyUI workflow without requeueing it', async () => {
+    comfy = createComfyMock({ failAfterPolls: 0 });
+    await comfy.listen({ port: 0, host: '127.0.0.1' });
+    const comfyUrl = `http://127.0.0.1:${(comfy.server.address() as { port: number }).port}`;
+    const j = await runOne(PAYLOAD, comfyUrl, tmpDir());
+    expect(j.status).toBe('failed');
+    expect(j.error).toMatch(/comfy job failed/);
+  });
+
+  it('rejects a traversal project name instead of writing outside the workspace', async () => {
+    const comfyUrl = await startComfy(0);
+    const hubUrl = await startHub();
+    await fetch(`${hubUrl}/api/nodes/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'vid', arch: 'arm64', endpoints: [], jobTypes: ['video-gen'], video: true }),
+    });
+    const workspaceRoot = tmpDir();
+    const job = hub!.queue.enqueue({ type: 'video-gen', tier: 'video-gen', priority: 'batch', payload: PAYLOAD, project: '../../etc' });
+    const runner = new JobRunner({
+      hub: hubUrl, node: 'vid', types: ['video-gen'], workspaceRoot, claimIntervalMs: 20,
+      video: { comfyUrl, workflowTemplate: WORKFLOW },
+    });
+    runner.start();
+    try {
+      const deadline = Date.now() + 5000;
+      let j = hub!.queue.get(job.id)!;
+      while (Date.now() < deadline && j.status === 'queued' && j.attempts < 3) {
+        await new Promise((r) => setTimeout(r, 20));
+        j = hub!.queue.get(job.id)!;
+      }
+      // the outDir computation (resolveWorkspace) throws before ComfyUI is ever reached
+      expect(comfy!.prompts).toHaveLength(0);
+    } finally {
+      await runner.stop();
+    }
   });
 
   it('runs a valid payload into the project workspace', async () => {

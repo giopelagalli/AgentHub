@@ -190,6 +190,8 @@ export function parseVideoPayload(raw: unknown): VideoPayload | null {
   if (typeof p.aspect !== 'string' || !VIDEO_ASPECTS.includes(p.aspect as VideoPayload['aspect'])) return null;
   if (typeof p.resolution !== 'string' || !VIDEO_RESOLUTIONS.includes(p.resolution as VideoPayload['resolution'])) return null;
   if (p.imagePath !== undefined && typeof p.imagePath !== 'string') return null;
+  // i2v/ref2v animate a source image — without one there's nothing to animate.
+  if ((p.mode === 'i2v' || p.mode === 'ref2v') && !p.imagePath) return null;
   return p as VideoPayload;
 }
 

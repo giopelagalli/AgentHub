@@ -8,6 +8,7 @@ import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
 import { Supervisor, entryName } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
+import { safeEqual } from './shell-task.js';
 
 // Bounds Daemon.stop()'s wait for the runner's in-flight execution to actually settle, so a real
 // shell-task's SIGKILL escalation (shell-task.ts's KILL_ESCALATION_MS, 5s after SIGTERM) has time to
@@ -85,20 +86,28 @@ export class Daemon {
    * bearer token the daemon uses towards the hub; with no token configured the endpoint refuses
    * everything rather than serving an unauthenticated switch.
    */
+  private checkBearer(authorization: string | undefined): boolean {
+    return !!this.token && typeof authorization === 'string' && safeEqual(authorization, `Bearer ${this.token}`);
+  }
+
   private registerControlRoutes(app: FastifyInstance): void {
     const profiles = this.cfg.profiles ?? {};
     app.post('/control/profile', async (req, reply) => {
-      if (!this.token || req.headers.authorization !== `Bearer ${this.token}`) {
-        return reply.code(401).send({ error: 'unauthorized' });
-      }
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
       const { name } = (req.body ?? {}) as { name?: unknown };
-      if (typeof name !== 'string' || !(name in profiles)) return reply.code(404).send({ error: 'unknown profile' });
+      if (typeof name !== 'string' || !Object.hasOwn(profiles, name)) return reply.code(404).send({ error: 'unknown profile' });
       try {
         await this.applyProfile(name);
       } catch (err) {
-        return reply.code(502).send({ error: (err as Error).message, profile: this.activeProfile ?? null });
+        return reply.code(502).send({ error: (err as Error).message, profile: this.activeProfile ?? null, entries: this.supervisor.activeEntries() });
       }
       return { profile: this.activeProfile, entries: this.supervisor.activeEntries() };
+    });
+    // Lets the hub learn the node's live profile after its own restart, when it no longer remembers
+    // which switch it last requested.
+    app.get('/control/profile', async (req, reply) => {
+      if (!this.checkBearer(req.headers.authorization)) return reply.code(401).send({ error: 'unauthorized' });
+      return { profile: this.activeProfile ?? null, entries: this.supervisor.activeEntries() };
     });
   }
 
@@ -107,9 +116,15 @@ export class Daemon {
     const wanted = this.cfg.profiles?.[name] ?? [];
     const run = this.profileSwitch.then(async () => {
       const drop = (this.cfg.serving ?? []).map(entryName).filter((e) => !wanted.includes(e));
-      await this.supervisor.stopEntries(drop);
-      await this.supervisor.startEntries(wanted);
-      this.activeProfile = name;
+      try {
+        await this.supervisor.stopEntries(drop);
+        await this.supervisor.startEntries(wanted);
+        this.activeProfile = name;
+      } catch (err) {
+        // A partial switch leaves neither profile fully served — don't misreport the stale one.
+        this.activeProfile = undefined;
+        throw err;
+      }
     });
     // Keep the chain alive for the next caller even when this switch failed.
     this.profileSwitch = run.catch(() => undefined);

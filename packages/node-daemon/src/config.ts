@@ -34,9 +34,13 @@ export function loadConfig(path: string): DaemonConfig {
   // declares no model tier at all. Only when it *is* present must every entry be well-formed.
   const serving = raw.serving ?? [];
   if (!Array.isArray(serving)) throw new Error('daemon config: serving must be a list');
+  const seenNames = new Set<string>();
   for (const s of serving) {
     if (!s.tier || !s.model || !s.port || !s.maxStreams || !Array.isArray(s.cmd) || s.cmd.length === 0)
       throw new Error('daemon config: serving entry missing tier/model/port/maxStreams/cmd');
+    const name = s.name ?? `${s.tier}:${s.port}`;
+    if (seenNames.has(name)) throw new Error(`daemon config: duplicate serving entry name ${name}`);
+    seenNames.add(name);
   }
   if (raw.browser !== undefined && typeof raw.browser.enabled !== 'boolean')
     throw new Error('daemon config: browser.enabled must be a boolean');

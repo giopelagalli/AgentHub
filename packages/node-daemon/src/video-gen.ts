@@ -6,6 +6,9 @@ import { parseVideoPayload, type JobResult, type VideoPayload } from '@agenthub/
 // `/video`, `generate_video`); re-exported here so this module stays the daemon's video surface.
 export { parseVideoPayload, type VideoPayload };
 
+/** A ComfyUI run that failed mid-workflow — requeueing it would burn another GPU hour on the same broken workflow. */
+export class ComfyExecutionError extends Error {}
+
 export interface VideoGenOptions {
   comfyUrl: string;
   /** The ComfyUI API-format workflow JSON with `{{prompt}}`-style placeholders (see deploy/spark). */
@@ -48,6 +51,19 @@ export function fillWorkflow(template: string, payload: VideoPayload): unknown {
 }
 
 interface HistoryFile { filename: string; subfolder?: string; type?: string; }
+interface HistoryStatus { status_str?: string; messages?: unknown[]; }
+
+/**
+ * A ComfyUI run that failed mid-workflow (a bad node, an OOM) reports `status_str: 'error'` in its
+ * history entry and never gets an output file — polling on would just burn the full `maxWaitMs`.
+ * Returns the error text to report, or undefined when the entry isn't a failure.
+ */
+function findError(entry: unknown): string | undefined {
+  const status = (entry as { status?: HistoryStatus } | undefined)?.status;
+  if (status?.status_str !== 'error') return undefined;
+  const messages = Array.isArray(status.messages) ? status.messages : [];
+  return messages.length > 0 ? JSON.stringify(messages) : 'comfy reported status_str: error';
+}
 
 /** ComfyUI keys video outputs by node id, under a per-node-type key (`gifs`, `videos`, `images`). */
 function findOutputFile(entry: unknown): HistoryFile | undefined {
@@ -101,7 +117,10 @@ async function execute(payload: VideoPayload, opts: VideoGenOptions): Promise<Jo
     const res = await fetch(`${base}/history/${promptId}`, { signal: opts.signal });
     if (res.ok) {
       const history = (await res.json()) as Record<string, unknown>;
-      file = findOutputFile(history[promptId]);
+      const entry = history[promptId];
+      const error = findError(entry);
+      if (error) throw new ComfyExecutionError(`comfy job failed: ${error}`);
+      file = findOutputFile(entry);
       if (file) break;
     }
     if (Date.now() > deadline) return { exitCode: undefined, signal: 'timeout', timedOut: true };

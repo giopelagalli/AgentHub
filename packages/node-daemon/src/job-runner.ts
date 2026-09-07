@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Job, JobResult, JobType, ShellTaskPayload } from '@agenthub/shared';
-import { runShellTask } from './shell-task.js';
-import { parseVideoPayload, runVideoGen } from './video-gen.js';
+import { resolveWorkspace, runShellTask } from './shell-task.js';
+import { ComfyExecutionError, parseVideoPayload, runVideoGen } from './video-gen.js';
 
 type Execute = (job: Job, log: (line: string) => void) => Promise<JobResult>;
 
@@ -78,7 +78,7 @@ export class JobRunner {
         comfyUrl: video.comfyUrl,
         workflowTemplate: video.workflowTemplate,
         // Global Constraints: workspace/media/video/<jobId>.mp4 in the requesting project.
-        outDir: join(this.opts.workspaceRoot, job.project ?? '_default', 'media', 'video'),
+        outDir: resolveWorkspace(this.opts.workspaceRoot, job.project, join('media', 'video')),
         jobId: job.id,
         onLine: log,
         ...(this.currentAbort ? { signal: this.currentAbort.signal } : {}),
@@ -176,6 +176,7 @@ export class JobRunner {
       if (err instanceof UnsupportedJobTypeError) outcome = { ok: false, error: err.message, requeue: false };
       else if (err instanceof InvalidPayloadError) outcome = { ok: false, error: err.message, requeue: false };
       else if (err instanceof MissingCapabilityError) outcome = { ok: false, error: err.message, requeue: false };
+      else if (err instanceof ComfyExecutionError) outcome = { ok: false, error: err.message, requeue: false };
       else outcome = { ok: false, error: err instanceof Error ? err.message : String(err), requeue: true };
     }
 

@@ -1,10 +1,21 @@
 import { spawn } from 'node:child_process';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import type { JobResult, ShellTaskPayload } from './index.js';
 
 // Lives in its own entry point (`@agenthub/shared/shell`) rather than the package index: the index is
 // bundled into the browser UI, which must not pull in node:child_process.
+
+/**
+ * Constant-time string comparison. Both sides are hashed first so the comparison never sees
+ * different-length buffers (`timingSafeEqual` throws on those, and the throw itself would leak the
+ * length of the secret).
+ */
+export function safeEqual(a: string, b: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+  return timingSafeEqual(digest(a), digest(b));
+}
 
 /**
  * Resolves `cwd` inside `<root>/<project>` and refuses anything that escapes it. Note this is a

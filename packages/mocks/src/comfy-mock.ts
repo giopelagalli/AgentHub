@@ -3,6 +3,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 export interface ComfyMockOptions {
   /** `/history/<id>` stays empty for this many polls, then reports the finished output. */
   pollsUntilDone?: number;
+  /** `/history/<id>` stays empty for this many polls, then reports a `status_str: 'error'` entry instead of completing. */
+  failAfterPolls?: number;
 }
 
 export interface MockComfy extends FastifyInstance {
@@ -13,12 +15,12 @@ export interface MockComfy extends FastifyInstance {
   videoBytes: Buffer;
 }
 
-// A 20-byte ISO-BMFF header — enough for a test to assert "this is the mp4 the mock served".
+// A 24-byte ISO-BMFF header — enough for a test to assert "this is the mp4 the mock served".
 const STUB_MP4 = Buffer.from('00000018667479706d703432000000006d70343200000000', 'hex');
 
 /** Minimal stand-in for the ComfyUI HTTP API: `/prompt`, `/history/:id` and `/view`. */
 export function createComfyMock(opts: ComfyMockOptions = {}): MockComfy {
-  const { pollsUntilDone = 1 } = opts;
+  const { pollsUntilDone = 1, failAfterPolls } = opts;
   const app = Fastify() as unknown as MockComfy;
   app.prompts = [];
   app.polls = 0;
@@ -36,6 +38,9 @@ export function createComfyMock(opts: ComfyMockOptions = {}): MockComfy {
   app.get('/history/:id', async (req) => {
     const { id } = req.params as { id: string };
     app.polls++;
+    if (failAfterPolls !== undefined && app.polls > failAfterPolls) {
+      return { [id]: { status: { status_str: 'error', messages: [['execution_error', { exception_message: 'mock node failure' }]] } } };
+    }
     if (app.polls <= pollsUntilDone) return {}; // still running
     return { [id]: { status: { completed: true }, outputs: { '4': { gifs: [{ filename, subfolder: '', type: 'output' }] } } } };
   });

@@ -122,9 +122,14 @@ export class CommandRouter {
 
     const manifest = await this.deps.service.create({ slug: kebab(title), title, intent });
     const { service, port, ownerChatId } = this.deps;
+    // Nothing awaits this chain, so its last link must not be able to reject: a `port.send` that
+    // fails here (Telegram down) would otherwise surface as an unhandled rejection.
+    const notify = (text: string): void => {
+      port.send(ownerChatId, { text }).catch((err) => console.error('[telegram] /new follow-up send failed', err));
+    };
     void service.runTurn(manifest.slug)
-      .then((briefing) => port.send(ownerChatId, { text: `First turn for ${briefing.slug} done: ${briefing.summary}` }))
-      .catch((err) => port.send(ownerChatId, { text: `First turn failed: ${(err as Error).message}` }));
+      .then((briefing) => notify(`First turn for ${briefing.slug} done: ${briefing.summary}`))
+      .catch((err) => notify(`First turn failed: ${(err as Error).message}`));
     return [{ text: `Created ${manifest.slug}. Running the first turn…` }];
   }
 

@@ -36,14 +36,19 @@ export class Alerts {
 
   constructor(private deps: AlertsDeps) {}
 
+  // Both listeners are synchronous callbacks on hub events, so the send can only be fire-and-forget.
+  // A failing send (Telegram down, bot blocked) must therefore be caught here: an unhandled
+  // rejection escaping a node-offline sweep would take the whole hub process down.
   attach(events: AlertEvents): void {
     events.onNodeOffline((node, requeued) => {
-      void this.send(`node:${node.name}`, `⚠️ node ${node.name} went offline; ${requeued} jobs re-queued`);
+      this.send(`node:${node.name}`, `⚠️ node ${node.name} went offline; ${requeued} jobs re-queued`)
+        .catch((err) => console.error('[alerts] send failed', err));
     });
     events.onBriefing((briefing) => {
       if (briefing.status !== 'blocked') return;
       const blockers = briefing.blockers.length ? briefing.blockers.join('; ') : 'no reason given';
-      void this.send(`blocked:${briefing.slug}`, `⛔ ${briefing.title} is blocked: ${blockers}`);
+      this.send(`blocked:${briefing.slug}`, `⛔ ${briefing.title} is blocked: ${blockers}`)
+        .catch((err) => console.error('[alerts] send failed', err));
     });
   }
 

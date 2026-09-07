@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -318,7 +318,48 @@ function fakeEvents(): AlertEvents & { emitNodeOffline(n: NodeInfo, requeued: nu
   };
 }
 
+/** A port whose `send` always fails, for the fire-and-forget paths that must survive one. */
+class FailingPort extends FakeTelegramPort {
+  override async send(): Promise<void> {
+    throw new Error('telegram is down');
+  }
+}
+
+/**
+ * Runs `fn` with an `unhandledRejection` listener installed and returns whatever it caught. The
+ * listener also stops Node from tearing the process down mid-suite if the guard being tested is
+ * missing — the assertion, not the crash, is what reports the failure.
+ */
+async function unhandledDuring(fn: () => Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onUnhandled = (err: unknown): void => { seen.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await fn();
+    await flush();
+    await flush();
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  return seen;
+}
+
 describe('Alerts', () => {
+  it('logs, rather than rejecting into nowhere, when the alert send fails', async () => {
+    const { hub: h } = await setup();
+    const port = new FailingPort();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock: new ManualClock(0) });
+    const events = fakeEvents();
+    alerts.attach(events);
+
+    const unhandled = await unhandledDuring(async () => { events.emitNodeOffline(node('mb'), 3); });
+
+    expect(unhandled).toEqual([]);
+    expect(errors).toHaveBeenCalledWith('[alerts] send failed', expect.any(Error));
+    errors.mockRestore();
+  });
+
   it('sends a node-offline alert with the re-queued job count', async () => {
     const { hub: h, port } = await setup();
     const clock = new ManualClock(0);

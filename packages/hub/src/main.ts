@@ -3,6 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { createHub, type AssistantOptions } from './server.js';
 import { GrammyPort } from './telegram/grammy-port.js';
 
+// Backstop, not a strategy: every fire-and-forget path is meant to catch its own failures, but the
+// hub is a long-running personal service — one missed `.catch` should cost a log line, not the
+// process (Node's default for an unhandled rejection is to exit).
+process.on('unhandledRejection', (err) => console.error('[hub] unhandled rejection', err));
+
 const uiDist = fileURLToPath(new URL('../../ui/dist', import.meta.url));
 if (!existsSync(uiDist)) console.log(`[hub] no UI build at ${uiDist}; serving API only`);
 

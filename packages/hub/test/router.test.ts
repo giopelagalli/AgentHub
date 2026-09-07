@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -30,7 +30,18 @@ let mock: MockOpenAI | undefined;
 let projectsRoot: string | undefined;
 let memoryRoot: string | undefined;
 
-async function setup(script: ScriptStep[] = []): Promise<Harness> {
+/**
+ * Fails only the `/new` follow-up send, so a test can exercise the background chain's terminal
+ * failure without also breaking the ack the same handler sends first.
+ */
+class FollowUpFailsPort extends FakeTelegramPort {
+  override async send(chatId: string, msg: OutgoingMessage): Promise<void> {
+    if (msg.text.startsWith('First turn')) throw new Error('telegram is down');
+    return super.send(chatId, msg);
+  }
+}
+
+async function setup(script: ScriptStep[] = [], port: FakeTelegramPort = new FakeTelegramPort()): Promise<Harness> {
   projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-router-projects-'));
   memoryRoot = await mkdtemp(join(tmpdir(), 'agenthub-router-memory-'));
   mock = createMockOpenAI({ script });
@@ -54,7 +65,6 @@ async function setup(script: ScriptStep[] = []): Promise<Harness> {
   const tools = assistantTools({ memory, planner, gate, service: hub.projects, master: hub.master, registry: hub.registry });
   const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript: hub.transcript });
 
-  const port = new FakeTelegramPort();
   const router = new CommandRouter({
     port, ownerChatId: OWNER, assistant, service: hub.projects, master: hub.master,
     planner, registry: hub.registry, gate,
@@ -81,6 +91,25 @@ async function waitForMessage(
     await new Promise((r) => setTimeout(r, 10));
   }
   return port.sent[count - 1]!;
+}
+
+/**
+ * Runs `fn`, then polls until `settled` holds, with an `unhandledRejection` listener installed;
+ * returns whatever that listener caught.
+ */
+async function unhandledDuring(fn: () => Promise<void>, settled: () => boolean): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onUnhandled = (err: unknown): void => { seen.push(err); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await fn();
+    const deadline = Date.now() + 2000;
+    while (!settled() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setImmediate(r));
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  return seen;
 }
 
 /** Creates a project and publishes one briefing for it, without going through the model. */
@@ -210,6 +239,20 @@ describe('CommandRouter', () => {
 
     const failure = await waitForMessage(port, 2);
     expect(failure.msg.text).toBe('First turn failed: gateway is down');
+  });
+
+  it('/new logs, rather than rejecting into nowhere, when the follow-up send itself fails', async () => {
+    const { port } = await setup([{ content: 'Set up the initial plan.' }], new FollowUpFailsPort());
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const unhandled = await unhandledDuring(
+      () => port.simulateMessage(OWNER, '/new Doomed Project: it will not report back'),
+      () => errors.mock.calls.some(([first]) => first === '[telegram] /new follow-up send failed'),
+    );
+
+    expect(unhandled).toEqual([]);
+    expect(errors).toHaveBeenCalledWith('[telegram] /new follow-up send failed', expect.any(Error));
+    errors.mockRestore();
   });
 
   it('a throwing service does not take the bot down: the owner gets an error reply and the next command still works', async () => {

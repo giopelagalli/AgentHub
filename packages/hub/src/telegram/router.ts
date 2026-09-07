@@ -1,3 +1,4 @@
+import { videoPayloadFrom, type Job, type VideoPayload } from '@agenthub/shared';
 import type { Assistant } from '../assistant/assistant.js';
 import type { ConfirmationGate } from '../assistant/confirm.js';
 import type { Planner, PlannerList } from '../assistant/planner.js';
@@ -17,7 +18,8 @@ const HELP_TEXT = [
   '/goals, /todo, /backlog [add <text> | done <n>] — view or edit a planner list',
   '/new <title>: <intent> — start a new project',
   '/nodes — cluster health',
-  '/video, /controlnode — coming in Phase 6',
+  '/video <prompt> — queue a video generation job; the clip arrives when it is done',
+  '/controlnode — coming in Phase 6',
   '/help — this message',
   '',
   'Anything else is sent to the assistant.',
@@ -38,6 +40,8 @@ export interface CommandRouterDeps {
   planner: Planner;
   registry: NodeRegistry;
   gate: ConfirmationGate;
+  /** Enqueues a `video-gen` job for `/video`; absent, the command says video isn't configured. */
+  enqueueVideo?: (payload: VideoPayload) => Job;
 }
 
 /**
@@ -135,8 +139,23 @@ export class CommandRouter {
     if (PLANNER_COMMANDS.has(cmd)) return this.handlePlanner(cmd.slice(1) as PlannerList, rest);
     if (cmd === '/new') return this.handleNew(rest);
     if (cmd === '/nodes') return [formatNodes(this.deps.registry.all(), {})];
-    if (cmd === '/video' || cmd === '/controlnode') return [{ text: 'coming in Phase 6' }];
+    if (cmd === '/video') return [this.handleVideo(rest)];
+    if (cmd === '/controlnode') return [{ text: 'coming in Phase 6' }];
     return [{ text: HELP_TEXT }];
+  }
+
+  /**
+   * Queues the job and returns immediately — a clip is minutes of GPU time, far past any sane reply
+   * window. The mp4 itself is sent by `Alerts` when the job completes.
+   */
+  private handleVideo(rest: string): OutgoingMessage {
+    const prompt = rest.trim();
+    if (!prompt) return { text: 'usage: /video <prompt>' };
+    if (!this.deps.enqueueVideo) return { text: 'Video generation is not configured on this hub.' };
+    const payload = videoPayloadFrom({ prompt });
+    if (!payload) return { text: 'usage: /video <prompt>' };
+    const job = this.deps.enqueueVideo(payload);
+    return { text: `Queued video job #${job.id}: ${payload.prompt}` };
   }
 
   private async handlePlanner(which: PlannerList, rest: string): Promise<OutgoingMessage[]> {

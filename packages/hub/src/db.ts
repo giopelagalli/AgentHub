@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS nodes (
   status TEXT NOT NULL DEFAULT 'online',
   last_heartbeat INTEGER NOT NULL,
   job_types_json TEXT NOT NULL DEFAULT '[]',
-  browser_json TEXT
+  browser_json TEXT,
+  profiles_json TEXT NOT NULL DEFAULT '[]',
+  video INTEGER NOT NULL DEFAULT 0,
+  control_json TEXT
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +110,9 @@ export function openDb(path: string): Db {
   db.exec(SCHEMA);
   ensureColumn(db, 'nodes', 'job_types_json', `TEXT NOT NULL DEFAULT '[]'`);
   ensureColumn(db, 'nodes', 'browser_json', `TEXT`);
+  ensureColumn(db, 'nodes', 'profiles_json', `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn(db, 'nodes', 'video', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn(db, 'nodes', 'control_json', `TEXT`);
   ensureColumn(db, 'jobs', 'attempts', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'result_json', `TEXT`);
   ensureColumn(db, 'jobs', 'error', `TEXT`);

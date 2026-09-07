@@ -1,33 +1,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { JobResult } from '@agenthub/shared';
+import { parseVideoPayload, type JobResult, type VideoPayload } from '@agenthub/shared';
 
-/** Exactly the payload of PRD §11 / the plan's Global Constraints. */
-export interface VideoPayload {
-  prompt: string;
-  mode: 't2v' | 'i2v' | 'ref2v';
-  durationSec: number;
-  aspect: '16:9' | '9:16' | '1:1' | '3:4' | '4:3' | '21:9' | '3:2';
-  resolution: '768p' | '1080p';
-  imagePath?: string;
-}
-
-const MODES = ['t2v', 'i2v', 'ref2v'];
-const ASPECTS = ['16:9', '9:16', '1:1', '3:4', '4:3', '21:9', '3:2'];
-const RESOLUTIONS = ['768p', '1080p'];
-
-/** Returns the payload, or null when it doesn't match the schema exactly (caller fails without requeue). */
-export function parseVideoPayload(raw: unknown): VideoPayload | null {
-  const p = raw as Partial<VideoPayload> | undefined;
-  if (!p || typeof p !== 'object') return null;
-  if (typeof p.prompt !== 'string' || p.prompt === '') return null;
-  if (typeof p.mode !== 'string' || !MODES.includes(p.mode)) return null;
-  if (typeof p.durationSec !== 'number' || !Number.isFinite(p.durationSec) || p.durationSec < 4 || p.durationSec > 15) return null;
-  if (typeof p.aspect !== 'string' || !ASPECTS.includes(p.aspect)) return null;
-  if (typeof p.resolution !== 'string' || !RESOLUTIONS.includes(p.resolution)) return null;
-  if (p.imagePath !== undefined && typeof p.imagePath !== 'string') return null;
-  return p as VideoPayload;
-}
+// The payload schema lives in @agenthub/shared because the hub validates it too (`POST /api/video`,
+// `/video`, `generate_video`); re-exported here so this module stays the daemon's video surface.
+export { parseVideoPayload, type VideoPayload };
 
 export interface VideoGenOptions {
   comfyUrl: string;

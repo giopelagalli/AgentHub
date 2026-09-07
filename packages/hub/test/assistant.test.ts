@@ -49,7 +49,7 @@ async function setup(script: ScriptStep[] = []): Promise<Harness> {
   const loop = new AgentLoop({ gateway: hub.gateway, transcript: hub.transcript });
   const tools = assistantTools({
     memory, planner, gate,
-    service: hub.projects, master: hub.master, registry: hub.registry,
+    service: hub.projects, master: hub.master, registry: hub.registry, jobs: hub.queue,
   });
   const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript: hub.transcript });
   return { assistant, memory, planner, gate, mock, tools };

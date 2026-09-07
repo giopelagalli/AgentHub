@@ -1,15 +1,17 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, HubState, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier } from '@agenthub/shared';
-import { PRIORITY_RANK } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, HubState, Job, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier, VideoPayload } from '@agenthub/shared';
+import { PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
 import { ModelGateway } from './gateway.js';
+import { ResourceManager, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript } from './agents/transcript.js';
@@ -25,7 +27,7 @@ import { ConfirmationGate } from './assistant/confirm.js';
 import { MemoryStore } from './assistant/memory.js';
 import { Planner, type PlannerList } from './assistant/planner.js';
 import { assistantTools } from './assistant/tools.js';
-import { Alerts, type AlertEvents } from './telegram/alerts.js';
+import { Alerts, TELEGRAM_PROJECT, type AlertEvents } from './telegram/alerts.js';
 import type { TelegramPort } from './telegram/port.js';
 import { CommandRouter } from './telegram/router.js';
 import { Scheduler, SystemClock, type Clock } from './telegram/scheduler.js';
@@ -47,7 +49,7 @@ export interface AssistantHandle {
 export interface Hub {
   app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
   runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
-  leases: LeaseManager; browser: BrowserProxy;
+  leases: LeaseManager; browser: BrowserProxy; resources: ResourceManager;
   /** Resolves once the assistant is wired; rejects when no `assistant` option was given. */
   assistant(): Promise<AssistantHandle>;
   stop(opts?: StopOptions): Promise<void>;
@@ -59,6 +61,9 @@ const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
 const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
 const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';
+const DEFAULT_MEMORY_ROOT = 'data/memory';
+/** Cap on an uploaded clip. A 15s 1080p MiniMax-H3 render is a few tens of MB. */
+const MAX_ARTIFACT_BYTES = 256 * 1024 * 1024;
 const DEFAULT_BRIEFING_TIME = '08:00';
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
 
@@ -117,7 +122,16 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
+  const resources = new ResourceManager({
+    registry, gateway,
+    ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
+  });
   const app = Fastify();
+
+  // Finished clips arrive as raw bytes on POST /api/jobs/:id/artifact; Fastify's 1MB default body
+  // limit is per-parser, so this one carries its own.
+  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: MAX_ARTIFACT_BYTES },
+    (_req, body, done) => { done(null, body); });
 
   // Registered before any route or plugin so it also covers the static UI and the /ws upgrade —
   // @fastify/websocket runs the route's onRequest hooks, and a 401 sent here means the handshake
@@ -229,15 +243,68 @@ export function createHub(opts: HubOptions = {}): Hub {
   };
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
-  // hangs off it; briefings pass straight through to the service's own listeners.
+  // hangs off it; briefings pass straight through to the service's own listeners, and a settled job
+  // is announced by the two report routes below.
+  const jobSettledListeners: ((job: Job) => void)[] = [];
+  const emitJobSettled = (job: Job | null): void => {
+    if (!job) return;
+    for (const listener of jobSettledListeners) listener(job);
+  };
+
   const nodeOfflineListeners: ((node: NodeInfo, requeued: number) => void)[] = [];
   const hubEvents: AlertEvents = {
     onNodeOffline: (cb) => { nodeOfflineListeners.push(cb); },
     onBriefing: (cb) => { projects.onBriefing(cb); },
+    onJobSettled: (cb) => { jobSettledListeners.push(cb); },
+  };
+
+  /**
+   * Where a finished clip is stored (plan Global Constraints): `workspace/media/video/<jobId>.mp4`
+   * in the requesting project's bundle, or `media/` under the memory root when the job names no
+   * project — or names one that isn't a bundle, which is what `/video`'s `_telegram` does.
+   */
+  const videoArtifactPath = async (job: Job): Promise<string> => {
+    if (job.project) {
+      try {
+        const bundle = await projects.get(job.project);
+        return join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+      } catch { /* not a project bundle; fall through to the memory root */ }
+    }
+    return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', `${job.id}.mp4`);
+  };
+
+  const readVideoArtifact = async (job: Job): Promise<Buffer | null> => {
+    try {
+      return await readFile(await videoArtifactPath(job));
+    } catch {
+      return null;
+    }
+  };
+
+  /** Every path into a video job builds the spec here, so priority and tier can't drift apart. */
+  const enqueueVideo = (payload: VideoPayload, project?: string): Job => {
+    const job = queue.enqueue({
+      type: 'video-gen', tier: 'video-gen', priority: 'batch', payload,
+      ...(project ? { project } : {}),
+    });
+    broadcastState();
+    return job;
+  };
+
+  /**
+   * Gives back the node's serving after a video job settled. Called from every path a video job can
+   * leave `running` by: the two report routes and the offline sweep.
+   */
+  const releaseVideoSlot = (job: Job | null, nodeName: string): void => {
+    if (!job || job.type !== 'video-gen') return;
+    void resources.release(nodeName, job.id)
+      .catch((err) => app.log.error(`releasing the video slot on ${nodeName} failed: ${(err as Error).message}`));
   };
 
   const sweepAndRequeue = () => {
     for (const node of registry.sweep()) {
+      // Read before requeueing: afterwards the jobs no longer name this node.
+      for (const job of queue.list('running')) if (job.nodeId === node.id) releaseVideoSlot(job, node.name);
       const { requeued, failed } = queue.requeueForNode(node.id);
       if (requeued) app.log.info(`requeued ${requeued} jobs from offline node ${node.name}`);
       for (const jobId of failed) jobLogs.append(jobId, `[hub] max attempts exceeded after node ${node.name} went offline`);
@@ -344,8 +411,29 @@ export function createHub(opts: HubOptions = {}): Hub {
     const info = registry.byName(node);
     if (!info) return reply.code(404).send({ error: 'unknown node' });
     if (!types.every((t) => info.jobTypes.includes(t))) return reply.code(403).send({ error: 'node cannot run requested job types' });
-    const job = queue.claim(types, info.id);
+    // Only a node with a local ComfyUI, and only one video job at a time on it: a claim is what
+    // triggers the exclusivity swap, so swapping a node that cannot render would park its serving
+    // for nothing, and claiming a second clip while the first runs would only cost the job an
+    // attempt before being handed straight back.
+    const takesVideo = info.video && !resources.busy(info.name);
+    const claimable = takesVideo ? types : types.filter((t) => t !== 'video-gen');
+    if (!claimable.length) return reply.code(204).send();
+    const job = queue.claim(claimable, info.id);
     if (!job) return reply.code(204).send();
+    if (job.type === 'video-gen') {
+      // The swap happens before the job is handed over (PRD §4.3): worker serving is parked and
+      // drained, then the daemon switches to its video profile. If that fails the job goes back on
+      // the queue rather than running against a GPU that is still serving.
+      try {
+        await resources.acquire(info.name, job.id);
+      } catch (err) {
+        jobLogs.append(job.id, `[hub] video slot unavailable on ${info.name}: ${(err as Error).message}`);
+        queue.fail(job.id, info.id, { requeue: true });
+        broadcastState();
+        return reply.code(err instanceof VideoSlotBusyError ? 204 : 503).send();
+      }
+      broadcastState();
+    }
     return job;
   });
 
@@ -368,8 +456,11 @@ export function createHub(opts: HubOptions = {}): Hub {
     const info = node ? registry.byName(node) : null;
     if (!info) return reply.code(404).send({ error: 'unknown node' });
     if (!queue.complete(id, info.id, result)) return reply.code(409).send({ error: 'not the current runner' });
+    const settled = queue.get(id);
+    releaseVideoSlot(settled, info.name);
+    emitJobSettled(settled);
     broadcastState();
-    return queue.get(id);
+    return settled;
   });
 
   app.post('/api/jobs/:id/fail', async (req, reply) => {
@@ -385,8 +476,44 @@ export function createHub(opts: HubOptions = {}): Hub {
     const info = node ? registry.byName(node) : null;
     if (!info) return reply.code(404).send({ error: 'unknown node' });
     if (!queue.fail(id, info.id, { requeue, error })) return reply.code(409).send({ error: 'not the current runner' });
+    const settled = queue.get(id);
+    releaseVideoSlot(settled, info.name);
+    // A requeued job hasn't settled — it will be claimed again — so only a terminal failure is
+    // announced.
+    if (settled?.status === 'failed') emitJobSettled(settled);
     broadcastState();
-    return queue.get(id);
+    return settled;
+  });
+
+  /**
+   * Where a daemon puts a finished clip. The hub usually runs on another machine, so the file the
+   * executor wrote to the node's own disk is unreachable from here — the daemon uploads the bytes
+   * and the hub stores them at the path the Global Constraints fix.
+   */
+  app.post('/api/jobs/:id/artifact', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const job = queue.get(id);
+    if (!job) return reply.code(404).send({ error: 'unknown job' });
+    if (job.type !== 'video-gen') return reply.code(400).send({ error: 'job type has no artifact' });
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) return reply.code(400).send({ error: 'empty artifact' });
+    const path = await videoArtifactPath(job);
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, body);
+    jobLogs.append(id, `[hub] stored ${body.length} bytes at ${path}`);
+    return { path, bytes: body.length };
+  });
+
+  app.post('/api/video', async (req, reply) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { project, ...rest } = body;
+    if (project !== undefined && (typeof project !== 'string' || !SLUG_RE.test(project))) {
+      return reply.code(400).send({ error: 'invalid project' });
+    }
+    const payload = videoPayloadFrom(rest);
+    if (!payload) return reply.code(400).send({ error: 'invalid video payload' });
+    const job = enqueueVideo(payload, project as string | undefined);
+    return reply.code(201).send({ ...job, outputPath: await videoArtifactPath(job) });
   });
 
   app.post('/api/agents', async (req) => {
@@ -582,7 +709,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const memory = await MemoryStore.open(cfg.memoryRoot);
     const planner = new Planner(join(cfg.memoryRoot, 'planner'), (msg) => memory.commit(msg));
     const gate = new ConfirmationGate();
-    const tools = assistantTools({ memory, planner, gate, service: projects, master, registry });
+    const tools = assistantTools({ memory, planner, gate, service: projects, master, registry, jobs: queue });
     const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript });
 
     const handle: AssistantHandle = { memory, planner, gate, assistant, port: null, router: null, scheduler: null, alerts: null };
@@ -590,7 +717,10 @@ export function createHub(opts: HubOptions = {}): Hub {
 
     const { port, ownerChatId } = cfg.telegram;
     const clock = cfg.clock ?? new SystemClock();
-    const router = new CommandRouter({ port, ownerChatId, assistant, service: projects, master, planner, registry, gate });
+    const router = new CommandRouter({
+      port, ownerChatId, assistant, service: projects, master, planner, registry, gate,
+      enqueueVideo: (payload) => enqueueVideo(payload, TELEGRAM_PROJECT),
+    });
     const scheduler = new Scheduler({
       clock, port, ownerChatId, master, service: projects, assistant,
       briefingTime: cfg.schedule?.briefingTime ?? DEFAULT_BRIEFING_TIME,
@@ -605,7 +735,7 @@ export function createHub(opts: HubOptions = {}): Hub {
       await port.start();
       router.start();
       scheduler.start();
-      const alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock });
+      const alerts = new Alerts({ port, ownerChatId, registry, service: projects, clock, videoArtifact: readVideoArtifact });
       alerts.attach(hubEvents);
       handle.port = port;
       handle.router = router;
@@ -732,7 +862,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
 
   return {
-    app, db, registry, queue, gateway, runtime, transcript, projects, master, leases, browser,
+    app, db, registry, queue, gateway, runtime, transcript, projects, master, leases, browser, resources,
     assistant() {
       if (!assistantReady) return Promise.reject(new Error('assistant not configured'));
       return assistantReady;

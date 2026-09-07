@@ -8,6 +8,8 @@ export interface OutgoingMessage {
   buttons?: InlineButton[][];
   parseMode?: 'MarkdownV2' | 'HTML' | undefined;
   voice?: Buffer;
+  /** An mp4 to send alongside the text — a finished `video-gen` job's clip. */
+  video?: Buffer;
 }
 
 export interface IncomingMessage {

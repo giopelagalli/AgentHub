@@ -25,8 +25,8 @@ export interface AuthOptions {
 export type Access = 'none' | 'open' | 'daemon' | 'owner';
 
 /**
- * The `<METHOD> <route>` pairs a daemon bearer may reach: `/api/jobs/claim` plus the per-job report
- * routes it calls while running one, and the two registration routes. Anything absent is the
+ * The `<METHOD> <route>` pairs a daemon bearer may reach: `/api/jobs/claim` plus the per-job report and
+ * artifact routes it calls while running one, and the two registration routes. Anything absent is the
  * owner's.
  */
 const DAEMON_ROUTES = new Set([
@@ -34,6 +34,7 @@ const DAEMON_ROUTES = new Set([
   'POST /api/nodes/:name/heartbeat',
   'POST /api/jobs/claim',
   'POST /api/jobs/:id/log',
+  'POST /api/jobs/:id/artifact',
   'POST /api/jobs/:id/complete',
   'POST /api/jobs/:id/fail',
 ]);

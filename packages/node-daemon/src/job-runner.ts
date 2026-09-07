@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Job, JobResult, JobType, ShellTaskPayload } from '@agenthub/shared';
 import { runShellTask } from './shell-task.js';
@@ -184,6 +185,16 @@ export class JobRunner {
       this.currentAbort = undefined;
       return;
     }
+    // The hub is normally on another machine, so a clip on this node's disk is of no use to it: it
+    // has to be uploaded before the job is reported done. A clip that won't upload is a job that
+    // delivered nothing, so it fails — without requeue, since re-rendering it would cost another
+    // GPU hour for the same broken hop.
+    if (outcome.ok && job.type === 'video-gen') {
+      const artifact = (outcome.result.data as { path?: string } | undefined)?.path;
+      const uploaded = artifact ? await this.uploadArtifact(job.id, artifact) : false;
+      if (!uploaded) outcome = { ok: false, error: 'artifact upload failed', requeue: false };
+    }
+
     this.inFlightReported = true;
     await this.flushLogs(job.id);
     if (outcome.ok) await this.reportComplete(job.id, outcome.result);
@@ -236,6 +247,34 @@ export class JobRunner {
         method: 'POST', headers: this.headers, body: JSON.stringify({ line }),
       });
     } catch { /* best effort */ }
+  }
+
+  private async uploadArtifact(jobId: number, path: string): Promise<boolean> {
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(path);
+    } catch (err) {
+      this.enqueueLog(jobId, `[runner] artifact ${path} could not be read: ${(err as Error).message}`);
+      return false;
+    }
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(`${this.opts.hub}/api/jobs/${jobId}/artifact`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/octet-stream', ...this.opts.authHeaders },
+          body: new Uint8Array(bytes),
+        });
+        if (res.ok) return true;
+        // A 4xx won't get better by trying again (unknown job, wrong type, empty body).
+        if (res.status < 500) {
+          this.enqueueLog(jobId, `[runner] artifact upload refused: ${res.status}`);
+          return false;
+        }
+      } catch { /* retry */ }
+      if (attempt < 3) await sleep(500);
+    }
+    this.enqueueLog(jobId, '[runner] artifact upload failed after 3 attempts');
+    return false;
   }
 
   private reportComplete(jobId: number, result: JobResult): Promise<void> {

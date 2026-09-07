@@ -159,3 +159,46 @@ export type WsMessage =
   // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
   // clients are not looking at the screening room.
   | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number };
+
+/** Exactly the video payload of PRD §11 / the plan's Global Constraints. */
+export interface VideoPayload {
+  prompt: string;
+  mode: 't2v' | 'i2v' | 'ref2v';
+  durationSec: number;
+  aspect: '16:9' | '9:16' | '1:1' | '3:4' | '4:3' | '21:9' | '3:2';
+  resolution: '768p' | '1080p';
+  imagePath?: string;
+}
+
+export const VIDEO_MODES = ['t2v', 'i2v', 'ref2v'] as const;
+export const VIDEO_ASPECTS = ['16:9', '9:16', '1:1', '3:4', '4:3', '21:9', '3:2'] as const;
+export const VIDEO_RESOLUTIONS = ['768p', '1080p'] as const;
+export const VIDEO_DURATION_MIN = 4;
+export const VIDEO_DURATION_MAX = 15;
+
+/** What everything but `prompt` becomes when the caller (Telegram, a tool) doesn't say. */
+export const VIDEO_DEFAULTS = { mode: 't2v', durationSec: 6, aspect: '16:9', resolution: '768p' } as const;
+
+/** Returns the payload, or null when it doesn't match the schema exactly. */
+export function parseVideoPayload(raw: unknown): VideoPayload | null {
+  const p = raw as Partial<VideoPayload> | undefined;
+  if (!p || typeof p !== 'object') return null;
+  if (typeof p.prompt !== 'string' || p.prompt === '') return null;
+  if (typeof p.mode !== 'string' || !VIDEO_MODES.includes(p.mode as VideoPayload['mode'])) return null;
+  if (typeof p.durationSec !== 'number' || !Number.isFinite(p.durationSec)
+    || p.durationSec < VIDEO_DURATION_MIN || p.durationSec > VIDEO_DURATION_MAX) return null;
+  if (typeof p.aspect !== 'string' || !VIDEO_ASPECTS.includes(p.aspect as VideoPayload['aspect'])) return null;
+  if (typeof p.resolution !== 'string' || !VIDEO_RESOLUTIONS.includes(p.resolution as VideoPayload['resolution'])) return null;
+  if (p.imagePath !== undefined && typeof p.imagePath !== 'string') return null;
+  return p as VideoPayload;
+}
+
+/**
+ * Fills the defaults a caller left out, then validates. Used by every hub-side entry point
+ * (`POST /api/video`, `/video`, the `generate_video` tool) so all three take the same shapes and
+ * reject the same ones; the daemon still re-validates what it is handed.
+ */
+export function videoPayloadFrom(raw: unknown): VideoPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  return parseVideoPayload({ ...VIDEO_DEFAULTS, ...(raw as Record<string, unknown>) });
+}

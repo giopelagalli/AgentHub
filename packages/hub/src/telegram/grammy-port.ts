@@ -60,6 +60,7 @@ export class GrammyPort implements TelegramPort {
       });
     }
     if (msg.voice) await this.bot.api.sendVoice(chatId, new InputFile(msg.voice));
+    if (msg.video) await this.bot.api.sendVideo(chatId, new InputFile(msg.video));
   }
 
   onMessage(handler: MessageHandler): void {

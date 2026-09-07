@@ -1,3 +1,4 @@
+import { VIDEO_ASPECTS, VIDEO_MODES, VIDEO_RESOLUTIONS, videoPayloadFrom, type Job, type JobSpec } from '@agenthub/shared';
 import type { Tool } from '../agents/tools.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { MasterOrchestrator } from '../projects/master.js';
@@ -44,6 +45,12 @@ const LIST_PARAM = { type: 'object', properties: { list: { type: 'string', enum:
 const SLUG_PARAM = { type: 'object', properties: { slug: strProp('Project slug.') }, required: ['slug'] };
 const NO_PARAMS = { type: 'object', properties: {}, required: [] };
 
+/** The slice of the job queue the video tools need. */
+export interface JobsAccess {
+  enqueue(spec: JobSpec): Job;
+  get(id: number): Job | null;
+}
+
 export interface AssistantToolDeps {
   memory: MemoryStore;
   planner: Planner;
@@ -51,6 +58,7 @@ export interface AssistantToolDeps {
   master: MasterOrchestrator;
   gate: ConfirmationGate;
   registry: NodeRegistry;
+  jobs: JobsAccess;
 }
 
 /**
@@ -62,7 +70,7 @@ export interface AssistantToolDeps {
  * where `demo_outward_action` sits.
  */
 export function assistantTools(deps: AssistantToolDeps): Tool[] {
-  const { memory, planner, service, master, gate, registry } = deps;
+  const { memory, planner, service, master, gate, registry, jobs } = deps;
   return [
     {
       def: {
@@ -203,6 +211,47 @@ export function assistantTools(deps: AssistantToolDeps): Tool[] {
           name: n.name, arch: n.arch, tiers: n.endpoints.map((e) => e.tier), jobTypes: n.jobTypes,
         }));
         return nodes.length ? JSON.stringify(nodes, null, 2) : '(no nodes online)';
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'generate_video',
+        description: 'Queue a video generation job on the cluster. It runs for minutes, so this returns a job id — read it back later with get_job.',
+        parameters: {
+          type: 'object',
+          properties: {
+            prompt: strProp('What the clip should show.'),
+            mode: { type: 'string', enum: [...VIDEO_MODES], description: 'Defaults to t2v (text to video).' },
+            durationSec: { type: 'number', description: 'Clip length, 4-15 seconds. Defaults to 6.' },
+            aspect: { type: 'string', enum: [...VIDEO_ASPECTS] },
+            resolution: { type: 'string', enum: [...VIDEO_RESOLUTIONS] },
+            imagePath: strProp('Source image, for the i2v and ref2v modes.'),
+            project: strProp('Project slug the clip belongs to; omitted, it lands in memory media/.'),
+          },
+          required: ['prompt'],
+        },
+      },
+      run: async (args) => {
+        const { project, ...rest } = fields(args);
+        const payload = videoPayloadFrom(rest);
+        if (!payload) throw new Error('invalid video payload');
+        const job = jobs.enqueue({
+          type: 'video-gen', tier: 'video-gen', priority: 'batch', payload,
+          ...(typeof project === 'string' && project ? { project } : {}),
+        });
+        return `queued video job ${job.id}`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'get_job', description: 'Read one job\'s status, result or error by id.',
+        parameters: { type: 'object', properties: { id: { type: 'number', description: 'Job id.' } }, required: ['id'] },
+      },
+      run: async (args) => {
+        const id = num(args, 'id');
+        const job = jobs.get(id);
+        if (!job) throw new Error(`no job ${id}`);
+        return JSON.stringify({ id: job.id, type: job.type, status: job.status, result: job.result, error: job.error });
       },
     },
     {

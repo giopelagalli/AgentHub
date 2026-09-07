@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { NodeInfo } from '@agenthub/shared';
+import type { Job, NodeInfo } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Assistant } from '../src/assistant/assistant.js';
@@ -101,7 +101,7 @@ async function setup(script: ScriptStep[] = []): Promise<Harness> {
   const planner = new Planner(join(memoryRoot, 'planner'), (msg) => memory.commit(msg));
   const gate = new ConfirmationGate();
   const loop = new AgentLoop({ gateway: hub.gateway, transcript: hub.transcript });
-  const tools = assistantTools({ memory, planner, gate, service: hub.projects, master: hub.master, registry: hub.registry });
+  const tools = assistantTools({ memory, planner, gate, service: hub.projects, master: hub.master, registry: hub.registry, jobs: hub.queue });
   const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript: hub.transcript });
 
   const port = new FakeTelegramPort();
@@ -327,14 +327,17 @@ describe('Scheduler firing', () => {
   });
 });
 
-function fakeEvents(): AlertEvents & { emitNodeOffline(n: NodeInfo, requeued: number): void; emitBriefing(b: Briefing): void } {
+function fakeEvents(): AlertEvents & { emitNodeOffline(n: NodeInfo, requeued: number): void; emitBriefing(b: Briefing): void; emitJobSettled(j: Job): void } {
   const nodeCbs: ((n: NodeInfo, requeued: number) => void)[] = [];
   const briefingCbs: ((b: Briefing) => void)[] = [];
+  const jobCbs: ((j: Job) => void)[] = [];
   return {
     onNodeOffline: (cb) => nodeCbs.push(cb),
     onBriefing: (cb) => briefingCbs.push(cb),
+    onJobSettled: (cb) => jobCbs.push(cb),
     emitNodeOffline: (n, requeued) => nodeCbs.forEach((cb) => cb(n, requeued)),
     emitBriefing: (b) => briefingCbs.forEach((cb) => cb(b)),
+    emitJobSettled: (j) => jobCbs.forEach((cb) => cb(j)),
   };
 }
 
@@ -369,7 +372,7 @@ describe('Alerts', () => {
     const { hub: h } = await setup();
     const port = new FailingPort();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock: new ManualClock(0) });
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock: new ManualClock(0), videoArtifact: async () => null });
     const events = fakeEvents();
     alerts.attach(events);
 
@@ -383,7 +386,7 @@ describe('Alerts', () => {
   it('sends a node-offline alert with the re-queued job count', async () => {
     const { hub: h, port } = await setup();
     const clock = new ManualClock(0);
-    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock });
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock, videoArtifact: async () => null });
     const events = fakeEvents();
     alerts.attach(events);
 
@@ -396,7 +399,7 @@ describe('Alerts', () => {
   it('dedupes the same alert key within 30 minutes, and re-sends after', async () => {
     const { hub: h, port } = await setup();
     const clock = new ManualClock(0);
-    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock });
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock, videoArtifact: async () => null });
     const events = fakeEvents();
     alerts.attach(events);
 
@@ -421,7 +424,7 @@ describe('Alerts', () => {
   it('sends a blocked-project alert with its blockers', async () => {
     const { hub: h, port } = await setup();
     const clock = new ManualClock(0);
-    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock });
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock, videoArtifact: async () => null });
     const events = fakeEvents();
     alerts.attach(events);
 
@@ -438,7 +441,7 @@ describe('Alerts', () => {
   it('ignores briefings that are not blocked', async () => {
     const { hub: h, port } = await setup();
     const clock = new ManualClock(0);
-    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock });
+    const alerts = new Alerts({ port, ownerChatId: OWNER, registry: h.registry, service: h.projects, clock, videoArtifact: async () => null });
     const events = fakeEvents();
     alerts.attach(events);
 

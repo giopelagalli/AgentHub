@@ -10,6 +10,10 @@ const UNHEALTHY_MS = 10_000;
 export class ModelGateway {
   private active = new Map<string, number>(); // `${node.name}|${tier}|${endpoint.url}` -> active streams
   private unhealthyUntil = new Map<string, number>(); // same key -> epoch ms until which it's skipped
+  // Endpoints parked by the ResourceManager for the Spark exclusivity swap (spec §4.3). Unlike
+  // `unhealthyUntil` this has no expiry: the endpoint's serving process is actually stopped, and
+  // only the manager that parked it knows when it is back.
+  private parked = new Set<string>();
   private now: () => number;
 
   constructor(private registry: NodeRegistry, opts: { now?: () => number } = {}) {
@@ -31,7 +35,7 @@ export class ModelGateway {
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
         const key = this.key(node, endpoint);
-        if (key === excludeKey) continue;
+        if (key === excludeKey || this.parked.has(key)) continue;
         const until = this.unhealthyUntil.get(key);
         if (until !== undefined && until > now) continue;
         return true;
@@ -51,6 +55,7 @@ export class ModelGateway {
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
         const key = this.key(node, endpoint);
+        if (this.parked.has(key)) continue;
         const until = this.unhealthyUntil.get(key);
         if (until !== undefined && until > now) continue;
         const active = this.active.get(key) ?? 0;
@@ -59,6 +64,35 @@ export class ModelGateway {
     }
     candidates.sort((a, b) => a.active - b.active);
     return candidates[0]?.pick ?? null;
+  }
+
+  /**
+   * Takes every `tiers` endpoint of `nodeName` out of `pick()` until `unpark`. Streams already
+   * running on them are not touched — the caller drains them (see `ResourceManager`).
+   */
+  park(nodeName: string, tiers: Tier[]): void {
+    const node = this.registry.byName(nodeName);
+    if (!node) return;
+    for (const ep of node.endpoints) if (tiers.includes(ep.tier)) this.parked.add(this.key(node, ep));
+  }
+
+  /** Puts `nodeName`'s parked endpoints back in rotation. Safe to call when nothing is parked. */
+  unpark(nodeName: string): void {
+    for (const key of this.parked) if (key.startsWith(`${nodeName}|`)) this.parked.delete(key);
+  }
+
+  parkedKeys(): string[] {
+    return [...this.parked];
+  }
+
+  /** Streams still in flight on `nodeName`'s `tiers` endpoints — what a drain waits to reach 0. */
+  activeStreamsOn(nodeName: string, tiers: Tier[]): number {
+    let sum = 0;
+    for (const [key, n] of this.active) {
+      const [name, tier] = key.split('|');
+      if (name === nodeName && tiers.includes(tier as Tier)) sum += n;
+    }
+    return sum;
   }
 
   activeStreams(tier?: Tier): number {

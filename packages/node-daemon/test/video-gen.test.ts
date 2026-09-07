@@ -99,7 +99,7 @@ describe('JobRunner video-gen dispatch', () => {
     const hubUrl = await startHub();
     await fetch(`${hubUrl}/api/nodes/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name: 'vid', arch: 'arm64', endpoints: [], jobTypes: ['video-gen'] }),
+      body: JSON.stringify({ name: 'vid', arch: 'arm64', endpoints: [], jobTypes: ['video-gen'], video: true }),
     });
     const job = hub!.queue.enqueue({ type: 'video-gen', tier: 'video-gen', priority: 'batch', payload });
     const runner = new JobRunner({
@@ -134,5 +134,8 @@ describe('JobRunner video-gen dispatch', () => {
     const j = await runOne(PAYLOAD, comfyUrl, workspaceRoot);
     expect(j.status).toBe('done');
     expect(j.result?.data).toMatchObject({ path: join(workspaceRoot, '_default', 'media', 'video', `${j.id}.mp4`), durationSec: 6 });
+    // The runner uploads the clip before reporting done, so the hub holds its own copy.
+    const logs = (await hub!.app.inject({ method: 'GET', url: `/api/jobs/${j.id}` })).json().logs as { line: string }[];
+    expect(logs.some((l) => /\[hub\] stored \d+ bytes/.test(l.line))).toBe(true);
   });
 });

@@ -63,12 +63,13 @@ async function setup(script: ScriptStep[] = [], port: FakeTelegramPort = new Fak
   const planner = new Planner(join(memoryRoot, 'planner'), (msg) => memory.commit(msg));
   const gate = new ConfirmationGate();
   const loop = new AgentLoop({ gateway: hub.gateway, transcript: hub.transcript });
-  const tools = assistantTools({ memory, planner, gate, service: hub.projects, master: hub.master, registry: hub.registry });
+  const tools = assistantTools({ memory, planner, gate, service: hub.projects, master: hub.master, registry: hub.registry, jobs: hub.queue });
   const assistant = new Assistant({ loop, tools, memory, planner, gate, transcript: hub.transcript });
 
   const router = new CommandRouter({
     port, ownerChatId: OWNER, assistant, service: hub.projects, master: hub.master,
     planner, registry: hub.registry, gate,
+    enqueueVideo: (payload) => hub!.queue.enqueue({ type: 'video-gen', tier: 'video-gen', priority: 'batch', project: '_telegram', payload }),
   });
   router.start();
   activeRouter = router;
@@ -218,9 +219,24 @@ describe('CommandRouter', () => {
     expect(port.sent[0]!.msg.text).toContain('spark (arm64)');
   });
 
-  it('/video and /controlnode reply that they are coming in Phase 6', async () => {
-    const { port } = await setup();
+  it('/video queues a video-gen job and replies with its id', async () => {
+    const { port, hub: h } = await setup();
     await deliver(port, OWNER, '/video a sunset over the ocean');
+    const job = h.queue.list().find((j) => j.type === 'video-gen')!;
+    expect(job.project).toBe('_telegram');
+    expect(job.payload).toMatchObject({ prompt: 'a sunset over the ocean', mode: 't2v', durationSec: 6 });
+    expect(port.sent[0]!.msg.text).toBe(`Queued video job #${job.id}: a sunset over the ocean`);
+  });
+
+  it('/video without a prompt explains the usage', async () => {
+    const { port } = await setup();
+    await deliver(port, OWNER, '/video');
+    expect(port.sent[0]!.msg.text).toBe('usage: /video <prompt>');
+  });
+
+  it('/controlnode still replies that it is coming in Phase 6', async () => {
+    const { port } = await setup();
+    await deliver(port, OWNER, '/controlnode');
     expect(port.sent[0]!.msg.text).toBe('coming in Phase 6');
   });
 

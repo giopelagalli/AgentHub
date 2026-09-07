@@ -260,17 +260,58 @@ describe('browser proxy timeouts', () => {
     const registry = new NodeRegistry(db);
     registry.register({ name: 'stuck', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: blackholeUrl } });
     const leases = new LeaseManager();
-    const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), screencastTimeoutMs: 100 });
+
+    // A fetch that never settles on its own — proves `inFlight` is released by the per-call timeout
+    // (AbortSignal.timeout), not by the upstream ever answering. Asserting frames===0 alone wouldn't
+    // catch a regression that never clears `inFlight`: the black hole errors either way, so only
+    // counting how many times fetch was actually invoked distinguishes "polling kept going" from
+    // "wedged after the first tick".
+    let calls = 0;
+    const hangingFetch = ((_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      calls += 1;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      });
+    }) as typeof fetch;
+
+    const proxy = new BrowserProxy({
+      registry, leases, recorder: new Recorder({ root: blackholeRecordings }),
+      fetch: hangingFetch, screencastTimeoutMs: 100,
+    });
 
     const cast = proxy.screencast(500);
     let frames = 0;
     cast.onFrame(() => { frames += 1; });
     cast.start();
-    // Two poll intervals' worth of wall time; each poll's fetch is capped at 100ms, so both ticks
-    // must finish (with no frame — the black hole always errors) well inside this window. If the
-    // timeout didn't apply, the first tick alone would still be in flight, wedging `inFlight` forever.
+    // Two-plus poll intervals' worth of wall time; each poll's fetch is capped at 100ms, so multiple
+    // ticks must fire well inside this window if (and only if) the timeout releases `inFlight`
+    // between them — otherwise the first call alone would still be in flight and `calls` would stay 1.
     await new Promise((r) => setTimeout(r, 1200));
     cast.stop();
     expect(frames).toBe(0);
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  it('maps a stalled response body to 504, not a raw abort error', async () => {
+    const stallBody = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      // headers sent, body never written or ended
+    });
+    await new Promise<void>((resolve) => stallBody.listen(0, '127.0.0.1', resolve));
+    const stallUrl = `http://127.0.0.1:${(stallBody.address() as { port: number }).port}`;
+    try {
+      const db = openDb(':memory:');
+      const registry = new NodeRegistry(db);
+      registry.register({ name: 'stalling', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: stallUrl } });
+      const leases = new LeaseManager();
+      const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), actionTimeoutMs: 100 });
+
+      const granted = leases.acquire({ kind: 'owner', id: 'owner' });
+      if (!('granted' in granted)) throw new Error('expected the owner to be granted');
+
+      await expect(proxy.act(granted.leaseId, { op: 'read' })).rejects.toMatchObject({ status: 504, message: 'browser node timeout' });
+    } finally {
+      await new Promise<void>((resolve) => stallBody.close(() => resolve()));
+    }
   });
 });

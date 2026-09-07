@@ -156,14 +156,14 @@ export class BrowserProxy {
     const res = await this.call(`${url}/browser/${op}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(args) }, this.actionTimeoutMs);
     // The daemon already separates "asked wrong" (400) from "the browser couldn't" (502); relaying
     // its status keeps that distinction all the way out to the agent.
-    if (!res.ok) throw new BrowserError(res.status, await errorText(res));
-    return res.json();
+    if (!res.ok) throw new BrowserError(res.status, await this.readBody(res, errorText, this.actionTimeoutMs));
+    return this.readBody(res, (r) => r.json(), this.actionTimeoutMs);
   }
 
   private async shot(url: string, timeoutMs: number): Promise<Buffer> {
     const res = await this.call(`${url}/browser/screenshot`, { headers: this.headers() }, timeoutMs);
-    if (!res.ok) throw new BrowserError(res.status, await errorText(res));
-    return Buffer.from(await res.arrayBuffer());
+    if (!res.ok) throw new BrowserError(res.status, await this.readBody(res, errorText, timeoutMs));
+    return this.readBody(res, async (r) => Buffer.from(await r.arrayBuffer()), timeoutMs);
   }
 
   /**
@@ -175,10 +175,28 @@ export class BrowserProxy {
     try {
       return await this.doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
-      if (err instanceof Error && err.name === 'TimeoutError') throw new BrowserError(504, 'browser node timeout');
-      throw new BrowserError(503, `browser node unreachable: ${(err as Error).message}`);
+      throw toBrowserError(err);
     }
   }
+
+  /**
+   * Headers can arrive promptly while the body itself stalls (a node that accepted the request but
+   * never finishes writing it) — `call`'s timeout only bounds the request that produced `res`, so
+   * reading the body needs the same TimeoutError → 504 mapping, not a raw DOMException reaching the
+   * caller.
+   */
+  private async readBody<T>(res: Response, read: (res: Response) => Promise<T>, timeoutMs: number): Promise<T> {
+    try {
+      return await read(res);
+    } catch (err) {
+      throw toBrowserError(err);
+    }
+  }
+}
+
+function toBrowserError(err: unknown): BrowserError {
+  if (err instanceof Error && err.name === 'TimeoutError') return new BrowserError(504, 'browser node timeout');
+  return new BrowserError(503, `browser node unreachable: ${(err as Error).message}`);
 }
 
 async function errorText(res: Response): Promise<string> {

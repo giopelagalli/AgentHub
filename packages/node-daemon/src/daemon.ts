@@ -15,6 +15,9 @@ const RUNNER_STOP_WAIT_MS = 6000;
 
 const DEFAULT_BROWSER_PORT = 8130;
 
+/** Bounds each browser teardown call so a hung close() can't block the runner/supervisor shutdown below. */
+const BROWSER_CLOSE_TIMEOUT_MS = 5000;
+
 export interface DaemonDeps {
   /** Swapped for a `FakeDriver` in tests, so no test ever launches a real browser. */
   createBrowserDriver?: (cfg: BrowserConfig) => Promise<BrowserDriver>;
@@ -30,7 +33,7 @@ export class Daemon {
   /** The port the browser server actually bound, which differs from config when it asked for 0. */
   private browserPort?: number;
   constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
-    this.supervisor = new Supervisor(cfg.serving, (s) => {
+    this.supervisor = new Supervisor(cfg.serving ?? [], (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
       void this.stop().then(() => process.exit(1));
     });
@@ -40,7 +43,7 @@ export class Daemon {
     const host = this.cfg.advertiseHost ?? '127.0.0.1';
     return {
       name: this.cfg.node.name, arch: this.cfg.node.arch,
-      endpoints: this.cfg.serving.map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams })),
+      endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams })),
       jobTypes: this.cfg.jobTypes ?? [],
       ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
     };
@@ -106,16 +109,31 @@ export class Daemon {
     }
   }
 
+  // A wedged browser (a hung Chromium, an app or driver whose close() never resolves) must not stop
+  // the runner and supervisor from shutting down — those own real child processes. Each close gets
+  // its own try/catch, so a throw from the app doesn't skip the driver, and its own timeout, so a
+  // hang in either can't block the rest of stop().
+  private async closeWithTimeout(label: string, close: () => Promise<void>): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = new Promise<true>((resolve) => {
+      timer = setTimeout(() => resolve(true), BROWSER_CLOSE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    try {
+      if (await Promise.race([close().then(() => false), timedOut])) {
+        console.error(`[daemon] ${label} close timed out after ${BROWSER_CLOSE_TIMEOUT_MS}ms`);
+      }
+    } catch (err) {
+      console.error(`[daemon] ${label} close failed:`, err);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
-    // A wedged browser (a hung Chromium, a driver that never resolves close()) must not stop the
-    // runner and supervisor below from shutting down — those own real child processes.
-    try {
-      if (this.browserApp) await this.browserApp.close();
-      if (this.browserDriver) await this.browserDriver.close();
-    } catch (err) {
-      console.error('[daemon] browser teardown failed:', err);
-    }
+    if (this.browserApp) await this.closeWithTimeout('browser app', () => this.browserApp!.close());
+    if (this.browserDriver) await this.closeWithTimeout('browser driver', () => this.browserDriver!.close());
     if (this.runner) {
       await this.runner.stop();
       await this.runner.waitForIdle(RUNNER_STOP_WAIT_MS);

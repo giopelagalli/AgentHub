@@ -10,7 +10,7 @@ export interface DaemonConfig {
   hub: string;
   advertiseHost?: string;
   heartbeatMs?: number;
-  serving: ServingConfig[];
+  serving?: ServingConfig[];
   jobTypes?: JobType[];
   workspaceRoot?: string;
   claimIntervalMs?: number;
@@ -24,7 +24,7 @@ export function loadConfig(path: string): DaemonConfig {
   // `serving` is optional: a node that only hosts the shared browser, or only runs a job runner,
   // declares no model tier at all. Only when it *is* present must every entry be well-formed.
   const serving = raw.serving ?? [];
-  if (!Array.isArray(serving)) throw new Error('daemon config: serving missing');
+  if (!Array.isArray(serving)) throw new Error('daemon config: serving must be a list');
   for (const s of serving) {
     if (!s.tier || !s.model || !s.port || !s.maxStreams || !Array.isArray(s.cmd) || s.cmd.length === 0)
       throw new Error('daemon config: serving entry missing tier/model/port/maxStreams/cmd');

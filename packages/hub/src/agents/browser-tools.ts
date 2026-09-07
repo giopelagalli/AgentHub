@@ -207,7 +207,7 @@ export function browserTools(deps: BrowserToolDeps, kind: BrowserRequesterKind):
   const held: Held = new Map();
   return [
     {
-      def: { type: 'tool', name: 'acquire_browser', description: 'Request the shared browser lease; returns once granted, or the queue position.', parameters: { type: 'object', properties: {}, required: [] } },
+      def: { type: 'tool', name: 'acquire_browser', description: kind === 'orchestrator' ? 'Request the shared browser lease; returns once granted, or "browser busy" if it times out waiting.' : 'Request the shared browser lease; returns once granted, or your queue position.', parameters: { type: 'object', properties: {}, required: [] } },
       run: async (_args, ctx) => acquire(deps, held, kind, ctx),
     },
     {

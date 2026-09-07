@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { loadConfig, type DaemonConfig } from '../src/config.js';
 import { Daemon } from '../src/daemon.js';
+import { Supervisor } from '../src/supervisor.js';
 import { FakeDriver, FAKE_JPEG, MAX_LINKS, MAX_TEXT, type BrowserDriver } from '../src/browser/driver.js';
 import { createBrowserServer } from '../src/browser/server.js';
 
@@ -212,6 +213,35 @@ describe('daemon browser capability', () => {
     expect(driver.closed).toBe(true);
     await expect(fetch(`${url}/browser/state`)).rejects.toThrow();
   }, 30000);
+
+  it('stop() tears down the app and still stops the supervisor when the driver close() rejects', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+
+    const cfgPath = join(tmpDir(), 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: x', '  arch: arm64', `hub: http://127.0.0.1:${hubPort}`,
+      'browser:', '  enabled: true', '  port: 0',
+    ].join('\n'));
+
+    const rejectingDriver: BrowserDriver = {
+      navigate: async () => ({ url: 'x', title: 'x' }),
+      read: async () => ({ state: { url: 'x', title: 'x' }, text: '', links: [] }),
+      click: async () => ({ url: 'x', title: 'x' }),
+      type: async () => ({ url: 'x', title: 'x' }),
+      screenshot: async () => Buffer.from(''),
+      close: async () => { throw new Error('driver close boom'); },
+    };
+    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDriver: async () => rejectingDriver });
+    await daemon.start();
+
+    const stopAllSpy = vi.spyOn(Supervisor.prototype, 'stopAll');
+    await expect(daemon.stop()).resolves.toBeUndefined();
+    daemon = undefined;
+    expect(stopAllSpy).toHaveBeenCalled();
+    stopAllSpy.mockRestore();
+  });
 
   it('starts and registers a browser-only node — no serving entries, endpoints: []', async () => {
     hub = createHub({ staleMs: 60000 });

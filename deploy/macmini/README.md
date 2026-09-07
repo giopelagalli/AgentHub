@@ -14,12 +14,14 @@ tier.
 
 The control node normally runs no node daemon at all — just the hub
 process above. The browser simulator below is the one thing that needs
-one, and the daemon config validator requires at least one `serving`
-entry (`config.ts` throws `daemon config: serving missing` on an empty
-or missing list) — so a browser daemon here has to declare a real
-serving entry too. Whatever it declares is registered with the hub and
-routable by the gateway, so declare a model this machine can actually
-serve, not a stub: a stub endpoint would take agent traffic and fail it.
+one, and it can declare `browser: { enabled: true }` with no `serving`
+entries at all: the daemon config validator only requires *some*
+capability be declared (`config.ts` throws `daemon config: no capability
+(serving, jobTypes or browser) declared` when `serving`, `jobTypes` and
+`browser` are all absent), and `browser` alone satisfies it. There is no
+need for a stub `serving` entry — a stub endpoint would be registered
+with the hub and routable by the gateway, taking agent traffic and
+failing it.
 
 ## launchd plist for the hub (sketch)
 
@@ -104,12 +106,6 @@ nodes; leave it unset on macOS.
     node: { name: macmini, arch: arm64 }
     hub: http://127.0.0.1:4000
     # No advertiseHost: the browser server stays on loopback (see below).
-    serving:
-      - tier: worker            # required by the validator; serve something real
-        model: <model>
-        port: 8001
-        maxStreams: 2
-        cmd: ["./launch-worker.sh"]
     jobTypes: ["browser-lease"]
     browser:
       enabled: true

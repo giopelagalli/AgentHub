@@ -108,8 +108,14 @@ export class Daemon {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
-    if (this.browserApp) await this.browserApp.close();
-    if (this.browserDriver) await this.browserDriver.close();
+    // A wedged browser (a hung Chromium, a driver that never resolves close()) must not stop the
+    // runner and supervisor below from shutting down — those own real child processes.
+    try {
+      if (this.browserApp) await this.browserApp.close();
+      if (this.browserDriver) await this.browserDriver.close();
+    } catch (err) {
+      console.error('[daemon] browser teardown failed:', err);
+    }
     if (this.runner) {
       await this.runner.stop();
       await this.runner.waitForIdle(RUNNER_STOP_WAIT_MS);

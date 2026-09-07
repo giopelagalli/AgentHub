@@ -160,6 +160,22 @@ describe('daemon browser capability', () => {
     expect(() => loadConfig(path)).toThrow(/browser.enabled/);
   });
 
+  it('accepts a browser-only config with no serving entries at all', () => {
+    const path = join(tmpDir(), 'daemon.yaml');
+    writeFileSync(path, [
+      'node:', '  name: x', '  arch: arm64', 'hub: http://127.0.0.1:1',
+      'browser:', '  enabled: true',
+    ].join('\n'));
+    const cfg = loadConfig(path);
+    expect(cfg.serving).toEqual([]);
+  });
+
+  it('rejects a config with no serving, jobTypes or browser capability declared', () => {
+    const path = join(tmpDir(), 'daemon.yaml');
+    writeFileSync(path, ['node:', '  name: x', '  arch: arm64', 'hub: http://127.0.0.1:1'].join('\n'));
+    expect(() => loadConfig(path)).toThrow(/daemon config: no capability \(serving, jobTypes or browser\) declared/);
+  });
+
   it('serves the browser API and registers its url with the hub, then tears both down on stop', async () => {
     hub = createHub({ staleMs: 60000 });
     await hub.app.listen({ port: 0, host: '127.0.0.1' });
@@ -195,5 +211,31 @@ describe('daemon browser capability', () => {
     daemon = undefined;
     expect(driver.closed).toBe(true);
     await expect(fetch(`${url}/browser/state`)).rejects.toThrow();
+  }, 30000);
+
+  it('starts and registers a browser-only node — no serving entries, endpoints: []', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+
+    const cfgPath = join(tmpDir(), 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: browser-only', '  arch: arm64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'heartbeatMs: 500',
+      'browser:', '  enabled: true', '  port: 0',
+    ].join('\n'));
+
+    const driver = new FakeDriver(PAGES);
+    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDriver: async () => driver });
+    await daemon.start();
+
+    const node = hub.registry.byName('browser-only');
+    expect(node?.endpoints).toEqual([]);
+    expect(node?.browser?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+
+    await daemon.stop();
+    daemon = undefined;
+    expect(driver.closed).toBe(true);
   }, 30000);
 });

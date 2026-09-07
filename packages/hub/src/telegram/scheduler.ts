@@ -54,24 +54,37 @@ function partsInTz(ms: number, tz: string): { y: number; mo: number; d: number }
   return { y: Number(parts.year), mo: Number(parts.month) - 1, d: Number(parts.day) };
 }
 
+/** The instant `ms` rendered as local wall-clock fields in `tz`, packed back into an epoch for comparison. */
+function renderedAsUtc(ms: number, tz: string): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]),
+  );
+  return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), 0);
+}
+
 /**
  * Epoch of local `y-mo-d h:m` in `tz`. There is no inverse local-to-UTC conversion without a tz
  * database, so this guesses (treating the wall-clock fields as UTC) and corrects for the zone's
- * actual offset at that instant; two passes are enough to settle even across a DST transition.
+ * actual offset at that instant; two passes are enough to settle any local time that exists.
+ *
+ * One does not: the hour skipped by a spring-forward. No instant renders as it, so the correction
+ * just oscillates around the gap and lands on whichever side the arithmetic happened to leave it —
+ * for a `02:30` briefing that can mean 01:30, an hour *before* the owner asked for. The final step
+ * pushes such a result forward onto the far side of the gap, so a skipped time fires just after it
+ * and never early.
  */
 function epochForTz(y: number, mo: number, d: number, h: number, mi: number, tz: string): number {
-  let guess = Date.UTC(y, mo, d, h, mi, 0);
+  const desiredAsUtc = Date.UTC(y, mo, d, h, mi, 0);
+  let guess = desiredAsUtc;
   for (let i = 0; i < 2; i++) {
-    const dtf = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-    });
-    const p = Object.fromEntries(dtf.formatToParts(new Date(guess)).map((x) => [x.type, x.value]));
-    const guessedAsUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), 0);
-    const desiredAsUtc = Date.UTC(y, mo, d, h, mi, 0);
-    const diff = desiredAsUtc - guessedAsUtc;
+    const diff = desiredAsUtc - renderedAsUtc(guess, tz);
     if (diff === 0) break;
     guess += diff;
   }
+  const rendered = renderedAsUtc(guess, tz);
+  if (rendered < desiredAsUtc) guess += desiredAsUtc - rendered;
   return guess;
 }
 

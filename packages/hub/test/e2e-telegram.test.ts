@@ -57,18 +57,19 @@ async function flush(): Promise<void> {
 }
 
 /**
- * Polls `predicate`, for the two spots in this test that observe the result of a genuinely
- * fire-and-forget async chain (the `/new` background turn, the scheduler's fire-and-forget send) —
- * both make a real fetch to the loopback mock server, whose cold-start latency a bounded
- * `setImmediate` spin can undershoot. Matches the same real-time-bounded pattern router.test.ts's
- * `waitForMessage` and assistant-api.test.ts's node-offline check already use for the same reason.
+ * Polls `predicate` across a bounded number of event-loop turns — never a timed sleep — for the two
+ * spots in this test that observe a genuinely fire-and-forget async chain (the `/new` background
+ * turn, the scheduler's send). Each `flush` yields to the poll and check phases, so the real fetch
+ * to the loopback mock server and the git work behind it make progress between iterations. Same
+ * shape as scheduler.test.ts's helper; the bound is deliberately far above what the slowest of
+ * these waits actually needs (a few thousand turns) so it only ever trips on a real hang.
  */
-async function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() > deadline) throw new Error('timed out waiting for condition');
-    await new Promise((r) => setTimeout(r, 10));
+async function waitFor(predicate: () => boolean, maxIterations = 200_000): Promise<void> {
+  for (let i = 0; i < maxIterations; i++) {
+    if (predicate()) return;
+    await flush();
   }
+  throw new Error('timed out waiting for condition');
 }
 
 let hub: Hub | undefined;

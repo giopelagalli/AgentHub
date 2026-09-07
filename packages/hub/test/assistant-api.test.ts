@@ -33,10 +33,10 @@ interface Harness {
   clock: FakeClock;
 }
 
-async function setup(opts: { script?: ScriptStep[]; staleMs?: number } = {}): Promise<Harness> {
+async function setup(opts: { script?: ScriptStep[]; staleMs?: number; tokenDelayMs?: number } = {}): Promise<Harness> {
   projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-api-projects-'));
   memoryRoot = await mkdtemp(join(tmpdir(), 'agenthub-api-memory-'));
-  mock = createMockOpenAI({ script: opts.script ?? [] });
+  mock = createMockOpenAI({ script: opts.script ?? [], ...(opts.tokenDelayMs ? { tokenDelayMs: opts.tokenDelayMs } : {}) });
   await mock.listen({ port: 0, host: '127.0.0.1' });
   const url = `http://127.0.0.1:${(mock.server.address() as { port: number }).port}`;
 
@@ -117,6 +117,26 @@ describe('assistant HTTP API', () => {
     expect((await h.app.inject({ method: 'POST', url: `/api/assistant/pending/${id}/cancel` })).json()).toEqual({ ok: true });
     expect((await h.app.inject({ method: 'POST', url: `/api/assistant/pending/${id}/cancel` })).statusCode).toBe(404);
     expect((await h.app.inject({ method: 'POST', url: `/api/assistant/pending/${id}/confirm` })).statusCode).toBe(404);
+  });
+
+  it('aborts the model session when the client closes the stream', async () => {
+    const { hub: h } = await setup({ script: [{ content: 'a slow answer nobody is listening to' }], tokenDelayMs: 50 });
+    await h.app.listen({ port: 0, host: '127.0.0.1' });
+    const addr = (h.app.server.address() as { port: number }).port;
+
+    const ac = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${addr}/api/assistant/messages`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'take your time' }), signal: ac.signal,
+    });
+    // Read one frame so the session is genuinely under way, then hang up on it.
+    const reader = res.body!.getReader();
+    await reader.read();
+    ac.abort();
+
+    const sessions = () => h.transcript.sessions({ kind: 'assistant', subject: 'owner' });
+    for (let i = 0; i < 200 && sessions()[0]?.outcome !== 'aborted'; i++) await new Promise((r) => setTimeout(r, 10));
+    expect(sessions()[0]?.outcome).toBe('aborted');
   });
 
   it('rejects a message with no text', async () => {

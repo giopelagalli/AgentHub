@@ -84,6 +84,23 @@ describe('MemoryStore.remember / index / read', () => {
     expect(note?.body).toContain('No sugar, ever.');
   });
 
+  it('flattens a multi-line description so the index line still parses back', async () => {
+    const store = await MemoryStore.open(root);
+    await store.remember({
+      name: 'Standup', description: 'Daily at 9\nBring the notes', type: 'routine', body: 'Standup is daily.',
+    });
+    await store.remember({ name: 'Coffee', description: 'oat milk', type: 'preference', body: 'Oat milk.' });
+
+    // A newline in a description used to write a second line the line-anchored index regex could
+    // not match, silently dropping that note — and every note after it — on the next write.
+    const raw = await readFile(join(root, 'MEMORY.md'), 'utf8');
+    expect(raw).toContain('- [Standup](notes/standup.md) — Daily at 9 Bring the notes');
+    expect(await store.index()).toEqual([
+      { name: 'Standup', description: 'Daily at 9 Bring the notes', file: 'notes/standup.md' },
+      { name: 'Coffee', description: 'oat milk', file: 'notes/coffee.md' },
+    ]);
+  });
+
   it('read returns null for an unknown note', async () => {
     const store = await MemoryStore.open(root);
     expect(await store.read('Nope')).toBeNull();

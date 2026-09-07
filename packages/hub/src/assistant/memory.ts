@@ -23,6 +23,15 @@ interface IndexEntry {
 const MEMORY_HEADER = '# Memory Index\n\nOne line per note. Edit by hand or via the assistant.\n\n';
 const INDEX_LINE_RE = /^- \[(.+?)\]\((notes\/[^)]+\.md)\) — (.*)$/;
 
+/**
+ * Flattens a description to a single line. The index is one note per line and is parsed back with a
+ * line-anchored regex, so a model-supplied description containing a newline would otherwise write a
+ * second line that no longer parses — silently dropping the note from the index on the next write.
+ */
+function oneLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, ' ').trim();
+}
+
 function slugify(name: string): string {
   const slug = name
     .toLowerCase()
@@ -86,7 +95,7 @@ export class MemoryStore {
   }
 
   private async writeIndexEntries(entries: IndexEntry[]): Promise<void> {
-    const lines = entries.map((e) => `- [${e.name}](${e.file}) — ${e.description}`);
+    const lines = entries.map((e) => `- [${e.name}](${e.file}) — ${oneLine(e.description)}`);
     await writeFile(join(this.root, 'MEMORY.md'), MEMORY_HEADER + lines.join('\n') + (lines.length ? '\n' : ''), 'utf8');
   }
 

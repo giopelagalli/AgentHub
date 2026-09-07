@@ -67,7 +67,7 @@ function systemPrompt(memoryIndex: string, plannerSnapshot: string): string {
 export class Assistant {
   constructor(private deps: AssistantDeps) {}
 
-  async reply(text: string, opts: { onToken?: (t: string) => void } = {}): Promise<AssistantReply> {
+  async reply(text: string, opts: { onToken?: (t: string) => void; signal?: AbortSignal } = {}): Promise<AssistantReply> {
     const [memoryIndex, plannerSnapshot] = await Promise.all([
       this.deps.memory.indexText(),
       this.deps.planner.snapshot(),
@@ -85,6 +85,7 @@ export class Assistant {
       ctx: {},
       maxToolCalls: MAX_TOOL_CALLS,
       ...(opts.onToken ? { onToken: opts.onToken } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
     });
 
     const trimmed = result.text.trim();

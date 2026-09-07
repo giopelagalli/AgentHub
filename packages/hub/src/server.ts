@@ -473,9 +473,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     // Same framing as the agent chat route, plus the pending actions this reply proposed so the
     // caller can render Confirm/Cancel for them.
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    // Same abort wiring as the agent chat route: a client that closes the stream (navigated away,
+    // hit stop) should not leave a model session running to completion for nobody.
+    const ac = new AbortController();
+    reply.raw.on('close', () => ac.abort());
     try {
       const result = await handle.assistant.reply(body.text, {
         onToken: (token) => { reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`); },
+        signal: ac.signal,
       });
       const pending = result.pending.map(({ id, description }) => ({ id, description }));
       reply.raw.write(`data: ${JSON.stringify({ done: true, full: result.text, pending })}\n\n`);

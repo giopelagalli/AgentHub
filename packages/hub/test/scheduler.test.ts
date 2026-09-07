@@ -212,6 +212,26 @@ describe('Scheduler.nextFire — DST transitions (America/New_York)', () => {
     expect(scheduler.nextFire('briefing', from)).toBe(expected);
   });
 
+  it('spring-forward gap (2026-03-08): a 02:30 briefing that never happens fires just after the gap', async () => {
+    const { hub: h, port, assistant } = await setup();
+    const scheduler = new Scheduler({
+      clock: new ManualClock(0), port, ownerChatId: OWNER, master: h.master, service: h.projects, assistant,
+      briefingTime: '02:30', checkinTimes: ['13:00'], tz: TZ,
+    });
+    // 02:00–03:00 local does not exist on 2026-03-08: no instant renders as 02:30, so the only
+    // question is which side of the gap the scheduler lands on. It must be the far one — firing at
+    // 01:30 EST would be an hour *before* the configured time.
+    const from = localToUtc(TZ, 2026, 2, 8, 0, 30);
+    const fire = scheduler.nextFire('briefing', from);
+
+    expect(fire).toBeGreaterThan(from);
+    expect(fire - from).toBeLessThan(24 * 3600_000);
+    // The first instant at or after the skipped 02:30 is 03:30 EDT — the same wall clock, shifted
+    // by the hour the gap swallowed.
+    expect(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+      .format(new Date(fire))).toBe('03:30');
+  });
+
   it('fall-back (2026-11-01): 09:00 local resolves to the post-transition EST instant', async () => {
     const { hub: h, port, assistant } = await setup();
     const scheduler = new Scheduler({

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   endpoints_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'online',
   last_heartbeat INTEGER NOT NULL,
-  job_types_json TEXT NOT NULL DEFAULT '[]'
+  job_types_json TEXT NOT NULL DEFAULT '[]',
+  browser_json TEXT
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,6 +106,7 @@ export function openDb(path: string): Db {
   if (path !== ':memory:') db.pragma('journal_mode = WAL');
   db.exec(SCHEMA);
   ensureColumn(db, 'nodes', 'job_types_json', `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn(db, 'nodes', 'browser_json', `TEXT`);
   ensureColumn(db, 'jobs', 'attempts', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'result_json', `TEXT`);
   ensureColumn(db, 'jobs', 'error', `TEXT`);

@@ -1,6 +1,10 @@
 import { join } from 'node:path';
+import type { FastifyInstance } from 'fastify';
 import type { NodeRegistration } from '@agenthub/shared';
-import type { DaemonConfig } from './config.js';
+import type { BrowserConfig, DaemonConfig } from './config.js';
+import type { BrowserDriver } from './browser/driver.js';
+import { createBrowserServer } from './browser/server.js';
+import { createPlaywrightDriver } from './browser/playwright-driver.js';
 import { Supervisor } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
 
@@ -9,12 +13,23 @@ import { JobRunner } from './job-runner.js';
 // fire before this process exits.
 const RUNNER_STOP_WAIT_MS = 6000;
 
+const DEFAULT_BROWSER_PORT = 8130;
+
+export interface DaemonDeps {
+  /** Swapped for a `FakeDriver` in tests, so no test ever launches a real browser. */
+  createBrowserDriver?: (cfg: BrowserConfig) => Promise<BrowserDriver>;
+}
+
 export class Daemon {
   private supervisor: Supervisor;
   private runner?: JobRunner;
   private timer?: NodeJS.Timeout;
   private reregistering = false;
-  constructor(private cfg: DaemonConfig) {
+  private browserApp?: FastifyInstance;
+  private browserDriver?: BrowserDriver;
+  /** The port the browser server actually bound, which differs from config when it asked for 0. */
+  private browserPort?: number;
+  constructor(private cfg: DaemonConfig, private deps: DaemonDeps = {}) {
     this.supervisor = new Supervisor(cfg.serving, (s) => {
       console.error(`[daemon] serving process for ${s.tier}:${s.model} on port ${s.port} exited unexpectedly`);
       void this.stop().then(() => process.exit(1));
@@ -27,11 +42,24 @@ export class Daemon {
       name: this.cfg.node.name, arch: this.cfg.node.arch,
       endpoints: this.cfg.serving.map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams })),
       jobTypes: this.cfg.jobTypes ?? [],
+      ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
     };
+  }
+
+  // Binds loopback unless the node advertises a tailnet address — the hub is the only client, and
+  // the browser server itself has no auth of its own yet.
+  private async startBrowserServer(cfg: BrowserConfig): Promise<void> {
+    const create = this.deps.createBrowserDriver ?? ((c) => createPlaywrightDriver({ headless: c.headless ?? true, ...(c.display ? { display: c.display } : {}) }));
+    this.browserDriver = await create(cfg);
+    this.browserApp = createBrowserServer(this.browserDriver);
+    const host = this.cfg.advertiseHost ?? '127.0.0.1';
+    await this.browserApp.listen({ port: cfg.port ?? DEFAULT_BROWSER_PORT, host });
+    this.browserPort = (this.browserApp.server.address() as { port: number }).port;
   }
 
   async start(): Promise<void> {
     await this.supervisor.startAll();
+    if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
     const res = await fetch(`${this.cfg.hub}/api/nodes/register`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(this.registration()),
     });
@@ -80,6 +108,8 @@ export class Daemon {
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    if (this.browserApp) await this.browserApp.close();
+    if (this.browserDriver) await this.browserDriver.close();
     if (this.runner) {
       await this.runner.stop();
       await this.runner.waitForIdle(RUNNER_STOP_WAIT_MS);

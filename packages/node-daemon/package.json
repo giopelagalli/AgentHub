@@ -4,9 +4,18 @@
   "type": "module",
   "dependencies": {
     "@agenthub/shared": "*",
+    "fastify": "^5",
     "js-yaml": "^4"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9"
+  },
+  "peerDependencies": {
+    "playwright": "^1"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
   }
 }

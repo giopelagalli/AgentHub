@@ -16,6 +16,8 @@ export interface NodeRegistration {
   arch: string;
   endpoints: ServingEndpoint[];
   jobTypes?: JobType[];
+  /** Present only on a node running the browser capability; `url` is its local browser server. */
+  browser?: { url: string };
 }
 
 export interface NodeInfo extends NodeRegistration {

@@ -1,12 +1,13 @@
 import type { Db } from './db.js';
 import type { JobType, NodeInfo, NodeRegistration, ServingEndpoint } from '@agenthub/shared';
 
-interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; }
+interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; }
 
 const toInfo = (r: Row): NodeInfo => ({
   id: r.id, name: r.name, arch: r.arch, status: r.status,
   lastHeartbeat: r.last_heartbeat, endpoints: JSON.parse(r.endpoints_json) as ServingEndpoint[],
   jobTypes: JSON.parse(r.job_types_json) as JobType[],
+  ...(r.browser_json ? { browser: JSON.parse(r.browser_json) as { url: string } } : {}),
 });
 
 export class NodeRegistry {
@@ -15,10 +16,13 @@ export class NodeRegistry {
 
   register(reg: NodeRegistration, now = Date.now()): NodeInfo {
     this.db.prepare(`
-      INSERT INTO nodes (name, arch, endpoints_json, status, last_heartbeat, job_types_json) VALUES (?,?,?, 'online', ?, ?)
+      INSERT INTO nodes (name, arch, endpoints_json, status, last_heartbeat, job_types_json, browser_json)
+        VALUES (?,?,?, 'online', ?, ?, ?)
       ON CONFLICT(name) DO UPDATE SET arch=excluded.arch, endpoints_json=excluded.endpoints_json,
-        status='online', last_heartbeat=excluded.last_heartbeat, job_types_json=excluded.job_types_json
-    `).run(reg.name, reg.arch, JSON.stringify(reg.endpoints), now, JSON.stringify(reg.jobTypes ?? []));
+        status='online', last_heartbeat=excluded.last_heartbeat, job_types_json=excluded.job_types_json,
+        browser_json=excluded.browser_json
+    `).run(reg.name, reg.arch, JSON.stringify(reg.endpoints), now, JSON.stringify(reg.jobTypes ?? []),
+           reg.browser ? JSON.stringify(reg.browser) : null);
     return this.byName(reg.name)!;
   }
 

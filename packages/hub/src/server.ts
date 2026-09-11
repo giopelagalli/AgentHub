@@ -524,7 +524,11 @@ export function createHub(opts: HubOptions = {}): Hub {
     });
   }
 
-  app.post('/api/nodes/register', async (req) => {
+  app.post('/api/nodes/register', async (req, reply) => {
+    // The synthetic cloud node is owned by the hub; a daemon may not replace its row.
+    if (cloud && (req.body as NodeRegistration)?.name === CLOUD_NODE_NAME) {
+      return reply.code(409).send({ error: 'reserved node name' });
+    }
     const result = registry.register(req.body as NodeRegistration);
     // A registration is also how a daemon comes back from its own restart, so the profile the node
     // is actually serving is re-checked against the slot the hub thinks it holds. Fire-and-forget:

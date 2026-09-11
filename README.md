@@ -274,6 +274,11 @@ the source of truth: it lists what the account can actually serve (fetched from
 Fireworks and cached for ten minutes) alongside every local endpoint and each
 cloud provider's configured ids.
 
+**Operationally**, check `GET /api/models` and set `FIREWORKS_ORCHESTRATOR_MODEL`
+/ `FIREWORKS_WORKER_MODEL` to ids it actually lists before relying on `auto`
+routing to reach Fireworks — the built-in defaults above are unverified, and a
+turn against an id the account can't serve fails rather than falling back.
+
 ## Choosing models per project
 
 Each project's `manifest.yaml` can carry a `modelPolicy`, set from the **Models**
@@ -288,9 +293,10 @@ picker in the project header (or `POST /api/projects/<slug>/model`):
 - `auto` (the default, and what an absent policy means) is today's behaviour:
   local endpoints first, cloud as overflow.
 - `local` keeps the project on the owner's own hardware — the DGX Spark and
-  friends — and reaches the cloud only for a tier *no* local node serves at all.
-  A busy or briefly unhealthy local endpoint makes the project wait rather than
-  spill into the cloud.
+  friends — and reaches the cloud only when no local endpoint could serve the
+  tier at all right now: offline, parked, or marked unhealthy. A local
+  endpoint that's merely busy (every stream in use) makes the project wait
+  rather than spill into the cloud.
 - `cloud` goes out first, to `provider` when one is named, and falls back to a
   local endpoint if that cloud has nothing free.
 

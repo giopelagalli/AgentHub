@@ -24,6 +24,9 @@ export const DEFAULT_FIREWORKS_WORKER_MODEL = 'accounts/fireworks/models/glm-5p3
 /** How long a fetched catalog is reused before the next request refetches it. */
 export const CATALOG_TTL_MS = 10 * 60_000;
 
+/** How long a catalog fetch waits before giving up on a Fireworks that never answers. */
+export const CATALOG_FETCH_TIMEOUT_MS = 5_000;
+
 interface CatalogEntry {
   id?: unknown;
   supports_chat?: unknown;
@@ -44,12 +47,16 @@ export class FireworksCatalog {
   private readonly now: () => number;
   private readonly log: (line: string) => void;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
-  constructor(opts: { baseUrl?: string; now?: () => number; log?: (line: string) => void; fetchImpl?: typeof fetch } = {}) {
+  constructor(opts: {
+    baseUrl?: string; now?: () => number; log?: (line: string) => void; fetchImpl?: typeof fetch; timeoutMs?: number;
+  } = {}) {
     this.baseUrl = opts.baseUrl ?? FIREWORKS_BASE_URL;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? console.warn;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.timeoutMs = opts.timeoutMs ?? CATALOG_FETCH_TIMEOUT_MS;
   }
 
   async models(apiKey: string | undefined): Promise<string[]> {
@@ -65,6 +72,7 @@ export class FireworksCatalog {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/v1/models`, {
         headers: { authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
       if (!res.ok) throw new Error(`fireworks replied ${res.status}`);
       const body = await res.json() as { data?: CatalogEntry[] };

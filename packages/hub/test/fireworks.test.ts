@@ -169,6 +169,25 @@ describe('FireworksCatalog', () => {
     expect(warn).toHaveBeenCalled();
     fake = undefined;
   });
+
+  it('gives up on a server that never answers, empty and no throw, well under a real timeout', async () => {
+    const hang = Fastify();
+    // Never replies — the request just hangs, the way an unreachable or overloaded Fireworks would.
+    hang.get('/v1/models', () => new Promise(() => {}));
+    await hang.listen({ port: 0, host: '127.0.0.1' });
+    const hangUrl = `http://127.0.0.1:${(hang.server.address() as { port: number }).port}`;
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      // A short injected timeout keeps the test fast; production uses the real (5s) default.
+      const catalog = new FireworksCatalog({ baseUrl: hangUrl, timeoutMs: 50 });
+      const start = Date.now();
+      await expect(catalog.models('fw-secret')).resolves.toEqual([]);
+      expect(Date.now() - start).toBeLessThan(6_000);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      await hang.close();
+    }
+  });
 });
 
 describe('the synthetic fireworks node', () => {

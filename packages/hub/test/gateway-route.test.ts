@@ -1,9 +1,20 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
 import type { NodeRegistration, Tier } from '@agenthub/shared';
+import { createServer } from 'node:net';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway, routeFor, type Route } from '../src/gateway.js';
+
+// Binds an ephemeral port and closes it immediately, yielding a URL that reliably rejects with
+// ECONNREFUSED — used to simulate an unreachable endpoint without racing a mock server's own close.
+async function closedPortUrl(): Promise<string> {
+  const srv = createServer();
+  await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const port = (srv.address() as { port: number }).port;
+  await new Promise<void>((resolve) => srv.close(() => resolve()));
+  return `http://127.0.0.1:${port}`;
+}
 
 const KEY_ENV = 'FIREWORKS_API_KEY';
 const TIERS: Tier[] = ['orchestrator', 'worker'];
@@ -109,6 +120,68 @@ describe('ModelGateway.pick with a route', () => {
     const { gateway } = setup([localNode('spark', url), cloudNode('fireworks', url)]);
     delete process.env[KEY_ENV];
     expect(picked(gateway, 'worker', { prefer: 'cloud', provider: 'fireworks' })).toBe('spark');
+  });
+
+  it('narrows the named provider in every prefer mode, not only cloud', async () => {
+    const { url } = await mockServer();
+    const { gateway } = setup([
+      localNode('spark', url, 1), cloudNode('anthropic', 'anthropic://'), cloudNode('fireworks', url),
+    ]);
+
+    // Saturate the one local stream: auto with a named provider spills to that provider, never
+    // the other cloud.
+    const inflight = gateway.chat('worker', [{ role: 'user', content: 'a b c' }], {});
+    expect(picked(gateway, 'worker', { prefer: 'auto', provider: 'fireworks' })).toBe('cloud-fireworks');
+    await inflight;
+
+    // local + a named provider, on a tier no local node serves at all: the named provider, not
+    // whichever cloud happens to rank first.
+    const registry = new NodeRegistry(openDb(':memory:'));
+    process.env[KEY_ENV] = 'fw-secret';
+    registry.register({ name: 'spark', arch: 'arm64', endpoints: [{ tier: 'worker', url, model: 'local-worker', maxStreams: 2 }] });
+    registry.register(cloudNode('anthropic', 'anthropic://'));
+    registry.register(cloudNode('fireworks', url));
+    const onlyWorkerLocal = new ModelGateway(registry);
+    expect(picked(onlyWorkerLocal, 'orchestrator', { prefer: 'local', provider: 'fireworks' })).toBe('cloud-fireworks');
+  });
+});
+
+describe('ModelGateway.pick with prefer: local', () => {
+  it('busy waits: a saturated local endpoint never spills to the cloud', async () => {
+    const { url } = await mockServer();
+    const { gateway } = setup([localNode('spark', url, 1), cloudNode('fireworks', url)]);
+    const inflight = gateway.chat('worker', [{ role: 'user', content: 'a b c' }], {});
+    expect(picked(gateway, 'worker', { prefer: 'local' })).toBeNull();
+    await inflight;
+  });
+
+  it('unavailable falls back to the cloud: unhealthy', async () => {
+    const deadUrl = await closedPortUrl();
+    const cloud = await mockServer();
+    const { gateway } = setup([localNode('spark', deadUrl), cloudNode('fireworks', cloud.url)]);
+    // The failing local endpoint fails over to the cloud on its own and gets marked unhealthy —
+    // a route-less chat spills to any cloud, so this doesn't depend on prefer: 'local' yet.
+    await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+    expect(picked(gateway, 'worker', { prefer: 'local' })).toBe('cloud-fireworks');
+  });
+
+  it('unavailable falls back to the cloud: parked', async () => {
+    const { url } = await mockServer();
+    const { gateway } = setup([localNode('spark', url), cloudNode('fireworks', url)]);
+    gateway.park('spark', ['worker']);
+    expect(picked(gateway, 'worker', { prefer: 'local' })).toBe('cloud-fireworks');
+  });
+
+  it('unavailable falls back to the cloud: offline', async () => {
+    const { url } = await mockServer();
+    process.env[KEY_ENV] = 'fw-secret';
+    const registry = new NodeRegistry(openDb(':memory:'));
+    // Registered with a heartbeat well past the registry's default staleness window, so it reads
+    // as offline immediately rather than needing a real 15s wait.
+    registry.register(localNode('spark', url), Date.now() - 20_000);
+    registry.register(cloudNode('fireworks', url));
+    const gateway = new ModelGateway(registry);
+    expect(picked(gateway, 'worker', { prefer: 'local' })).toBe('cloud-fireworks');
   });
 });
 

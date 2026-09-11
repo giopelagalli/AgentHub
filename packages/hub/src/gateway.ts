@@ -87,14 +87,10 @@ export class ModelGateway {
    */
   private eligible(tier: Tier, route?: Route): { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] {
     const now = this.now();
-    // `prefer: 'local'` means local only — the cloud is a fallback for a tier nothing local serves
-    // at all, not overflow for a local endpoint that happens to be busy or briefly unhealthy.
-    const localOnly = route?.prefer === 'local' && this.hasLocalEndpoint(tier);
     const out: { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] = [];
     for (const node of this.registry.online()) {
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
-        if (localOnly && isCloudEndpoint(endpoint)) continue;
         const key = this.key(node, endpoint);
         if (this.parked.has(key)) continue;
         const until = this.unhealthyUntil.get(key);
@@ -103,23 +99,22 @@ export class ModelGateway {
         out.push({ node, endpoint, key });
       }
     }
-    return out;
-  }
-
-  /** Whether any online node serves `tier` locally at all — busy, unhealthy or parked included. */
-  private hasLocalEndpoint(tier: Tier): boolean {
-    for (const node of this.registry.online()) {
-      for (const endpoint of node.endpoints) if (endpoint.tier === tier && !isCloudEndpoint(endpoint)) return true;
+    // `prefer: 'local'` means local only — but only when a local endpoint is actually eligible
+    // right now (online, not parked, not unhealthy). A merely busy one still counts, so the project
+    // waits rather than spills into the cloud; an offline, parked or unhealthy one does not, so the
+    // cloud rows above stay in as the fallback for a tier nothing local can serve at all.
+    if (route?.prefer === 'local' && out.some((c) => !isCloudEndpoint(c.endpoint))) {
+      return out.filter((c) => !isCloudEndpoint(c.endpoint));
     }
-    return false;
+    return out;
   }
 
   /** Lower sorts first: the group `route` asks for, then the rest. */
   private rank(ep: ServingEndpoint, route?: Route): number {
     const cloud = isCloudEndpoint(ep);
-    if (route?.prefer !== 'cloud') return cloud ? 1 : 0; // 'auto' and 'local': local first
-    if (cloud && (!route.provider || ep.provider === route.provider)) return 0;
-    return cloud ? 2 : 1; // a local endpoint is a better fallback than the wrong cloud
+    const wanted = !route?.provider || ep.provider === route.provider;
+    if (route?.prefer === 'cloud') return cloud && wanted ? 0 : cloud ? 2 : 1;
+    return cloud ? (wanted ? 1 : 2) : 0; // 'auto' and 'local': local first, then the named provider
   }
 
   // Whether some endpoint other than `excludeKey` could currently serve `tier` (i.e. registered,

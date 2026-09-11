@@ -12,14 +12,16 @@ export interface SessionRecord {
   startedAt: number;
   endedAt: number | null;
   outcome: SessionOutcome | null;
+  /** The project roster member who ran this session; null for the manager and for non-project work. */
+  memberId: string | null;
 }
 
-interface SessionRow { id: number; kind: SessionKind; subject: string; tier: Tier; started_at: number; ended_at: number | null; outcome: SessionOutcome | null; }
+interface SessionRow { id: number; kind: SessionKind; subject: string; tier: Tier; started_at: number; ended_at: number | null; outcome: SessionOutcome | null; member_id: string | null; }
 interface MessageRow { role: ChatMessage['role']; content: string; tool_call_json: string | null; }
 
 const toSession = (r: SessionRow): SessionRecord => ({
   id: r.id, kind: r.kind, subject: r.subject, tier: r.tier,
-  startedAt: r.started_at, endedAt: r.ended_at, outcome: r.outcome,
+  startedAt: r.started_at, endedAt: r.ended_at, outcome: r.outcome, memberId: r.member_id ?? null,
 });
 
 /**
@@ -32,9 +34,9 @@ const toSession = (r: SessionRow): SessionRecord => ({
 export class Transcript {
   constructor(private db: Db) {}
 
-  startSession(kind: SessionKind, subject: string, tier: Tier, now = Date.now()): number {
-    const res = this.db.prepare(`INSERT INTO sessions (kind, subject, tier, started_at) VALUES (?,?,?,?)`)
-      .run(kind, subject, tier, now);
+  startSession(kind: SessionKind, subject: string, tier: Tier, opts: { memberId?: string; now?: number } = {}): number {
+    const res = this.db.prepare(`INSERT INTO sessions (kind, subject, tier, started_at, member_id) VALUES (?,?,?,?,?)`)
+      .run(kind, subject, tier, opts.now ?? Date.now(), opts.memberId ?? null);
     return Number(res.lastInsertRowid);
   }
 
@@ -88,11 +90,14 @@ export class Transcript {
    * cheaper than scanning the whole table) and hands them back oldest-first — same order as the
    * unlimited call — so every caller can keep reading this as a plain chronological list.
    */
-  sessions(filter: { kind?: SessionKind; subject?: string; limit?: number } = {}): SessionRecord[] {
+  sessions(filter: { kind?: SessionKind; subject?: string; memberId?: string | null; limit?: number } = {}): SessionRecord[] {
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (filter.kind) { where.push('kind=?'); params.push(filter.kind); }
     if (filter.subject) { where.push('subject=?'); params.push(filter.subject); }
+    // `null` asks for the sessions no member ran (the manager's own), which `member_id=?` can't express.
+    if (filter.memberId === null) where.push('member_id IS NULL');
+    else if (filter.memberId !== undefined) { where.push('member_id=?'); params.push(filter.memberId); }
     const order = filter.limit ? 'DESC' : 'ASC';
     let sql = `SELECT * FROM sessions ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id ${order}`;
     if (filter.limit) { sql += ' LIMIT ?'; params.push(filter.limit); }

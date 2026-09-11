@@ -414,13 +414,21 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; brow
         properties: {
           task: strProp('The whole assignment: what to do, which files, and how it will be judged done.'),
           role: { type: 'string', enum: [...SUBAGENT_ROLES], description: 'Subagent role; defaults to coder.' },
+          member: strProp('Id of the team member to give this task to; defaults to the first member with the role.'),
         },
         required: ['task'],
       },
     },
     run: async (args, ctx) => {
       const task = str(args, 'task');
-      const role = fields(args).role === undefined ? 'coder' : oneOf(args, 'role', SUBAGENT_ROLES);
+      const wantedRole = fields(args).role === undefined ? 'coder' : oneOf(args, 'role', SUBAGENT_ROLES);
+      const memberId = optStr(args, 'member');
+      const team = ctx.bundle ? await ctx.bundle.team() : [];
+      // A named member brings their own role and instructions; otherwise the role picks the member,
+      // so every subagent session is still attributed to someone on the roster when there is one.
+      const member = memberId ? team.find((m) => m.id === memberId) : team.find((m) => m.role === wantedRole);
+      if (memberId && !member) return `error: unknown team member: ${memberId}`;
+      const role = member?.role ?? wantedRole;
       if (role === 'browser-operator' && !deps.browser) return 'error: browser-operator is not available in this session';
       // browser-operator additionally gets the shared browser toolset, and a researcher gets the
       // configured external tools — every other role stays scoped to the workspace, as before.
@@ -432,9 +440,10 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; brow
         kind: 'subagent',
         subject: deps.subject,
         tier: 'worker',
-        system: subagentSystemPrompt(role, extras.map((t) => t.def.name)),
+        system: subagentSystemPrompt(role, extras.map((t) => t.def.name), member?.instructions),
         user: task,
         tools,
+        ...(member ? { memberId: member.id } : {}),
         // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
         ctx: { bundle: ctx.bundle },
         maxToolCalls: SUBAGENT_TOOL_CALLS,

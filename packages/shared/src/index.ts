@@ -215,3 +215,49 @@ export function videoPayloadFrom(raw: unknown): VideoPayload | null {
   const given = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([, v]) => v !== undefined));
   return parseVideoPayload({ ...VIDEO_DEFAULTS, ...given });
 }
+
+// --- project team roster ------------------------------------------------------
+
+/** The roles a team member — and so a subagent — can have. The manager is the orchestrator itself. */
+export const TEAM_ROLES = ['coder', 'researcher', 'reviewer', 'browser-operator'] as const;
+export type TeamRole = (typeof TEAM_ROLES)[number];
+
+/** The fixed avatar set the UI draws from; a member's `avatar` must be one of these. */
+export const AVATARS = ['robot-cyan', 'robot-magenta', 'robot-amber', 'robot-violet', 'robot-green', 'robot-white'] as const;
+export type Avatar = (typeof AVATARS)[number];
+
+/** One employee on a project's roster, stored in the bundle's `team.yaml`. */
+export interface TeamMember {
+  /** Slug-ish, unique within the project; generated from the role (`coder-1`). */
+  id: string;
+  name: string;
+  role: TeamRole;
+  avatar: string;
+  /** Appended to the role's system prompt when this member runs a task. At most 2000 chars. */
+  instructions?: string;
+  createdAt: number;
+}
+
+/** What a member's latest session says they are doing right now. */
+export interface TeamSessionView {
+  id: number;
+  startedAt: number;
+  outcome: string | null;
+  /** Tail of the session's last message, at most 200 chars. */
+  lastMessage: string;
+}
+
+export type TeamStatus = 'idle' | 'working';
+
+export interface TeamMemberView extends TeamMember {
+  status: TeamStatus;
+  /** The member's most recent session, when they have ever run one. */
+  currentSession?: TeamSessionView;
+  sessionsCount: number;
+}
+
+/** `GET /api/projects/:slug/team`. The manager is the project orchestrator, not a roster member. */
+export interface TeamRoster {
+  members: TeamMemberView[];
+  manager: { status: TeamStatus; currentSession?: TeamSessionView };
+}

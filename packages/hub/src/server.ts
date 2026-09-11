@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, HubState, Job, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, Tier, VideoPayload } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, HubState, Job, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
 import { PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -15,11 +15,11 @@ import { ModelGateway } from './gateway.js';
 import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
-import { Transcript } from './agents/transcript.js';
+import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import type { ProjectBundle } from './projects/bundle.js';
-import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
+import { InvalidSlugError, newTeamMember, SLUG_RE } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
 import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
@@ -72,6 +72,15 @@ const DEFAULT_SWITCH_STOP_DELAY_MS = 2000;
 const DEFAULT_CHECKIN_TIMES = ['13:00', '18:00'];
 /** How long in-flight project turns get to end on their own when a switch pauses the fleet. */
 const QUIESCE_GRACE_MS = 1000;
+/**
+ * How fresh a member's unfinished session must be for them to read as `working`. A session that was
+ * never ended — a hub killed mid-turn — would otherwise leave that employee busy forever.
+ */
+const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
+/** How much of a session's last message the roster carries; the UI shows it as a one-liner. */
+const TEAM_LAST_MESSAGE_LIMIT = 200;
+/** Cap on the messages `/team/:id/activity` returns — the tail, which is what "doing now" means. */
+const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
 
 export interface AssistantOptions {
   /** Root of the git-versioned memory bundle (MEMORY.md, notes/, planner/). */
@@ -770,6 +779,94 @@ export function createHub(opts: HubOptions = {}): Hub {
       messages: transcript.messages(session.id),
       events: transcript.events(session.id),
     }));
+  });
+
+  // --- project team roster ------------------------------------------------------
+
+  /** What the roster shows about a session: its outcome and the tail of its last message. */
+  const teamSessionView = (session: SessionRecord): TeamSessionView => {
+    const last = [...transcript.messages(session.id)].reverse()
+      .find((m) => typeof m.content === 'string' && m.content.trim())?.content ?? '';
+    return {
+      id: session.id,
+      startedAt: session.startedAt,
+      outcome: session.outcome,
+      lastMessage: last.trim().slice(0, TEAM_LAST_MESSAGE_LIMIT),
+    };
+  };
+
+  const teamStatus = (session: SessionRecord | undefined, now: number): TeamStatus =>
+    session && session.outcome === null && now - session.startedAt < TEAM_WORKING_WINDOW_MS ? 'working' : 'idle';
+
+  app.get('/api/projects/:slug/team', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const now = Date.now();
+    const members = (await bundle.team()).map((member): TeamMemberView => {
+      const sessions = transcript.sessions({ subject: slug, memberId: member.id });
+      const latest = sessions[sessions.length - 1];
+      return {
+        ...member,
+        status: teamStatus(latest, now),
+        ...(latest ? { currentSession: teamSessionView(latest) } : {}),
+        sessionsCount: sessions.length,
+      };
+    });
+    // The manager is the orchestrator itself — it is not on the roster, and its sessions carry no
+    // member id.
+    const managerSessions = transcript.sessions({ kind: 'orchestrator', subject: slug });
+    const latestManager = managerSessions[managerSessions.length - 1];
+    return {
+      members,
+      manager: {
+        status: teamStatus(latestManager, now),
+        ...(latestManager ? { currentSession: teamSessionView(latestManager) } : {}),
+      },
+    } satisfies TeamRoster;
+  });
+
+  app.post('/api/projects/:slug/team', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const members = await bundle.team();
+    const result = newTeamMember(req.body, members);
+    if ('error' in result) return reply.code(result.code).send({ error: result.error });
+    await bundle.writeTeam([...members, result.member]);
+    await bundle.commit(`owner: hire ${result.member.name} (${result.member.id})`);
+    await refreshProjects();
+    return reply.code(201).send(result.member);
+  });
+
+  // Removing a member does not touch the sessions they ran: the transcript is a record of what
+  // happened, and their past work stays attributed to them.
+  app.delete('/api/projects/:slug/team/:id', async (req, reply) => {
+    const { slug, id } = req.params as { slug: string; id: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const members = await bundle.team();
+    const remaining = members.filter((m) => m.id !== id);
+    if (remaining.length === members.length) return reply.code(404).send({ error: 'unknown member' });
+    await bundle.writeTeam(remaining);
+    await bundle.commit(`owner: remove team member ${id}`);
+    await refreshProjects();
+    return reply.code(204).send();
+  });
+
+  app.get('/api/projects/:slug/team/:id/activity', async (req, reply) => {
+    const { slug, id } = req.params as { slug: string; id: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    if (!(await bundle.team()).some((m) => m.id === id)) return reply.code(404).send({ error: 'unknown member' });
+    const sessions = transcript.sessions({ subject: slug, memberId: id });
+    const session = sessions[sessions.length - 1];
+    if (!session) return { session: null, messages: [], events: [] };
+    return {
+      session,
+      messages: transcript.messages(session.id).slice(-TEAM_ACTIVITY_MESSAGE_LIMIT),
+      events: transcript.events(session.id),
+    };
   });
 
   app.get('/api/briefings', async () => projects.briefings());

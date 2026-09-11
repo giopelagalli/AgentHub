@@ -18,6 +18,8 @@ export interface AgentRunOptions {
    */
   history?: ChatMessage[];
   tools: Tool[];
+  /** The project roster member this run belongs to; tags the session so the team API can find it. */
+  memberId?: string;
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
   maxToolCalls: number;
   signal?: AbortSignal;
@@ -45,7 +47,7 @@ export class AgentLoop {
 
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
-    const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier);
+    const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});
     const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal };
     const toolDefs = opts.tools.map((t) => t.def);
 

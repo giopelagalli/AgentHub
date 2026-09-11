@@ -1,5 +1,19 @@
-export const SUBAGENT_ROLES = ['coder', 'researcher', 'reviewer', 'browser-operator'] as const;
-export type SubagentRole = (typeof SUBAGENT_ROLES)[number];
+import { TEAM_ROLES, type TeamMember, type TeamRole } from '@agenthub/shared';
+
+// A subagent's role and a roster member's role are the same thing: the roster is who the
+// orchestrator delegates to, and delegating is spawning a subagent.
+export const SUBAGENT_ROLES = TEAM_ROLES;
+export type SubagentRole = TeamRole;
+
+/** How much of a member's instructions the orchestrator's roster listing shows. */
+const ROSTER_INSTRUCTIONS_LIMIT = 120;
+
+/** One roster line: `- coder-1 — Ada (coder): prefers small diffs`. */
+function rosterLine(m: TeamMember): string {
+  const note = (m.instructions ?? '').replace(/\s+/g, ' ').trim();
+  const short = note.length > ROSTER_INSTRUCTIONS_LIMIT ? `${note.slice(0, ROSTER_INSTRUCTIONS_LIMIT - 1)}\u2026` : note;
+  return `- ${m.id} \u2014 ${m.name} (${m.role})${short ? `: ${short}` : ''}`;
+}
 
 const BRIEFING_SCHEMA = `{
   "title": string,
@@ -16,7 +30,7 @@ const BRIEFING_SCHEMA = `{
  * decisions, skills) is the orchestrator's only memory across turns — the chat transcript is not
  * replayed — so it is embedded here in full.
  */
-export function orchestratorSystemPrompt(contextPack: string): string {
+export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[] = []): string {
   return [
     `You are the project orchestrator for one project in AgentHub.`,
     `You plan the work, delegate concrete tasks to subagents, review what comes back, keep the`,
@@ -32,6 +46,13 @@ export function orchestratorSystemPrompt(contextPack: string): string {
     `- briefings/ — the structured briefings you publish. Tool: publish_briefing.`,
     `- workspace/ — the actual working files; the file and shell tools are scoped to it.`,
     ``,
+    ...(team.length ? [
+      `# Your team`,
+      `You are the manager. These are the people you delegate to — pass a member's id as`,
+      `spawn_subagent's \`member\` argument to give the task to that person, by name:`,
+      ...team.map(rosterLine),
+      ``,
+    ] : []),
     `# Briefing schema`,
     `publish_briefing takes exactly these fields (the project slug is filled in for you):`,
     BRIEFING_SCHEMA,
@@ -70,11 +91,12 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
  * The subagent's system prompt: one role, one task, workspace tools only — plus the browser for a
  * browser-operator and, when they are configured, the external tools a researcher may use.
  */
-export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = []): string {
+export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = [], instructions?: string): string {
   const lines = [
     `You are a ${role} subagent working on one task for a project orchestrator.`,
     ROLE_BRIEFS[role],
     ``,
+    ...(instructions?.trim() ? [`# Your standing instructions`, instructions.trim(), ``] : []),
     `- Your tools reach the project workspace only: read_file, write_file, list_dir, run_shell.`,
     `  Do not modify anything outside workspace/ — the project bundle's charter, decision log, task`,
     `  board and briefings belong to the orchestrator. Report what should change there instead.`,

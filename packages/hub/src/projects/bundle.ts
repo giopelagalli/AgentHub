@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { Priority } from '@agenthub/shared';
+import type { Priority, TeamMember } from '@agenthub/shared';
 import { validateBriefing, validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
 const CONTEXT_PACK_LIMIT = 12000;
@@ -13,7 +13,7 @@ const CONTEXT_PACK_MARKER = '\n[truncated]';
 const SCAFFOLD_DIRS = ['skills', 'briefings', 'workspace'];
 
 /** Only these paths are "knowledge" the manifest index (and the model's context pack) cares about. */
-const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'decisions.log.md', 'tasks.yaml'];
+const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'decisions.log.md', 'tasks.yaml', 'team.yaml'];
 const KNOWLEDGE_DIRS = ['skills', 'briefings'];
 
 const BUNDLE_GITIGNORE = [
@@ -22,6 +22,18 @@ const BUNDLE_GITIGNORE = [
   'workspace/**/.git/',
   '',
 ].join('\n');
+
+/**
+ * The roster a new project starts with. The manager is the orchestrator itself and is deliberately
+ * not a member: the roster is who the manager delegates to.
+ */
+function defaultTeam(now: number): TeamMember[] {
+  return [
+    { id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan', createdAt: now },
+    { id: 'researcher-1', name: 'Sol', role: 'researcher', avatar: 'robot-magenta', createdAt: now },
+    { id: 'reviewer-1', name: 'Vex', role: 'reviewer', avatar: 'robot-amber', createdAt: now },
+  ];
+}
 
 function projectTemplate(title: string, intent: string): string {
   return [`# ${title}`, ``, `## Goal`, ``, intent, ``, `## Current State`, ``, `## Constraints`, ``].join('\n');
@@ -143,6 +155,7 @@ export class ProjectBundle {
     await writeFile(join(dir, 'project.md'), projectTemplate(init.title, init.intent), 'utf8');
     await writeFile(join(dir, 'decisions.log.md'), '# Decisions\n', 'utf8');
     await writeFile(join(dir, 'tasks.yaml'), dump({ tasks: [] } satisfies Tasks), 'utf8');
+    await writeFile(join(dir, 'team.yaml'), dump({ members: defaultTeam(now) }), 'utf8');
 
     const git = simpleGit(dir);
     await git.init();
@@ -249,6 +262,22 @@ export class ProjectBundle {
 
   async writeTasks(t: Tasks): Promise<void> {
     await writeFile(join(this.dir, 'tasks.yaml'), dump(t), 'utf8');
+    await this.touch();
+  }
+
+  /**
+   * The project's roster. A bundle created before team.yaml existed simply has no file — that reads
+   * as an empty roster rather than an error, so old bundles keep working.
+   */
+  async team(): Promise<TeamMember[]> {
+    const raw = await readFile(join(this.dir, 'team.yaml'), 'utf8').catch(() => null);
+    if (raw === null) return [];
+    const data = load(raw) as { members?: TeamMember[] } | undefined;
+    return data?.members ?? [];
+  }
+
+  async writeTeam(members: TeamMember[]): Promise<void> {
+    await writeFile(join(this.dir, 'team.yaml'), dump({ members }), 'utf8');
     await this.touch();
   }
 

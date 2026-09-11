@@ -39,7 +39,7 @@ describe('ProjectBundle.create', () => {
       priority: 'project', intent: 'ship a demo', links: [],
     });
     expect(manifest.index.sort()).toEqual([
-      'briefings/.gitkeep', 'decisions.log.md', 'manifest.yaml', 'project.md', 'skills/.gitkeep', 'tasks.yaml',
+      'briefings/.gitkeep', 'decisions.log.md', 'manifest.yaml', 'project.md', 'skills/.gitkeep', 'tasks.yaml', 'team.yaml',
     ]);
 
     expect(await bundle.readProject()).toContain('ship a demo');
@@ -235,5 +235,35 @@ describe('ProjectBundle.contextPack', () => {
     const pack = await bundle.contextPack();
     expect(pack.length).toBeLessThanOrEqual(12000);
     expect(pack.endsWith('[truncated]')).toBe(false);
+  });
+});
+
+describe('ProjectBundle team', () => {
+  it('scaffolds the default roster and round-trips a written one', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo-project', title: 'Demo Project', intent: 'ship a demo' });
+
+    const team = await bundle.team();
+    expect(team.map((m) => ({ id: m.id, name: m.name, role: m.role, avatar: m.avatar }))).toEqual([
+      { id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan' },
+      { id: 'researcher-1', name: 'Sol', role: 'researcher', avatar: 'robot-magenta' },
+      { id: 'reviewer-1', name: 'Vex', role: 'reviewer', avatar: 'robot-amber' },
+    ]);
+    expect(team.every((m) => typeof m.createdAt === 'number')).toBe(true);
+
+    const hire = { id: 'coder-2', name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only', createdAt: 5 } as const;
+    await bundle.writeTeam([...team, hire]);
+
+    const reopened = await ProjectBundle.open(root, 'demo-project');
+    const reloaded = await reopened.team();
+    expect(reloaded).toHaveLength(4);
+    expect(reloaded[3]).toEqual(hire);
+  });
+
+  it('reads an empty roster from a bundle that predates team.yaml', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'legacy', title: 'Legacy', intent: 'older bundle' });
+    await rm(join(bundle.dir, 'team.yaml'));
+
+    const reopened = await ProjectBundle.open(root, 'legacy');
+    expect(await reopened.team()).toEqual([]);
   });
 });

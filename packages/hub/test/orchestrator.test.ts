@@ -204,3 +204,65 @@ describe('ProjectOrchestrator', () => {
     expect(system.content).toContain('concurrent readers during turns');
   });
 });
+
+describe('project team', () => {
+  it('delegates to a named member, tags the session and appends their instructions', async () => {
+    await bundle.writeTeam([
+      { id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan', instructions: 'Always run npm test before reporting.', createdAt: 1 },
+    ]);
+    const { orchestrator, transcript, brain, worker } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'fix the parser', member: 'coder-1' } }] },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [{ content: 'parser fixed' }],
+    );
+
+    await orchestrator.turn();
+
+    const [session] = transcript.sessions({ kind: 'subagent' });
+    expect(session.memberId).toBe('coder-1');
+
+    const workerSystem = (worker.lastRequest().messages as { role: string; content: string }[])[0];
+    expect(workerSystem.content).toContain('Always run npm test before reporting.');
+
+    // The orchestrator is told who is on the roster, so it can delegate by name.
+    const orchestratorSystem = (brain.requests[0].messages as { role: string; content: string }[])[0];
+    expect(orchestratorSystem.content).toContain('# Your team');
+    expect(orchestratorSystem.content).toContain('coder-1');
+    expect(orchestratorSystem.content).toContain('Ada (coder)');
+  });
+
+  it('attributes a role-only delegation to the first roster member with that role', async () => {
+    const { orchestrator, transcript } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'read the docs', role: 'researcher' } }] },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [{ content: 'docs read' }],
+    );
+
+    await orchestrator.turn();
+
+    expect(transcript.sessions({ kind: 'subagent' })[0].memberId).toBe('researcher-1');
+  });
+
+  it('refuses an unknown member instead of guessing', async () => {
+    const { orchestrator, transcript } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'do a thing', member: 'ghost-9' } }] },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+    );
+
+    await orchestrator.turn();
+
+    expect(transcript.sessions({ kind: 'subagent' })).toHaveLength(0);
+    const orchestratorSession = transcript.sessions({ kind: 'orchestrator' })[0];
+    const results = transcript.messages(orchestratorSession.id).filter((m) => m.role === 'tool');
+    expect(results[0].content).toBe('error: unknown team member: ghost-9');
+  });
+});

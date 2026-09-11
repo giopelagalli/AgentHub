@@ -60,7 +60,7 @@ export class ProjectOrchestrator {
       kind: 'orchestrator',
       subject: manifest.slug,
       tier: 'orchestrator',
-      system: orchestratorSystemPrompt(await bundle.contextPack()),
+      system: orchestratorSystemPrompt(await bundle.contextPack(), await bundle.team()),
       user: opts.instruction ?? DEFAULT_INSTRUCTION,
       tools: [
         ...workspaceTools(),

@@ -191,3 +191,95 @@ describe('projects API', () => {
     }
   });
 });
+
+describe('project team API', () => {
+  /** A project with the default roster, plus the transcript the seeded sessions go into. */
+  const seeded = async (): Promise<Hub['transcript']> => {
+    await setup();
+    await app().inject({ method: 'POST', url: '/api/projects', payload: { slug: 'demo', title: 'Demo', intent: 'x' } });
+    return hub!.transcript;
+  };
+
+  it('lists the roster with statuses derived from each member\'s latest session', async () => {
+    const transcript = await seeded();
+    const working = transcript.startSession('subagent', 'demo', 'worker', { memberId: 'coder-1' });
+    transcript.append(working, { role: 'assistant', content: 'editing the parser' });
+    // Unfinished but older than the working window: a hub killed mid-turn must not pin an employee busy.
+    transcript.startSession('subagent', 'demo', 'worker', { memberId: 'researcher-1', now: Date.now() - 60 * 60_000 });
+
+    const res = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
+    expect(res.statusCode).toBe(200);
+    const { members, manager } = res.json();
+
+    expect(members.map((m: { id: string }) => m.id)).toEqual(['coder-1', 'researcher-1', 'reviewer-1']);
+    expect(members[0]).toMatchObject({ name: 'Ada', role: 'coder', avatar: 'robot-cyan', status: 'working', sessionsCount: 1 });
+    expect(members[0].currentSession).toMatchObject({ id: working, outcome: null, lastMessage: 'editing the parser' });
+    expect(members[1]).toMatchObject({ status: 'idle', sessionsCount: 1 });
+    expect(members[2]).toMatchObject({ status: 'idle', sessionsCount: 0 });
+    expect(members[2].currentSession).toBeUndefined();
+    expect(manager).toEqual({ status: 'idle' });
+  });
+
+  it('adds a member, validates the payload and removes them again', async () => {
+    await seeded();
+
+    const created = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team',
+      payload: { name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only' },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ id: 'coder-2', name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only' });
+
+    for (const payload of [
+      { name: 'Nix', role: 'wizard', avatar: 'robot-violet' },
+      { name: 'Nix', role: 'coder', avatar: 'robot-gold' },
+      { name: 'N'.repeat(41), role: 'coder', avatar: 'robot-cyan' },
+      { name: '', role: 'coder', avatar: 'robot-cyan' },
+      { name: 'Nix', role: 'coder', avatar: 'robot-cyan', instructions: 'x'.repeat(2001) },
+    ]) {
+      expect((await app().inject({ method: 'POST', url: '/api/projects/demo/team', payload })).statusCode).toBe(400);
+    }
+
+    const duplicate = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team', payload: { name: 'ada', role: 'reviewer', avatar: 'robot-green' },
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    expect((await app().inject({ method: 'GET', url: '/api/projects/demo/team' })).json().members).toHaveLength(4);
+
+    const removed = await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-2' });
+    expect(removed.statusCode).toBe(204);
+    expect((await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-2' })).statusCode).toBe(404);
+
+    const after = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
+    expect(after.json().members.map((m: { id: string }) => m.id)).toEqual(['coder-1', 'researcher-1', 'reviewer-1']);
+  });
+
+  it('returns a member\'s latest session as their activity', async () => {
+    const transcript = await seeded();
+    const older = transcript.startSession('subagent', 'demo', 'worker', { memberId: 'coder-1' });
+    transcript.append(older, { role: 'assistant', content: 'the old one' });
+    transcript.endSession(older, 'stop');
+    const latest = transcript.startSession('subagent', 'demo', 'worker', { memberId: 'coder-1' });
+    transcript.append(latest, { role: 'user', content: 'fix the parser' });
+    transcript.append(latest, { role: 'assistant', content: 'parser fixed' });
+    transcript.appendEvent(latest, 'gateway error: boom');
+
+    const res = await app().inject({ method: 'GET', url: '/api/projects/demo/team/coder-1/activity' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().session).toMatchObject({ id: latest, memberId: 'coder-1' });
+    expect(res.json().messages.map((m: { content: string }) => m.content)).toEqual(['fix the parser', 'parser fixed']);
+    expect(res.json().events[0].content).toBe('gateway error: boom');
+
+    const idle = await app().inject({ method: 'GET', url: '/api/projects/demo/team/reviewer-1/activity' });
+    expect(idle.json()).toEqual({ session: null, messages: [], events: [] });
+
+    expect((await app().inject({ method: 'GET', url: '/api/projects/demo/team/ghost-9/activity' })).statusCode).toBe(404);
+  });
+
+  it('404s the roster of an unknown project and 400s a traversing slug', async () => {
+    await setup();
+    expect((await app().inject({ method: 'GET', url: '/api/projects/ghost/team' })).statusCode).toBe(404);
+    expect((await app().inject({ method: 'GET', url: '/api/projects/..%2Foutside/team' })).statusCode).toBe(400);
+  });
+});

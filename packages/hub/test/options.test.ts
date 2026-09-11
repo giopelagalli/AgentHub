@@ -52,6 +52,15 @@ describe('optionsFromEnv', () => {
       .toEqual({ token: 't', ownerChatId: '42' });
   });
 
+  it('enables the cloud tier only on CLOUD_ANTHROPIC=1, with optional model overrides', () => {
+    expect(optionsFromEnv({}, quiet).options.cloud).toBeUndefined();
+    expect(optionsFromEnv({ CLOUD_ANTHROPIC: '0' }, quiet).options.cloud).toBeUndefined();
+    // Enabled with no overrides: the models are `createHub`'s defaults, not something env spells out.
+    expect(optionsFromEnv({ CLOUD_ANTHROPIC: '1' }, quiet).options.cloud).toEqual({ anthropic: {} });
+    expect(optionsFromEnv({ CLOUD_ANTHROPIC: '1', CLOUD_ORCHESTRATOR_MODEL: 'claude-opus-5', CLOUD_WORKER_MODEL: 'claude-haiku-4-5' }, quiet).options.cloud)
+      .toEqual({ anthropic: { orchestratorModel: 'claude-opus-5', workerModel: 'claude-haiku-4-5' } });
+  });
+
   it('keeps an external tool only when its key is present and its provider is known', () => {
     const { options } = optionsFromEnv({ XAI_API_KEY: 'x', SEARCH_API_KEY: 'k', SEARCH_PROVIDER: 'tavily' }, quiet);
     expect(options.external).toMatchObject({ xaiKey: 'x', search: { provider: 'tavily', key: 'k' } });

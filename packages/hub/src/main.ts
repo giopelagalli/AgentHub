@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { optionsFromEnv } from './options.js';
+import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL } from './providers/anthropic.js';
 import { createHub } from './server.js';
 import { GrammyPort } from './telegram/grammy-port.js';
 
@@ -15,6 +16,12 @@ if (!existsSync(uiDist)) console.log(`[hub] no UI build at ${uiDist}; serving AP
 const { options, port, host, telegram } = optionsFromEnv(process.env);
 if (telegram) {
   options.assistant!.telegram = { port: new GrammyPort(telegram.token), ownerChatId: telegram.ownerChatId };
+}
+
+const cloud = options.cloud?.anthropic;
+if (cloud) {
+  const short = (model: string) => model.replace(/^claude-/, '');
+  console.log(`[hub] cloud tier: anthropic (${short(cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL)} / ${short(cloud.workerModel ?? DEFAULT_WORKER_MODEL)})`);
 }
 
 const hub = createHub({ ...options, uiDist });

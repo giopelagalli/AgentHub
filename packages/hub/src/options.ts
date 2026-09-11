@@ -110,6 +110,16 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
       : {}),
   };
 
+  // No local GPU? `CLOUD_ANTHROPIC=1` gives the hub an always-online cloud node for the
+  // orchestrator and worker tiers; the SDK resolves its own credentials (ANTHROPIC_API_KEY, or an
+  // `ant auth login` profile), so no key is read here.
+  const cloud = env.CLOUD_ANTHROPIC === '1'
+    ? { anthropic: {
+        ...(env.CLOUD_ORCHESTRATOR_MODEL ? { orchestratorModel: env.CLOUD_ORCHESTRATOR_MODEL } : {}),
+        ...(env.CLOUD_WORKER_MODEL ? { workerModel: env.CLOUD_WORKER_MODEL } : {}),
+      } }
+    : undefined;
+
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
     projectsRoot: env.PROJECTS_ROOT ?? (dataRoot ? join(dataRoot, 'projects') : 'data/projects'),
@@ -118,6 +128,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(dataRoot ? { browser: { recordingsRoot: join(dataRoot, 'media', 'browser') } } : {}),
     ...(auth ? { auth } : {}),
     ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
+    ...(cloud ? { cloud } : {}),
   };
 
   return {

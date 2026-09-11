@@ -12,6 +12,8 @@ import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
 import { ModelGateway } from './gateway.js';
+import Anthropic from '@anthropic-ai/sdk';
+import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL, type AnthropicLike } from './providers/anthropic.js';
 import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
@@ -134,7 +136,24 @@ export interface HubOptions {
     /** How long the answered switch waits before this hub stops itself. */
     stopDelayMs?: number;
   };
+  /**
+   * Serving that isn't a node: with `anthropic` present the hub registers the synthetic,
+   * always-online `cloud-anthropic` node and answers its two tiers through the Anthropic SDK, so
+   * the system runs with no local GPU at all. Local nodes, when any are online, are still preferred
+   * (`ModelGateway.pick`). `client` is for tests; otherwise the SDK resolves its own credentials.
+   */
+  cloud?: {
+    anthropic?: {
+      orchestratorModel?: string;
+      workerModel?: string;
+      maxStreams?: number;
+      client?: AnthropicLike;
+    };
+  };
 }
+
+/** The synthetic node's name — it is not a machine, so nothing may claim jobs or a browser for it. */
+export const CLOUD_NODE_NAME = 'cloud-anthropic';
 
 export function createHub(opts: HubOptions = {}): Hub {
   const dbPath = opts.dbPath ?? ':memory:';
@@ -143,7 +162,21 @@ export function createHub(opts: HubOptions = {}): Hub {
   const registry = new NodeRegistry(db, { staleMs: opts.staleMs });
   const queue = new JobQueue(db);
   const jobLogs = new JobLogs(db);
-  const gateway = new ModelGateway(registry);
+  // No serving process, no daemon, no heartbeat of its own: the cloud node exists only in the
+  // registry, and `sweepAndRequeue` below keeps it online. It is deliberately given no `control`,
+  // no `video` and no `browser` — none of those can be reached through an API key.
+  const cloud = opts.cloud?.anthropic;
+  const anthropic: AnthropicLike | undefined = cloud ? cloud.client ?? new Anthropic() : undefined;
+  if (cloud) {
+    registry.register({
+      name: CLOUD_NODE_NAME, arch: 'cloud',
+      endpoints: [
+        { tier: 'orchestrator', provider: 'anthropic', url: 'anthropic://', model: cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL, maxStreams: cloud.maxStreams ?? 4 },
+        { tier: 'worker', provider: 'anthropic', url: 'anthropic://', model: cloud.workerModel ?? DEFAULT_WORKER_MODEL, maxStreams: cloud.maxStreams ?? 8 },
+      ],
+    });
+  }
+  const gateway = new ModelGateway(registry, anthropic ? { anthropic } : {});
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
   const loop = new AgentLoop({ gateway, transcript });
@@ -431,6 +464,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   };
 
   const sweepAndRequeue = () => {
+    // The cloud node has no daemon to heartbeat for it, so the hub does it here — every sweep, on
+    // whichever path runs it — and the node is never swept offline.
+    if (cloud) registry.heartbeat(CLOUD_NODE_NAME);
     for (const node of registry.sweep()) {
       // Read before requeueing: afterwards the jobs no longer name this node.
       for (const job of queue.list('running')) if (job.nodeId === node.id) releaseVideoSlot(job, node.name);

@@ -233,6 +233,27 @@ already claimed and running when its node disappears is not resumed
 in-place — it's requeued and re-run from scratch on whichever node picks
 it up next.
 
+## Running without GPUs (cloud tier)
+
+`CLOUD_ANTHROPIC=1` gives the hub a synthetic, always-online node called
+`cloud-anthropic`: the orchestrator and worker tiers are served by Claude
+through the official Anthropic SDK instead of by a local endpoint, so the
+whole system runs with no GPU node registered at all. Credentials come from
+the SDK's own resolution — `ANTHROPIC_API_KEY`, or an `ant auth login`
+profile — and the models default to `claude-opus-4-8` (orchestrator) and
+`claude-sonnet-5` (worker); `CLOUD_ORCHESTRATOR_MODEL` and
+`CLOUD_WORKER_MODEL` override them.
+
+    CLOUD_ANTHROPIC=1 npm run dev:hub
+    # [hub] cloud tier: anthropic (opus-4-8 / sonnet-5)
+
+The node is the hub's own bookkeeping, not a machine: it has no daemon (the
+hub refreshes its heartbeat on every sweep, so it is never swept offline),
+claims no jobs, and can serve no browser, video or control-node capability —
+none of those are reachable through an API key. Local nodes stay preferred:
+`ModelGateway.pick()` sorts local endpoints ahead of cloud ones for the same
+tier, so the cloud is used only when nothing local has capacity for it.
+
 ## Security
 
 The hub holds the owner's memory, projects, API keys and a shared browser, so

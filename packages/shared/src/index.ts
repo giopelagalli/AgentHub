@@ -9,6 +9,12 @@ export interface ServingEndpoint {
   url: string;
   model: string;
   maxStreams: number;
+  /**
+   * Which wire protocol `url` speaks. Absent means `openai` — every locally served endpoint — so
+   * nodes registered before this field still parse. `anthropic` endpoints are served by the hub's
+   * own SDK client rather than by an HTTP endpoint, and carry the placeholder url `anthropic://`.
+   */
+  provider?: 'openai' | 'anthropic';
 }
 
 export interface NodeRegistration {

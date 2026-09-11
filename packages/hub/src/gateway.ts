@@ -1,11 +1,15 @@
 import type { ChatMessage, ChatResult, NodeInfo, ServingEndpoint, Tier, ToolCall, ToolDef } from '@agenthub/shared';
 import type { NodeRegistry } from './node-registry.js';
+import { anthropicChat, isRetryableAnthropicError, type AnthropicLike } from './providers/anthropic.js';
 
 export interface PickResult { node: NodeInfo; endpoint: ServingEndpoint; }
 
 export interface ChatOptions { onToken?: (t: string) => void; tools?: ToolDef[]; signal?: AbortSignal; }
 
 const UNHEALTHY_MS = 10_000;
+
+/** Anything not spoken over a local OpenAI-compatible endpoint — today, the Anthropic cloud tier. */
+const isCloud = (ep: ServingEndpoint): boolean => (ep.provider ?? 'openai') !== 'openai';
 
 export class ModelGateway {
   private active = new Map<string, number>(); // `${node.name}|${tier}|${endpoint.url}` -> active streams
@@ -15,9 +19,12 @@ export class ModelGateway {
   // only the manager that parked it knows when it is back.
   private parked = new Set<string>();
   private now: () => number;
+  /** Serves every `provider: 'anthropic'` endpoint; absent when no cloud tier is configured. */
+  private anthropic: AnthropicLike | undefined;
 
-  constructor(private registry: NodeRegistry, opts: { now?: () => number } = {}) {
+  constructor(private registry: NodeRegistry, opts: { now?: () => number; anthropic?: AnthropicLike } = {}) {
     this.now = opts.now ?? Date.now;
+    this.anthropic = opts.anthropic;
   }
 
   private key(node: NodeInfo, ep: ServingEndpoint): string { return `${node.name}|${ep.tier}|${ep.url}`; }
@@ -50,7 +57,7 @@ export class ModelGateway {
 
   pick(tier: Tier): PickResult | null {
     const now = this.now();
-    const candidates: { pick: PickResult; active: number }[] = [];
+    const candidates: { pick: PickResult; active: number; cloud: boolean }[] = [];
     for (const node of this.registry.online()) {
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
@@ -59,10 +66,12 @@ export class ModelGateway {
         const until = this.unhealthyUntil.get(key);
         if (until !== undefined && until > now) continue;
         const active = this.active.get(key) ?? 0;
-        if (active < endpoint.maxStreams) candidates.push({ pick: { node, endpoint }, active });
+        if (active < endpoint.maxStreams) candidates.push({ pick: { node, endpoint }, active, cloud: isCloud(endpoint) });
       }
     }
-    candidates.sort((a, b) => a.active - b.active);
+    // Hardware the owner already paid for comes first: a cloud endpoint is only picked when no local
+    // one for this tier has capacity. Within each group the least busy endpoint wins, as before.
+    candidates.sort((a, b) => (a.cloud === b.cloud ? a.active - b.active : a.cloud ? 1 : -1));
     return candidates[0]?.pick ?? null;
   }
 
@@ -125,6 +134,20 @@ export class ModelGateway {
       let streamedAny = false;
       let nonRetryable = false;
       try {
+        if (isCloud(picked.endpoint)) {
+          if (!this.anthropic) { nonRetryable = true; throw new Error(`no anthropic client configured for ${picked.endpoint.url}`); }
+          try {
+            return await anthropicChat(this.anthropic, {
+              model: picked.endpoint.model, messages,
+              ...(tools ? { tools } : {}),
+              onToken: (t) => { streamedAny = true; onToken?.(t); },
+              ...(signal ? { signal } : {}),
+            });
+          } catch (err) {
+            if (!isRetryableAnthropicError(err)) nonRetryable = true;
+            throw err;
+          }
+        }
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
           method: 'POST', headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ model: picked.endpoint.model, messages, stream: true, ...(tools ? { tools } : {}) }),

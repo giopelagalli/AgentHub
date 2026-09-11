@@ -60,16 +60,16 @@ describe('shouldOpenSocket', () => {
 });
 
 describe('topicTransition', () => {
-  it('subscribes on arriving at the screening room and unsubscribes on leaving', () => {
-    expect(topicTransition(null, 'f5')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
-    expect(topicTransition('f1', 'f5')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
-    expect(topicTransition('f5', 'p:acme')).toEqual({ type: 'unsubscribe', topic: BROWSER_TOPIC });
+  it('subscribes on arriving at the computer page and unsubscribes on leaving', () => {
+    expect(topicTransition(null, 'computer')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition('projects', 'computer')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition('computer', 'cluster')).toEqual({ type: 'unsubscribe', topic: BROWSER_TOPIC });
   });
 
-  it('says nothing when the screening room is neither entered nor left', () => {
-    expect(topicTransition(null, 'f1')).toBeNull();
-    expect(topicTransition('f1', 'ph')).toBeNull();
-    expect(topicTransition('f5', 'f5')).toBeNull();
+  it('says nothing when the computer page is neither entered nor left', () => {
+    expect(topicTransition(null, 'projects')).toBeNull();
+    expect(topicTransition('projects', 'allocation')).toBeNull();
+    expect(topicTransition('computer', 'computer')).toBeNull();
   });
 });
 
@@ -105,6 +105,14 @@ describe('handleWsMessage', () => {
     expect([...store.getState().busy]).toEqual([]);
   });
 
+  it('applies project-busy frames in both directions', () => {
+    const store = new Store();
+    handleWsMessage(store, JSON.stringify({ type: 'project-busy', slug: 'acme', who: 'manager', busy: true }));
+    expect([...store.getState().projectBusy]).toEqual(['acme:manager']);
+    handleWsMessage(store, JSON.stringify({ type: 'project-busy', slug: 'acme', who: 'manager', busy: false }));
+    expect([...store.getState().projectBusy]).toEqual([]);
+  });
+
   it('applies browser-frame frames, defaulting a missing lease to null', () => {
     const store = new Store();
     handleWsMessage(store, JSON.stringify({
@@ -131,6 +139,8 @@ describe('handleWsMessage', () => {
       JSON.stringify({ type: 'state' }),
       JSON.stringify({ type: 'agent-busy', agentId: 'seven', busy: true }),
       JSON.stringify({ type: 'agent-busy', agentId: 7 }),
+      JSON.stringify({ type: 'project-busy', slug: 'acme', busy: true }),
+      JSON.stringify({ type: 'project-busy', slug: 'acme', who: 'manager' }),
       JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', at: 1 }),
       JSON.stringify({ type: 'browser-frame', jpegBase64: 'abc', at: 1 }),
       JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', jpegBase64: 'abc' }),
@@ -140,5 +150,6 @@ describe('handleWsMessage', () => {
     expect(notifications).toBe(0);
     expect(store.getState().hub).toBeNull();
     expect(store.getState().browserFrame).toBeNull();
+    expect(store.getState().projectBusy.size).toBe(0);
   });
 });

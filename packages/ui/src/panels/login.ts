@@ -1,21 +1,25 @@
 /**
- * The lobby door. Shown when `GET /api/me` answers 401: a password box that posts to
+ * The front door. Shown when `GET /api/me` answers 401: a password box that posts to
  * `/api/login`, which hands back the session cookie every later request (and the socket)
- * carries on its own. On success the box removes itself and the caller boots the tower.
+ * carries on its own. On success the box removes itself and the caller boots the app.
  */
 export function openLoginPanel(host: HTMLElement, onSuccess: () => void): void {
+  const screen = document.createElement('div');
+  screen.className = 'login';
+
   const panel = document.createElement('div');
-  panel.className = 'gb-panel gb-panel--center';
+  panel.className = 'login__box';
+  screen.appendChild(panel);
 
   const heading = document.createElement('h2');
   heading.textContent = 'Locked';
 
   const hint = document.createElement('p');
-  hint.className = 'gb-hint';
-  hint.textContent = 'The tower is closed to visitors.';
+  hint.className = 'login__hint';
+  hint.textContent = 'AgentHub is closed to visitors.';
 
   const form = document.createElement('form');
-  form.className = 'gb-chat__form';
+  form.className = 'chat__form';
   const input = document.createElement('input');
   input.type = 'password';
   input.placeholder = 'Password';
@@ -26,11 +30,11 @@ export function openLoginPanel(host: HTMLElement, onSuccess: () => void): void {
   form.append(input, submit);
 
   const error = document.createElement('p');
-  error.className = 'gb-login__error';
+  error.className = 'login__error';
   error.hidden = true;
 
   panel.append(heading, hint, form, error);
-  host.appendChild(panel);
+  host.appendChild(screen);
   input.focus();
 
   /** Back to a usable box with the reason on it; the field is cleared rather than left to be edited. */
@@ -60,7 +64,7 @@ export function openLoginPanel(host: HTMLElement, onSuccess: () => void): void {
           refuse(response.status === 401 ? 'Wrong password.' : `Hub replied ${response.status}.`);
           return;
         }
-        panel.remove();
+        screen.remove();
         onSuccess();
       })
       .catch(() => refuse('Hub unreachable.'));

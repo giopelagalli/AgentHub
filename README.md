@@ -15,23 +15,39 @@ Local multi-node AI agent hub. See docs/superpowers/specs/2026-09-01-agenthub-pr
     curl -N -X POST localhost:4000/api/agents/1/messages \
       -H 'content-type: application/json' -d '{"text":"hello"}'
 
-## UI tower
+## UI
 
-The hub has a browser UI: a pixel-art top-down office tower — B1 server
-room, 1F lobby, 2F general staff, a floor per active project, 5F screening
-room, PH penthouse — joined by an elevator, showing live nodes, agents and
-the job queue, with streaming chat when you walk up to an agent.
+The hub has a browser UI: a flat management app over the hub WebSocket,
+four pages down a left nav.
 
-**5F screening room** watches the cluster's shared browser (the Mac mini's
-Chromium, deploy/macmini/README.md). The wall TV plays a live JPEG
-screencast — the hub polls the browser node only while somebody is on the
-floor watching — and the plaque names the current lease holder and the
-queue behind them. One holder at a time, priority owner > orchestrator >
-subagent, renewed by every action and expiring after 120s of silence so a
-dead agent can't wedge it; [Take control] preempts the holder (whose next
-action comes back `lease lost`) and releasing hands the browser to the next
-in the queue. Everything an agent does is recorded frame by frame under
-`data/media/browser/<leaseId>/`.
+**Projects** — the project list on the left (searchable, ←/→ to move), and
+the selected project's org chart on the right: you, then the assistant and
+the master, then that project's manager, then its employees, each a card
+with an avatar, a role and who they report to. Clicking a manager or an
+employee opens a one-on-one chat drawer that streams the reply in; the
+assistant card opens the assistant's chat with its confirmation gate, and
+the master card shows the briefings every project has published. The header
+sets priority, pauses or resumes, runs a turn, and hires — name, role,
+avatar, standing instructions — with an × on a card to let someone go.
+
+**Computer** — the cluster's shared browser (the Mac mini's Chromium,
+deploy/macmini/README.md) as a live JPEG screencast; the hub polls the
+browser node only while somebody is on this page. Beside it, the lease
+desk: who holds it, who is queued behind them. One holder at a time,
+priority owner > orchestrator > subagent, renewed by every action and
+expiring after 120s of silence so a dead agent can't wedge it; [Take
+control] preempts the holder (whose next action comes back `lease lost`)
+and releasing hands the browser to the next in the queue. Everything an
+agent does is recorded frame by frame under `data/media/browser/<leaseId>/`.
+
+**Cluster** — the nodes table (status, what each serves, active streams per
+tier, browser/video/control capability) and the job queue, both live off
+the hub state broadcast.
+
+**Allocation** — what runs first: every unfinished project ordered by
+priority then last touched, with the priority lever on each row. The master
+reorders these during its briefings; your setting wins until it changes it
+again.
 
 Dev (three terminals, hot reload):
 
@@ -264,7 +280,7 @@ The whole system, from the outside in:
    (`deploy/amd/README.md`, `deploy/macbook/README.md`). Each daemon registers
    with the hub, heartbeats, and claims jobs it has the capability for.
 3. **Telegram** — the phone-side control surface: `deploy/telegram.md`. It is
-   the only thing that needs to work when you are away from the tower UI.
+   the only thing that needs to work when you are away from the hub UI.
 4. **DO proxy** — a $6 droplet on the tailnet running Caddy, which is the only
    machine with a public listener: it terminates TLS for your domain, gates
    everything behind HTTP basic auth as a second factor, and reverse-proxies to
@@ -279,7 +295,7 @@ forward or a public IP on any machine but the droplet.
 | --- | --- |
 | 1 | Monorepo skeleton: hub (node registry, SQLite job queue, model gateway, agent runtime, REST/SSE) + node daemon (process supervisor, register/heartbeat), two concurrent streaming sessions against a mock model. |
 | 2 | Elastic multi-node cluster: nodes advertise job types and run `shell-task`s; a node dying mid-job requeues it onto another capable node; per-node deployment playbooks. |
-| 3 | Orchestration: portable project bundles, one long-lived orchestrator per project delegating to ephemeral subagents, master orchestrator, briefings, rehydration after a restart. Plus the pixel-art tower UI over the hub WebSocket. |
+| 3 | Orchestration: portable project bundles, one long-lived orchestrator per project delegating to ephemeral subagents, master orchestrator, briefings, rehydration after a restart. Plus the management UI over the hub WebSocket. |
 | 4 | Telegram control and the personal assistant: git-versioned markdown memory + planner, commands and free-form chat, daily briefing, check-ins, alerts, and the confirmation gate for outward actions. |
 | 5b | The Mac mini's headed Chromium as a shared cluster resource: leases with owner preemption, a browser tool set for agents, frame-by-frame recording, and the 5F screening room. |
 | 6 | Owner login + daemon tokens, video generation on the Spark with the LLM/video exclusivity swap and `/video`, the four sanctioned external tools with an audit trail, the control-node switch and `/controlnode`, and the DigitalOcean proxy. |

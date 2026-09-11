@@ -1,21 +1,21 @@
-import './panels/panels.css';
-import { PALETTE } from './art/palette.js';
+import './app.css';
 import { badgeLabel } from './badge.js';
-import { bindPointer } from './engine/input.js';
-import { startLoop } from './engine/loop.js';
-import { Screen } from './engine/screen.js';
 import { connect } from './net.js';
-import { openBrowserPanel } from './panels/browser.js';
-import { openChat } from './panels/chat.js';
-import { closeDialog, dialogIsOpen, openDialog, tickDialog, type DialogChoice } from './panels/dialog.js';
+import { mountNav, type PageId } from './nav.js';
+import { mountAllocation } from './pages/allocation.js';
+import { mountCluster } from './pages/cluster.js';
+import { mountComputer } from './pages/computer.js';
+import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
-import { openNodeInfo } from './panels/nodeinfo.js';
-import { openQueuePanel } from './panels/queue.js';
-import { fetchProjectDetail, openTasksPanel } from './panels/tasks.js';
-import { hotspotsFor } from './render/floorplans.js';
-import { renderFloor } from './render/scene.js';
 import { Store } from './store.js';
-import { mountTabs, tabsFor } from './tabs.js';
+
+/** Every page mounts into the same host and hands back its own teardown. */
+const MOUNTS: Record<PageId, (host: HTMLElement, store: Store) => () => void> = {
+  projects: mountProjects,
+  computer: mountComputer,
+  cluster: mountCluster,
+  allocation: mountAllocation,
+};
 
 function hostElement(): HTMLElement {
   const element = document.getElementById('app');
@@ -24,288 +24,51 @@ function hostElement(): HTMLElement {
 }
 
 const app = hostElement();
-
-// The panel stylesheet reads the canvas palette through these.
-for (const [name, hex] of Object.entries(PALETTE)) {
-  document.documentElement.style.setProperty(`--c-${name}`, hex);
-}
-
-// The tab bar sits above the canvas and shares its width, so the two are
-// stacked in one column inside the centring host.
-const stage = document.createElement('div');
-stage.className = 'gb-stage';
-app.appendChild(stage);
-
 const store = new Store();
-mountTabs(stage, store);
-const screen = new Screen(stage);
 
-const badge = document.createElement('div');
-badge.className = 'gb-badge';
-app.appendChild(badge);
+const nav = document.createElement('aside');
+nav.className = 'nav';
+const brand = document.createElement('div');
+brand.className = 'nav__brand';
+brand.textContent = 'AgentHub';
+nav.appendChild(brand);
+mountNav(nav, store);
+
+const foot = document.createElement('div');
+foot.className = 'nav__foot';
+const badge = document.createElement('span');
+badge.className = 'badge';
+foot.appendChild(badge);
+nav.appendChild(foot);
+
+const page = document.createElement('main');
+page.className = 'page';
+app.append(nav, page);
+
 store.subscribe((state) => {
   badge.textContent = badgeLabel(state.connection);
+  badge.dataset.status = state.connection;
 });
 badge.textContent = badgeLabel(store.getState().connection);
+badge.dataset.status = store.getState().connection;
 
-/**
- * The newest screencast frame, decoded once on arrival — the render loop draws
- * whichever image is ready rather than waiting on a decode. A frame that lands
- * after a newer one has already been decoded is dropped, and the screen falls
- * back to static as soon as no browser node is online.
- */
-let screencast: HTMLImageElement | null = null;
-let screencastAt = 0;
+/** The page on screen, swapped whole when the nav selection changes. */
+let showing: PageId | null = null;
+let teardown: (() => void) | null = null;
 
 store.subscribe((state) => {
-  const frame = state.browserFrame;
-  if (!frame || !state.hub?.browser?.node) {
-    screencast = null;
-    screencastAt = 0;
-    return;
-  }
-  if (frame.at <= screencastAt) return;
-  screencastAt = frame.at;
-  const image = new Image();
-  image.src = `data:image/jpeg;base64,${frame.jpegBase64}`;
-  void image
-    .decode()
-    .then(() => {
-      if (frame.at >= screencastAt) screencast = image;
-    })
-    .catch(() => {});
+  if (state.page === showing) return;
+  showing = state.page;
+  teardown?.();
+  page.replaceChildren();
+  teardown = MOUNTS[state.page](page, store);
 });
-
-/** Informational panels, newest last: Esc closes the one on top. */
-const panels: (() => void)[] = [];
-
-/** Returns a dismiss that closes the panel and drops it from the stack, once. */
-function openPanel(close: () => void): () => void {
-  const dismiss = (): void => {
-    const index = panels.indexOf(dismiss);
-    if (index >= 0) panels.splice(index, 1);
-    close();
-  };
-  panels.push(dismiss);
-  return dismiss;
-}
-
-function closeTopPanel(): void {
-  panels[panels.length - 1]?.();
-}
-
-/** One chat at a time: a second one would land on top of the first. */
-let dismissChat: (() => void) | null = null;
-
-async function greetAgent(agent: { id: number; name: string }): Promise<void> {
-  const name = agent.name.toUpperCase();
-  const busy = store.getState().busy.has(agent.id);
-  const choice = await openDialog(
-    app,
-    [busy ? `${name} is hard at work!` : `${name} is taking a breather.`],
-    busy
-      ? [
-          { id: 'watch', label: 'Watch' },
-          { id: 'talk', label: 'Talk' },
-          { id: 'close', label: 'Close' },
-        ]
-      : [
-          { id: 'talk', label: 'Talk' },
-          { id: 'close', label: 'Close' },
-        ],
-  );
-  if (choice !== 'talk') return;
-  dismissChat?.();
-  dismissChat = openPanel(openChat(document.body, {
-    name: agent.name,
-    endpoint: `/api/agents/${agent.id}/messages`,
-  }));
-}
-
-/** The reception desk is the assistant's spot: a greeting, then its own chat panel. */
-async function greetAssistant(): Promise<void> {
-  const choice = await openDialog(app, ['ASSISTANT', 'How can I help?'], [
-    { id: 'talk', label: 'Talk' },
-    { id: 'close', label: 'Close' },
-  ]);
-  if (choice !== 'talk') return;
-  dismissChat?.();
-  dismissChat = openPanel(openChat(document.body, {
-    name: 'Assistant',
-    endpoint: '/api/assistant/messages',
-    pendingBase: '/api/assistant/pending',
-  }));
-}
-
-const LINE_CHARS = 60;
-const LINES_PER_PAGE = 4;
-
-/** Greedy word-wrap into lines no longer than `maxChars`. */
-function wrapLines(text: string, maxChars: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let current = '';
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word;
-    if (next.length > maxChars && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = next;
-    }
-  }
-  if (current) lines.push(current);
-  return lines.length ? lines : [''];
-}
-
-function paginate<T>(items: T[], size: number): T[][] {
-  const pages: T[][] = [];
-  for (let i = 0; i < items.length; i += size) pages.push(items.slice(i, i + size));
-  return pages.length ? pages : [[]];
-}
-
-/** Shows `lines` as a sequence of dialog boxes, `LINES_PER_PAGE` at a time. */
-async function showPaged(lines: string[]): Promise<void> {
-  const pages = paginate(lines, LINES_PER_PAGE);
-  for (let i = 0; i < pages.length; i++) {
-    const last = i === pages.length - 1;
-    const choices: DialogChoice[] = last ? [{ id: 'close', label: 'Close' }] : [{ id: 'next', label: 'Next' }];
-    const choice = await openDialog(app, pages[i], choices);
-    if (choice !== 'next') return;
-  }
-}
-
-const BRIEF_CACHE_MS = 10 * 60 * 1000;
-let briefingCache: { text: string; at: number } | null = null;
-
-/** `POST /api/master/brief`, cached for `BRIEF_CACHE_MS` since it re-runs the master's loop. */
-async function masterBriefingText(): Promise<string> {
-  if (briefingCache && Date.now() - briefingCache.at < BRIEF_CACHE_MS) return briefingCache.text;
-  const response = await fetch('/api/master/brief', { method: 'POST' });
-  if (!response.ok) throw new Error(`hub replied ${response.status}`);
-  const result = (await response.json()) as { text: string };
-  briefingCache = { text: result.text, at: Date.now() };
-  return briefingCache.text;
-}
-
-async function openMasterBriefingDialog(): Promise<void> {
-  let text: string;
-  try {
-    text = await masterBriefingText();
-  } catch (error) {
-    text = `Could not load briefing: ${String(error)}`;
-  }
-  await showPaged(wrapLines(text, LINE_CHARS));
-}
-
-async function openProjectOrchestratorDialog(slug: string, title: string): Promise<void> {
-  let summaryLines: string[];
-  try {
-    const detail = await fetchProjectDetail(slug);
-    summaryLines = wrapLines(detail.briefing?.summary ?? 'No briefing yet.', LINE_CHARS).slice(0, 3);
-  } catch (error) {
-    summaryLines = [`Could not load briefing: ${String(error)}`];
-  }
-
-  const choice = await openDialog(app, [`${title.toUpperCase()} ORCHESTRATOR`, ...summaryLines], [
-    { id: 'run', label: 'Run turn' },
-    { id: 'close', label: 'Close' },
-  ]);
-  if (choice !== 'run') return;
-
-  let resultLines: string[];
-  try {
-    const response = await fetch(`/api/projects/${slug}/turn`, { method: 'POST' });
-    if (!response.ok) throw new Error(`hub replied ${response.status}`);
-    const briefing = (await response.json()) as { summary?: string };
-    resultLines = wrapLines(briefing.summary ?? 'Turn complete.', LINE_CHARS).slice(0, 3);
-  } catch (error) {
-    resultLines = [`Turn failed: ${String(error)}`];
-  }
-  await openDialog(app, resultLines, [{ id: 'close', label: 'Close' }]);
-}
-
-bindPointer(screen.canvas, (x, y) => {
-  if (dialogIsOpen()) return;
-  const state = store.getState();
-  const spot = hotspotsFor(state.floor, state).find(
-    (h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h,
-  );
-  if (!spot) return;
-
-  if (spot.id === 'jobboard') {
-    openPanel(openQueuePanel(document.body, state));
-    return;
-  }
-  if (spot.id === 'reception') {
-    void greetAssistant();
-    return;
-  }
-  if (spot.id === 'browser:tv') {
-    openPanel(openBrowserPanel(document.body, store));
-    return;
-  }
-  if (spot.id === 'briefing') {
-    void openMasterBriefingDialog();
-    return;
-  }
-  if (spot.id.startsWith('project:board:')) {
-    const slug = spot.id.slice('project:board:'.length);
-    openPanel(openTasksPanel(document.body, slug));
-    return;
-  }
-  if (spot.id.startsWith('project:orch:')) {
-    const slug = spot.id.slice('project:orch:'.length);
-    const project = state.hub?.projects?.find((p) => p.slug === slug);
-    if (project) void openProjectOrchestratorDialog(slug, project.title);
-    return;
-  }
-  if (spot.id.startsWith('project:sign:')) {
-    const slug = spot.id.slice('project:sign:'.length);
-    const project = state.hub?.projects?.find((p) => p.slug === slug);
-    if (project) {
-      void openDialog(
-        app,
-        [project.title.toUpperCase(), `Status: ${project.status}`, `Priority: ${project.priority}`],
-        [{ id: 'close', label: 'Close' }],
-      );
-    }
-    return;
-  }
-  if (spot.id.startsWith('rack:')) {
-    const node = state.hub?.nodes.find((n) => n.name === spot.id.slice('rack:'.length));
-    if (node) openPanel(openNodeInfo(document.body, node, state.hub?.streams ?? {}));
-    return;
-  }
-  if (spot.id.startsWith('agent:')) {
-    const id = Number(spot.id.slice('agent:'.length));
-    const agent = state.hub?.agents.find((a) => a.id === id);
-    if (agent) void greetAgent(agent);
-  }
-});
-
-function typingInAnInput(): boolean {
-  const element = document.activeElement;
-  return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement;
-}
-
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') {
-    if (dialogIsOpen()) closeDialog();
-    else closeTopPanel();
-    return;
-  }
-  // Shortcuts stay out of the way of the chat box, an open text screen, and any
-  // informational panel (chat/queue/nodeinfo).
-  if (typingInAnInput() || dialogIsOpen() || panels.length > 0) return;
-  // Number keys pick the nth tab, same as clicking it.
-  const tab = tabsFor(store.getState())[Number(event.key) - 1];
-  if (tab) store.dispatch({ type: 'set-floor', floor: tab.id });
-});
+showing = store.getState().page;
+teardown = MOUNTS[showing](page, store);
 
 /**
  * The hub answers 401 to everything but the login route once it has a password, so ask who we are
- * before wiring anything up: a 401 puts the login box on the empty tower and boots again once it
+ * before wiring anything up: a 401 puts the login box over the empty app and boots again once it
  * closes. Any other answer (200, or a 404 from a hub predating this route) means we may proceed;
  * an unreachable hub does too, and `connect` reports it as down.
  */
@@ -319,16 +82,3 @@ async function boot(): Promise<void> {
 }
 
 void boot();
-
-let tick = 0;
-
-startLoop(
-  (value) => {
-    tick = value;
-    tickDialog(value);
-  },
-  () => {
-    const state = store.getState();
-    renderFloor(screen.ctx, state.floor, state, tick, screencast);
-  },
-);

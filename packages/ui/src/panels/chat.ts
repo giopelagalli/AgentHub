@@ -1,10 +1,16 @@
+import type { ChatMessage } from '@agenthub/shared';
+import { getJson } from '../api.js';
 import { parseSseFrames } from '../sse.js';
 
 export interface ChatTarget {
-  /** Speaker name in the log and the panel heading. */
+  /** Speaker name in the log and the drawer heading. */
   name: string;
-  /** SSE route this panel posts `{ text }` to. */
+  /** Line under the heading — who this agent is. */
+  subtitle?: string;
+  /** SSE route this drawer posts `{ text }` to. */
   endpoint: string;
+  /** Route the stored history is read from (`{ messages }`); omitted where there is none to read. */
+  historyEndpoint?: string;
   /**
    * Base route for the confirmation gate (`<base>/<id>/confirm|cancel`). Only the assistant
    * proposes outward actions, so only the assistant passes this.
@@ -17,45 +23,57 @@ interface PendingAction {
   description: string;
 }
 
+/** The header every drawer wears: a title, a subtitle, and the close button. */
+export function drawerHeader(title: string, subtitle: string | undefined, close: () => void): HTMLElement {
+  const header = document.createElement('header');
+  header.className = 'drawer__head';
+
+  const text = document.createElement('div');
+  const heading = document.createElement('h2');
+  heading.textContent = title;
+  text.appendChild(heading);
+  if (subtitle) {
+    const line = document.createElement('p');
+    line.className = 'drawer__sub';
+    line.textContent = subtitle;
+    text.appendChild(line);
+  }
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'drawer__close';
+  button.textContent = '×';
+  button.title = 'Close (Esc)';
+  button.addEventListener('click', close);
+
+  header.append(text, button);
+  return header;
+}
+
 /**
- * The talk panel: a session-local transcript on the right of the screen.
- * Sending posts to the hub's SSE route and types the reply in as the tokens
- * arrive; closing aborts the request, which the hub reads as a disconnect and
- * frees the stream slot.
+ * The one-on-one chat drawer, on the right of the page. Sending posts to the
+ * hub's SSE route and types the reply in as the tokens arrive; closing aborts
+ * the request, which the hub reads as a disconnect and frees the stream slot.
  */
 export function openChat(host: HTMLElement, target: ChatTarget): () => void {
-  const panel = document.createElement('div');
-  panel.className = 'gb-panel gb-panel--chat';
-
-  const heading = document.createElement('h2');
-  heading.textContent = target.name;
-  panel.appendChild(heading);
-
-  const note = document.createElement('p');
-  note.className = 'gb-hint';
-  note.textContent = 'This log is session-only; history persists server-side.';
-  panel.appendChild(note);
+  const panel = document.createElement('aside');
+  panel.className = 'drawer';
 
   const log = document.createElement('div');
-  log.className = 'gb-chat__log';
-  panel.appendChild(log);
+  log.className = 'chat__log';
 
   const form = document.createElement('form');
-  form.className = 'gb-chat__form';
+  form.className = 'chat__form';
   const input = document.createElement('input');
   input.type = 'text';
-  input.placeholder = 'Say something';
+  input.placeholder = `Message ${target.name}`;
   input.autocomplete = 'off';
   const send = document.createElement('button');
   send.type = 'submit';
   send.textContent = 'Send';
   form.append(input, send);
-  panel.appendChild(form);
 
-  const hint = document.createElement('p');
-  hint.className = 'gb-hint';
-  hint.textContent = 'Esc to close';
-  panel.appendChild(hint);
+  panel.append(drawerHeader(target.name, target.subtitle, () => dispose()), log, form);
 
   /** Within a few pixels of the end, so a reader who scrolled back stays there. */
   const atBottom = (): boolean => log.scrollHeight - log.scrollTop - log.clientHeight < 8;
@@ -67,16 +85,25 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   const addMessage = (speaker: string, text: string, forcePin = false): HTMLElement => {
     const following = forcePin || atBottom();
     const message = document.createElement('p');
-    message.className = 'gb-chat__msg';
+    message.className = speaker === 'You' ? 'chat__msg chat__msg--own' : 'chat__msg';
     const who = document.createElement('span');
-    who.className = 'gb-chat__who';
-    who.textContent = `${speaker}:`;
+    who.className = 'chat__who';
+    who.textContent = speaker;
     const said = document.createElement('span');
+    said.className = 'chat__said';
     said.textContent = text;
     message.append(who, said);
     log.appendChild(message);
     pinIfFollowing(following);
     return said;
+  };
+
+  const note = (text: string): void => {
+    const line = document.createElement('p');
+    line.className = 'chat__note';
+    line.textContent = text;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
   };
 
   /**
@@ -88,7 +115,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     if (!target.pendingBase) return;
     for (const action of actions) {
       const row = document.createElement('p');
-      row.className = 'gb-chat__pending';
+      row.className = 'chat__pending';
       const label = document.createElement('span');
       label.textContent = action.description;
       row.appendChild(label);
@@ -102,7 +129,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
           label.textContent = verb === 'confirm' ? (body.result ?? 'Done.') : `Cancelled: ${action.description}`;
         } catch (error) {
           label.textContent = `${action.description} — failed: ${String(error)}`;
-          row.classList.add('gb-chat__msg--error');
+          row.classList.add('chat__msg--error');
         }
       };
 
@@ -118,6 +145,29 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     }
   };
 
+  /**
+   * The stored conversation, oldest first. Only the two roles a reader is part of are
+   * shown: the system framing and the agent's tool traffic are not this window's business.
+   */
+  const loadHistory = async (): Promise<void> => {
+    if (!target.historyEndpoint) return;
+    try {
+      const { messages } = await getJson<{ messages: ChatMessage[] }>(target.historyEndpoint);
+      const said = messages.filter(
+        (m) => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim(),
+      );
+      if (!said.length) {
+        note('No history yet — say hello.');
+        return;
+      }
+      for (const message of said) {
+        addMessage(message.role === 'user' ? 'You' : target.name, String(message.content).trim(), true);
+      }
+    } catch (error) {
+      note(`Could not load history: ${String(error)}`);
+    }
+  };
+
   let inFlight: AbortController | null = null;
 
   const stream = async (text: string): Promise<void> => {
@@ -125,6 +175,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     // back to read history — sending is a clear signal they're back at the end.
     addMessage('You', text, true);
     const reply = addMessage(target.name, '');
+    reply.parentElement?.classList.add('chat__msg--typing');
     const controller = new AbortController();
     inFlight = controller;
     // Captured before disabling blurs the input, so we know whether to give
@@ -137,12 +188,13 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     // next to the partial reply than in place of it.
     const fail = (message: string): void => {
       reply.textContent = reply.textContent ? `${reply.textContent}\n${message}` : message;
-      reply.parentElement?.classList.add('gb-chat__msg--error');
+      reply.parentElement?.classList.add('chat__msg--error');
     };
 
     try {
       const response = await fetch(target.endpoint, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
         signal: controller.signal,
@@ -171,6 +223,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
       if (!controller.signal.aborted) fail(String(error));
     } finally {
       inFlight = null;
+      reply.parentElement?.classList.remove('chat__msg--typing');
       if (panel.isConnected) {
         input.disabled = false;
         send.disabled = false;
@@ -188,11 +241,20 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     void stream(text);
   });
 
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') dispose();
+  };
+  window.addEventListener('keydown', onKey);
+
   host.appendChild(panel);
+  void loadHistory();
   input.focus();
 
-  return () => {
+  function dispose(): void {
+    window.removeEventListener('keydown', onKey);
     inFlight?.abort();
     panel.remove();
-  };
+  }
+
+  return dispose;
 }

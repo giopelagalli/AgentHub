@@ -1,5 +1,5 @@
 import type { HubState } from '@agenthub/shared';
-import type { FloorId } from './floors.js';
+import type { PageId } from './nav.js';
 import type { Store } from './store.js';
 
 const STATE_URL = '/api/state';
@@ -28,8 +28,8 @@ export function applyHubState(store: Store, payload: unknown): boolean {
 /** The hub only casts the browser screen to sockets that asked for this topic. */
 export const BROWSER_TOPIC = 'browser';
 
-/** The one floor that watches the cast. */
-const BROWSER_FLOOR: FloorId = 'f5';
+/** The one page that watches the cast. */
+const BROWSER_PAGE: PageId = 'computer';
 
 export interface TopicMessage {
   type: 'subscribe' | 'unsubscribe';
@@ -37,14 +37,14 @@ export interface TopicMessage {
 }
 
 /**
- * The topic message a floor change owes the hub, or null when it owes none:
+ * The topic message a page change owes the hub, or null when it owes none:
  * screencast frames are big, so the client subscribes on arriving at the
- * screening room and unsubscribes on leaving. `before` is the floor this socket
+ * computer page and unsubscribes on leaving. `before` is the page this socket
  * was last told about — null for a socket that has said nothing yet.
  */
-export function topicTransition(before: FloorId | null, after: FloorId): TopicMessage | null {
-  const wants = after === BROWSER_FLOOR;
-  if (wants === (before === BROWSER_FLOOR)) return null;
+export function topicTransition(before: PageId | null, after: PageId): TopicMessage | null {
+  const wants = after === BROWSER_PAGE;
+  if (wants === (before === BROWSER_PAGE)) return null;
   return { type: wants ? 'subscribe' : 'unsubscribe', topic: BROWSER_TOPIC };
 }
 
@@ -65,6 +65,15 @@ export function handleWsMessage(store: Store, raw: string): void {
   }
   if (frame.type === 'agent-busy' && typeof frame.agentId === 'number' && typeof frame.busy === 'boolean') {
     store.dispatch({ type: 'agent-busy', agentId: frame.agentId, busy: frame.busy });
+    return;
+  }
+  if (
+    frame.type === 'project-busy'
+    && typeof frame.slug === 'string'
+    && typeof frame.who === 'string'
+    && typeof frame.busy === 'boolean'
+  ) {
+    store.dispatch({ type: 'project-busy', slug: frame.slug, who: frame.who, busy: frame.busy });
     return;
   }
   if (
@@ -134,8 +143,8 @@ export function connect(store: Store): void {
   let current: WebSocket | null = null;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let reconnectTimer: ReturnType<typeof setInterval> | undefined;
-  /** The floor the open socket has been told about; null while no socket is up. */
-  let announcedFloor: FloorId | null = null;
+  /** The page the open socket has been told about; null while no socket is up. */
+  let announcedPage: PageId | null = null;
 
   const readyState = (): number | null => current?.readyState ?? null;
 
@@ -148,7 +157,7 @@ export function connect(store: Store): void {
 
   /**
    * A 30-day cookie expires mid-session sooner or later. Reloading hands the page back to `boot`,
-   * which asks `/api/me` and puts the login box up — without this the tower just sits on 'down'.
+   * which asks `/api/me` and puts the login box up — without this the app just sits on 'down'.
    */
   const relogin = (): void => {
     stopFallback();
@@ -167,9 +176,9 @@ export function connect(store: Store): void {
   const syncTopics = (): void => {
     const socket = current;
     if (!socket || socket.readyState !== OPEN) return;
-    const floor = store.getState().floor;
-    const message = topicTransition(announcedFloor, floor);
-    announcedFloor = floor;
+    const page = store.getState().page;
+    const message = topicTransition(announcedPage, page);
+    announcedPage = page;
     if (message) socket.send(JSON.stringify(message));
   };
 
@@ -192,14 +201,14 @@ export function connect(store: Store): void {
       store.dispatch({ type: 'busy-reset' });
       store.dispatch({ type: 'connection', status: 'live' });
       // A new socket carries no subscriptions, whatever the last one had asked for.
-      announcedFloor = null;
+      announcedPage = null;
       syncTopics();
     });
     socket.addEventListener('message', (event) => handleWsMessage(store, String(event.data)));
     socket.addEventListener('close', () => {
       if (current !== socket) return;
       current = null;
-      announcedFloor = null;
+      announcedPage = null;
       startFallback();
     });
     socket.addEventListener('error', () => socket.close());

@@ -1,7 +1,7 @@
 import type { HubState } from '@agenthub/shared';
-import { floorsFor, type FloorId } from './floors.js';
+import type { PageId } from './nav.js';
 
-/** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the renderer. */
+/** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the page. */
 export interface BrowserFrame {
   nodeName: string;
   leaseId: string | null;
@@ -9,26 +9,44 @@ export interface BrowserFrame {
   at: number;
 }
 
+/** Key for the `projectBusy` set: one project agent in one project. */
+export function chatKey(slug: string, who: string): string {
+  return `${slug}:${who}`;
+}
+
 export interface UiState {
   hub: HubState | null;
+  /** Global agent ids mid-reply. */
   busy: Set<number>;
-  floor: FloorId;
+  /** `slug:who` of the project agents mid-reply in a one-on-one chat. */
+  projectBusy: Set<string>;
+  page: PageId;
+  /** Slug selected on the projects page; null when the hub has no project to show. */
+  project: string | null;
   connection: 'live' | 'polling' | 'down';
-  /** Newest screencast frame, or null when nothing has arrived for this visit to the screening room. */
+  /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
   browserFrame: BrowserFrame | null;
 }
 
 export type StoreEvent =
   | { type: 'hub-state'; state: HubState }
   | { type: 'agent-busy'; agentId: number; busy: boolean }
+  | { type: 'project-busy'; slug: string; who: string; busy: boolean }
   | { type: 'busy-reset' }
-  | { type: 'set-floor'; floor: FloorId }
+  | { type: 'set-page'; page: PageId }
+  | { type: 'set-project'; slug: string }
   | { type: 'browser-frame'; frame: BrowserFrame }
   | { type: 'connection'; status: UiState['connection'] };
 
 export class Store {
   private state: UiState = {
-    hub: null, busy: new Set(), floor: 'f1', connection: 'down', browserFrame: null,
+    hub: null,
+    busy: new Set(),
+    projectBusy: new Set(),
+    page: 'projects',
+    project: null,
+    connection: 'down',
+    browserFrame: null,
   };
   private listeners = new Set<(s: UiState) => void>();
 
@@ -41,12 +59,13 @@ export class Store {
       case 'hub-state': {
         const agentIds = new Set(event.state.agents.map((a) => a.id));
         const busy = new Set([...this.state.busy].filter((id) => agentIds.has(id)));
-        // A project floor vanishes once its project is done (or gone); riding
-        // it out from underneath the viewer would strand them, so drop back
-        // to the lobby instead.
-        const stillExists = floorsFor({ hub: event.state }).some((f) => f.id === this.state.floor);
-        const floor = stillExists ? this.state.floor : 'f1';
-        this.state = { ...this.state, hub: event.state, busy, floor };
+        // A project that finished (or was deleted) can't stay selected under the
+        // viewer; fall back to the first one the hub still reports.
+        const slugs = (event.state.projects ?? []).map((p) => p.slug);
+        const project = this.state.project && slugs.includes(this.state.project)
+          ? this.state.project
+          : (slugs[0] ?? null);
+        this.state = { ...this.state, hub: event.state, busy, project };
         break;
       }
       case 'agent-busy': {
@@ -56,17 +75,28 @@ export class Store {
         this.state = { ...this.state, busy };
         break;
       }
-      case 'busy-reset':
-        this.state = { ...this.state, busy: new Set() };
+      case 'project-busy': {
+        const projectBusy = new Set(this.state.projectBusy);
+        const key = chatKey(event.slug, event.who);
+        if (event.busy) projectBusy.add(key);
+        else projectBusy.delete(key);
+        this.state = { ...this.state, projectBusy };
         break;
-      // Leaving the screening room drops the last frame: the cast stops with the
+      }
+      case 'busy-reset':
+        this.state = { ...this.state, busy: new Set(), projectBusy: new Set() };
+        break;
+      // Leaving the computer page drops the last frame: the cast stops with the
       // unsubscribe, and coming back to a frozen still would read as live.
-      case 'set-floor':
+      case 'set-page':
         this.state = {
           ...this.state,
-          floor: event.floor,
-          browserFrame: event.floor === 'f5' ? this.state.browserFrame : null,
+          page: event.page,
+          browserFrame: event.page === 'computer' ? this.state.browserFrame : null,
         };
+        break;
+      case 'set-project':
+        this.state = { ...this.state, project: event.slug };
         break;
       case 'browser-frame':
         this.state = { ...this.state, browserFrame: event.frame };

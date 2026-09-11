@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { BrowserStatus } from '@agenthub/shared';
-import { browserView } from '../src/panels/browser.js';
+import { browserView } from '../src/pages/computer.js';
 
 const NOW = 100_000;
 

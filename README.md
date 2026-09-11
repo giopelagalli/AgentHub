@@ -254,6 +254,54 @@ none of those are reachable through an API key. Local nodes stay preferred:
 `ModelGateway.pick()` sorts local endpoints ahead of cloud ones for the same
 tier, so the cloud is used only when nothing local has capacity for it.
 
+### Fireworks AI
+
+`FIREWORKS_API_KEY=...` adds a second cloud node, `cloud-fireworks`. Fireworks
+is OpenAI-compatible, so it takes the same wire path a local endpoint does —
+the only difference is the bearer token, which the gateway reads from the
+environment per request (`ServingEndpoint.apiKeyEnv` names the variable; the
+secret itself is never stored or sent to the UI). An unset key costs one log
+line and takes the node out of rotation rather than failing a turn.
+
+    FIREWORKS_API_KEY=fw-... npm run dev:hub
+    # [hub] cloud tier: fireworks (glm-5p3 / glm-5p3-flash)
+
+The model ids default to `accounts/fireworks/models/glm-5p3` (orchestrator) and
+`accounts/fireworks/models/glm-5p3-flash` (worker), overridable with
+`FIREWORKS_ORCHESTRATOR_MODEL` / `FIREWORKS_WORKER_MODEL`. **Those two defaults
+follow Fireworks' documented naming but are unverified** — `GET /api/models` is
+the source of truth: it lists what the account can actually serve (fetched from
+Fireworks and cached for ten minutes) alongside every local endpoint and each
+cloud provider's configured ids.
+
+## Choosing models per project
+
+Each project's `manifest.yaml` can carry a `modelPolicy`, set from the **Models**
+picker in the project header (or `POST /api/projects/<slug>/model`):
+
+    modelPolicy:
+      prefer: cloud           # local | cloud | auto
+      provider: fireworks     # fireworks | anthropic
+      orchestratorModel: accounts/fireworks/models/glm-5p3
+      workerModel: accounts/fireworks/models/glm-5p3-flash
+
+- `auto` (the default, and what an absent policy means) is today's behaviour:
+  local endpoints first, cloud as overflow.
+- `local` keeps the project on the owner's own hardware — the DGX Spark and
+  friends — and reaches the cloud only for a tier *no* local node serves at all.
+  A busy or briefly unhealthy local endpoint makes the project wait rather than
+  spill into the cloud.
+- `cloud` goes out first, to `provider` when one is named, and falls back to a
+  local endpoint if that cloud has nothing free.
+
+The two model fields override that provider's configured model for their tier —
+the orchestrator's turns and chats use `orchestratorModel`, everything it
+delegates through `spawn_subagent` uses `workerModel`. An override only ever
+applies to a cloud endpoint of the named provider: a local node serves whatever
+model it has loaded, so asking it for another one is never attempted. The API
+validates ids against `GET /api/models` and answers 400 for one the account
+cannot serve.
+
 ## Security
 
 The hub holds the owner's memory, projects, API keys and a shared browser, so

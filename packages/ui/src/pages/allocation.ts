@@ -1,8 +1,9 @@
 import { PRIORITY_RANK, type ProjectManifest } from '@agenthub/shared';
+import { policyPillText } from '../models.js';
 import type { Store, UiState } from '../store.js';
 import { el, priorityPicker } from './projects.js';
 
-const COLUMNS = ['Project', 'Status', 'Priority', 'Updated'] as const;
+const COLUMNS = ['Project', 'Status', 'Priority', 'Models', 'Updated'] as const;
 
 const NOTE = 'The Master reorders these automatically during briefings; your setting wins until it changes it again.';
 
@@ -57,6 +58,7 @@ export function mountAllocation(host: HTMLElement, store: Store): () => void {
       title.append(el('span', 'row__title', project.title), el('span', 'row__slug', project.slug));
       row.insertCell().appendChild(el('span', `pill pill--${project.status}`, project.status));
       row.insertCell().appendChild(priorityPicker(project.slug, project.priority));
+      row.insertCell().textContent = policyPillText(project.modelPolicy);
       row.insertCell().textContent = ago(project.updatedAt, now);
     }
   };
@@ -66,7 +68,7 @@ export function mountAllocation(host: HTMLElement, store: Store): () => void {
   let signature = '';
   const unsubscribe = store.subscribe((state) => {
     const next = allocationRows(state.hub?.projects ?? [])
-      .map((p) => `${p.slug}:${p.status}:${p.priority}:${p.updatedAt}`).join('|');
+      .map((p) => `${p.slug}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}:${p.updatedAt}`).join('|');
     if (next === signature && state.hub) return;
     signature = next;
     render(state);

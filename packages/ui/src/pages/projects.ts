@@ -1,6 +1,7 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { avatarSvg } from '../avatars.js';
+import { modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../models.js';
 import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
 import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
@@ -38,7 +39,7 @@ export function projectsSignature(state: UiState): string {
     state.project,
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),
-    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}`).join('|'),
+    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}`).join('|'),
   ].join('~');
 }
 
@@ -91,6 +92,59 @@ export function priorityPicker(slug: string, value: Priority): HTMLSelectElement
       });
   });
   return box;
+}
+
+/**
+ * The project's model policy: one `<select>` over everything `/api/models` lists, plus — once a
+ * cloud provider is chosen — a second one that can give the worker tier a cheaper model. Both post
+ * the whole policy, so the hub never has to merge a partial one.
+ */
+export function modelPicker(slug: string, policy: ModelPolicy | undefined, catalog: ModelCatalog | null): HTMLElement {
+  const wrap = el('div', 'models');
+  const post = (next: ModelPolicy, revert: () => void): void => {
+    void sendJson(`/api/projects/${slug}/model`, next)
+      .then(() => toast(`${slug} now runs on ${policyPillText(next)}.`))
+      .catch((error: unknown) => {
+        toast(`Could not set models: ${String(error)}`, 'error');
+        revert();
+      });
+  };
+
+  const main = el('select', 'select');
+  for (const option of modelOptions(catalog)) {
+    const item = document.createElement('option');
+    item.value = option.value;
+    item.textContent = option.label;
+    main.appendChild(item);
+  }
+  const current = valueFromPolicy(policy);
+  main.value = current;
+  main.title = 'Models';
+  main.addEventListener('change', () => post(policyFromValue(main.value), () => { main.value = current; }));
+  wrap.appendChild(main);
+
+  const provider = policy?.prefer === 'cloud' ? policy.provider : undefined;
+  if (provider) {
+    const worker = el('select', 'select');
+    for (const option of workerOptions(catalog, provider)) {
+      const item = document.createElement('option');
+      item.value = option.value;
+      item.textContent = option.label;
+      worker.appendChild(item);
+    }
+    const workerCurrent = policy?.workerModel && policy.workerModel !== policy.orchestratorModel
+      ? policy.workerModel
+      : SAME_AS_ORCHESTRATOR;
+    worker.value = workerCurrent;
+    worker.title = 'Worker model';
+    worker.addEventListener('change', () => post({
+      prefer: 'cloud', provider,
+      ...(policy?.orchestratorModel ? { orchestratorModel: policy.orchestratorModel } : {}),
+      ...(worker.value ? { workerModel: worker.value } : policy?.orchestratorModel ? { workerModel: policy.orchestratorModel } : {}),
+    }, () => { worker.value = workerCurrent; }));
+    wrap.appendChild(worker);
+  }
+  return wrap;
 }
 
 /** One org-chart card. Employees carry a remove button; the owner card isn't clickable. */
@@ -217,6 +271,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   };
 
   let roster: TeamRoster | null = null;
+  /** The model catalog, fetched once per mount; until it arrives the picker offers auto/local only. */
+  let catalog: ModelCatalog | null = null;
+  void getJson<ModelCatalog>('/api/models')
+    .then((next) => { catalog = next; renderDetail(store.getState()); })
+    .catch(() => { /* the picker still offers auto and local only */ });
   /** Why the employees tier is empty, when it is. */
   let rosterState: 'loading' | 'ready' | 'failed' = 'loading';
   let hiring = false;
@@ -316,11 +375,16 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
     const head = el('header', 'detail__head');
     const line = el('div', 'detail__title');
-    line.append(el('h1', undefined, project.title), el('span', `pill pill--${project.status}`, project.status));
+    line.append(
+      el('h1', undefined, project.title),
+      el('span', `pill pill--${project.status}`, project.status),
+      el('span', 'pill pill--models', policyPillText(project.modelPolicy)),
+    );
     head.append(line, el('p', 'detail__intent', project.intent));
 
     const controls = el('div', 'actions');
     controls.appendChild(priorityPicker(project.slug, project.priority));
+    controls.appendChild(modelPicker(project.slug, project.modelPolicy, catalog));
 
     const paused = project.status === 'paused';
     const toggle = button(paused ? 'Resume' : 'Pause');

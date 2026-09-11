@@ -330,6 +330,19 @@ p {
   border-color: var(--line);
 }
 
+/* Which models this project runs on — quieter than the status pill beside it. */
+.pill--models {
+  color: var(--text-mute);
+  border-color: var(--line);
+}
+
+/* The model policy's one or two selects, kept together inside the action row. */
+.models {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 .dot {
   flex: none;
   width: 7px;

@@ -1,4 +1,4 @@
-/* AgentHub — a flat management app in the tower's old colours.
+/* AgentHub — a flat management app.
 
    Near-black violet ground, dark glass cards, one hot magenta and one electric
    cyan doing all the signalling, monospace throughout. Nothing moves: the only
@@ -263,6 +263,12 @@ p {
   border-color: color-mix(in srgb, var(--magenta) 50%, transparent);
 }
 
+.pill--done {
+  color: var(--pale);
+  border-color: var(--line);
+  opacity: 0.7;
+}
+
 .dot {
   width: 7px;
   height: 7px;
@@ -404,6 +410,10 @@ p {
   min-width: 0;
   padding: 16px 20px 40px;
   overflow-y: auto;
+}
+
+.detail__head {
+  margin-bottom: 16px;
 }
 
 .detail__title {
@@ -816,6 +826,37 @@ button.card__open:hover {
   margin-bottom: 8px;
   overflow-wrap: anywhere;
   color: var(--amber);
+}
+
+.chat__activity {
+  padding: 8px 0;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat__activity-line {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--pale);
+}
+
+.chat__activity-excerpt {
+  color: var(--cream);
+}
+
+.chat__activity-details summary {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  cursor: pointer;
+}
+
+.chat__activity-details .chat__msg {
+  margin-top: 8px;
 }
 
 .chat__pending button {

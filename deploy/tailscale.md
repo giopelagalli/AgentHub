@@ -70,7 +70,7 @@ controls) so that:
   the hub's 4000, each daemon's control/browser server, and the model-serving
   ports from `configs/<node>.yaml`.
 - **The owner's own devices (`autogroup:member`) reach everything**, so the
-  tower UI works from inside the tailnet without going through the droplet.
+  management UI works from inside the tailnet without going through the droplet.
 
 The full policy JSON is in `deploy/do/README.md` §5.
 

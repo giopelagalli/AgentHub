@@ -137,7 +137,7 @@ the Tailscale admin console → Access controls:
         { "action": "accept", "src": ["tag:hub", "tag:node"],
           "dst": ["tag:hub:4000", "tag:node:7000-7999", "tag:node:8000-8999"] },
 
-        // The owner's own devices reach everything, so the tower UI still works
+        // The owner's own devices reach everything, so the management UI still works
         // from inside the tailnet without going through the droplet.
         { "action": "accept", "src": ["autogroup:member"], "dst": ["*:*"] }
       ],

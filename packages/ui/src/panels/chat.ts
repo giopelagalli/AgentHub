@@ -1,6 +1,16 @@
-import type { ChatMessage } from '@agenthub/shared';
+import type { ChatMessage, TeamMemberView } from '@agenthub/shared';
 import { getJson } from '../api.js';
+import { latestWorkMessages, statusLabel } from '../activity.js';
 import { parseSseFrames } from '../sse.js';
+
+/**
+ * "What they're doing", shown above the log: an employee's roster status plus their latest work
+ * session, or the manager's latest published briefing. `member` comes from the roster the caller
+ * already has loaded, so opening the drawer needs no extra roster fetch for the status line.
+ */
+export type ChatActivity =
+  | { kind: 'employee'; member: TeamMemberView; activityUrl: string }
+  | { kind: 'manager'; briefingUrl: string };
 
 export interface ChatTarget {
   /** Speaker name in the log and the drawer heading. */
@@ -16,6 +26,8 @@ export interface ChatTarget {
    * proposes outward actions, so only the assistant passes this.
    */
   pendingBase?: string;
+  /** The "What they're doing" section; omitted for the assistant, which isn't on any roster. */
+  activity?: ChatActivity;
 }
 
 interface PendingAction {
@@ -59,6 +71,9 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   const panel = document.createElement('aside');
   panel.className = 'drawer';
 
+  const activityBox = document.createElement('section');
+  activityBox.className = 'chat__activity';
+
   const log = document.createElement('div');
   log.className = 'chat__log';
 
@@ -73,7 +88,8 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   send.textContent = 'Send';
   form.append(input, send);
 
-  panel.append(drawerHeader(target.name, target.subtitle, () => dispose()), log, form);
+  const head = drawerHeader(target.name, target.subtitle, () => dispose());
+  panel.append(...(target.activity ? [head, activityBox, log, form] : [head, log, form]));
 
   /** Within a few pixels of the end, so a reader who scrolled back stays there. */
   const atBottom = (): boolean => log.scrollHeight - log.scrollTop - log.clientHeight < 8;
@@ -150,7 +166,10 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
    * shown: the system framing and the agent's tool traffic are not this window's business.
    */
   const loadHistory = async (): Promise<void> => {
-    if (!target.historyEndpoint) return;
+    if (!target.historyEndpoint) {
+      note('This log is session-only; history persists server-side.');
+      return;
+    }
     try {
       const { messages } = await getJson<{ messages: ChatMessage[] }>(target.historyEndpoint);
       const said = messages.filter(
@@ -168,25 +187,98 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     }
   };
 
-  let inFlight: AbortController | null = null;
+  /** One line of the "What they're doing" section, built the same way a chat message row is. */
+  const activityLine = (className: string, text: string): HTMLElement => {
+    const line = document.createElement('p');
+    line.className = className;
+    line.textContent = text;
+    return line;
+  };
 
-  const stream = async (text: string): Promise<void> => {
+  /**
+   * "What they're doing": an employee's roster status and latest-session excerpt (already in hand
+   * from the roster the caller loaded) plus a fetch for the last turns of their current work session;
+   * the manager's latest published briefing instead. Best-effort — a failed fetch leaves whatever
+   * already rendered from the roster alone rather than replacing it with an error.
+   */
+  const loadActivity = async (): Promise<void> => {
+    const activity = target.activity;
+    if (!activity) return;
+
+    if (activity.kind === 'manager') {
+      const line = activityLine('chat__activity-line', 'Loading the latest briefing…');
+      activityBox.appendChild(line);
+      try {
+        const { briefing } = await getJson<{ briefing: { summary: string } | null }>(activity.briefingUrl);
+        line.textContent = briefing ? briefing.summary : 'No briefing published yet.';
+      } catch (error) {
+        line.textContent = `Could not load the briefing: ${String(error)}`;
+      }
+      return;
+    }
+
+    const { member, activityUrl } = activity;
+    const status = activityLine('chat__activity-line', '');
+    const dot = document.createElement('span');
+    dot.className = `dot dot--${member.status}`;
+    const label = document.createElement('span');
+    label.textContent = `${statusLabel(member.status)} · ${member.sessionsCount} session${member.sessionsCount === 1 ? '' : 's'}`;
+    status.append(dot, label);
+    activityBox.appendChild(status);
+    if (member.currentSession?.lastMessage) {
+      activityBox.appendChild(activityLine('chat__activity-line chat__activity-excerpt', member.currentSession.lastMessage));
+    }
+
+    try {
+      const data = await getJson<{ session: unknown; messages: ChatMessage[] }>(activityUrl);
+      const lines = data.session ? latestWorkMessages(data.messages, target.name) : [];
+      if (!lines.length) return;
+      const details = document.createElement('details');
+      details.className = 'chat__activity-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Latest work';
+      details.appendChild(summary);
+      for (const line of lines) {
+        const row = document.createElement('p');
+        row.className = 'chat__msg';
+        const who = document.createElement('span');
+        who.className = 'chat__who';
+        who.textContent = line.speaker;
+        const said = document.createElement('span');
+        said.className = 'chat__said';
+        said.textContent = line.text;
+        row.append(who, said);
+        details.appendChild(row);
+      }
+      activityBox.appendChild(details);
+    } catch {
+      // The status line above already came from the roster; the "Latest work" block just stays off.
+    }
+  };
+
+  // The hub answers one project/assistant chat's messages in order, so a second send while the
+  // first is still streaming is not blocked — it's queued behind it, same as the hub does server
+  // side. Every in-flight controller lives here so a drawer close can abort all of them at once.
+  const pending = new Set<AbortController>();
+
+  const stream = async (text: string, queued: boolean): Promise<void> => {
     // The user's own message always pins to bottom, even if they'd scrolled
     // back to read history — sending is a clear signal they're back at the end.
     addMessage('You', text, true);
-    const reply = addMessage(target.name, '');
+    const reply = addMessage(target.name, queued ? 'queued…' : '');
     reply.parentElement?.classList.add('chat__msg--typing');
     const controller = new AbortController();
-    inFlight = controller;
-    // Captured before disabling blurs the input, so we know whether to give
-    // focus back afterwards or leave it wherever the reader had moved to.
+    pending.add(controller);
+    // Captured now, so a reader who clicked elsewhere while this was queued doesn't get focus stolen.
     const wasOurs = document.activeElement === input;
-    input.disabled = true;
-    send.disabled = true;
+    // Set once real content (a token, an error, or the done frame) has replaced the "queued…"
+    // placeholder — a message that queued behind another has nothing to show until then.
+    let started = !queued;
 
     // Keep whatever already streamed in: a mid-stream failure is more legible
     // next to the partial reply than in place of it.
     const fail = (message: string): void => {
+      if (!started) { reply.textContent = ''; started = true; }
       reply.textContent = reply.textContent ? `${reply.textContent}\n${message}` : message;
       reply.parentElement?.classList.add('chat__msg--error');
     };
@@ -211,7 +303,10 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
         rest = parsed.rest;
         for (const event of parsed.events) {
           const following = atBottom();
-          if (event.token !== undefined) reply.textContent += event.token;
+          if (event.token !== undefined) {
+            if (!started) { reply.textContent = ''; started = true; }
+            reply.textContent += event.token;
+          }
           if (event.error !== undefined) fail(event.error);
           // The done frame carries the whole reply: trust it over the pieces.
           if (event.done && typeof event.full === 'string') reply.textContent = event.full;
@@ -222,23 +317,19 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     } catch (error) {
       if (!controller.signal.aborted) fail(String(error));
     } finally {
-      inFlight = null;
+      pending.delete(controller);
       reply.parentElement?.classList.remove('chat__msg--typing');
-      if (panel.isConnected) {
-        input.disabled = false;
-        send.disabled = false;
-        // Don't steal focus back if the reader clicked into something else.
-        if (wasOurs) input.focus();
-      }
+      // Don't steal focus back if the reader clicked into something else.
+      if (panel.isConnected && pending.size === 0 && wasOurs) input.focus();
     }
   };
 
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text || inFlight) return;
+    if (!text) return;
     input.value = '';
-    void stream(text);
+    void stream(text, pending.size > 0);
   });
 
   const onKey = (event: KeyboardEvent): void => {
@@ -247,12 +338,13 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   window.addEventListener('keydown', onKey);
 
   host.appendChild(panel);
+  void loadActivity();
   void loadHistory();
   input.focus();
 
   function dispose(): void {
     window.removeEventListener('keydown', onKey);
-    inFlight?.abort();
+    for (const controller of pending) controller.abort();
     panel.remove();
   }
 

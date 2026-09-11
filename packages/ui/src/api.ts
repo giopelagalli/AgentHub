@@ -5,6 +5,13 @@
 
 async function request(url: string, init?: RequestInit): Promise<Response> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
+  if (response.status === 401) {
+    // The session cookie expired: reload into the login box rather than let every caller's
+    // .catch() toast a "hub replied 401". The reload is already underway, so the promise it
+    // returns never needs to settle.
+    window.location.reload();
+    return new Promise<Response>(() => {});
+  }
   if (!response.ok) throw new Error(`hub replied ${response.status}`);
   return response;
 }

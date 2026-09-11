@@ -80,7 +80,7 @@ bot.
 
 This machine is also the cluster's browser: a headed Chromium driven by
 Playwright, leased to one holder at a time by the hub, watched live in the
-UI's 5F screening room. The browser lives in the *node daemon*, not the
+UI's Computer page. The browser lives in the *node daemon*, not the
 hub, so the Mac mini runs both processes.
 
 ### Install Playwright + Chromium

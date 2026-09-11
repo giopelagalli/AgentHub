@@ -2,7 +2,7 @@ import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type Priority, type ProjectManifest
 import { getJson, sendJson } from '../api.js';
 import { avatarSvg } from '../avatars.js';
 import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
-import { openChat } from '../panels/chat.js';
+import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
 import type { Store, UiState } from '../store.js';
 import { toast } from '../toast.js';
@@ -23,6 +23,23 @@ export function filterProjects(projects: ProjectManifest[], query: string): Proj
   return projects.filter(
     (p) => p.title.toLowerCase().includes(needle) || p.slug.toLowerCase().includes(needle),
   );
+}
+
+/**
+ * Everything that decides what the projects page looks like, short of the roster itself: project
+ * selection, who's chatting, and each project's own fields — including `updatedAt`, so a hire, a
+ * removal, or a turn (each of which touches a project without necessarily changing its title, status
+ * or priority) still changes the signature and triggers a fresh render and roster reload.
+ */
+export function projectsSignature(state: UiState): string {
+  const projects = state.hub?.projects ?? [];
+  const current = projects.find((p) => p.slug === state.project);
+  return [
+    state.project,
+    current?.updatedAt ?? '',
+    [...state.projectBusy].sort().join(','),
+    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}`).join('|'),
+  ].join('~');
 }
 
 /** Where ←/→ land from `slug` in `projects`; the ends don't wrap. */
@@ -242,11 +259,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       openDrawer((into) => openMasterPanel(into));
       return;
     }
+    // The manager's "What they're doing" is the project's latest briefing; an employee's is their
+    // roster entry (already loaded) plus their latest work session.
+    const member = card.kind === 'employee' ? roster?.members.find((m) => m.id === card.id) : undefined;
+    const activity: ChatActivity | undefined = card.kind === 'manager'
+      ? { kind: 'manager', briefingUrl: `/api/projects/${slug}` }
+      : member
+        ? { kind: 'employee', member, activityUrl: `/api/projects/${slug}/team/${card.id}/activity` }
+        : undefined;
     openDrawer((into) => openChat(into, {
       name: card.name,
       subtitle: `${card.role} · ${slug}`,
       endpoint: `/api/projects/${slug}/chat/${card.id}/messages`,
       historyEndpoint: `/api/projects/${slug}/chat/${card.id}`,
+      ...(activity ? { activity } : {}),
     }));
   };
 
@@ -351,25 +377,31 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     detail.appendChild(chart);
   }
 
-  /** Everything that decides what the page looks like, short of the roster itself. */
-  const signature = (state: UiState): string => [
-    state.project,
-    [...state.projectBusy].sort().join(','),
-    projectsOf(state).map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}`).join('|'),
-  ].join('~');
-
   let last = '';
   let rosterFor: string | null = null;
+  let rosterUpdatedAt: number | undefined;
 
   const render = (state: UiState): void => {
-    const next = signature(state);
+    const next = projectsSignature(state);
     if (next === last) return;
     last = next;
-    if (state.project !== rosterFor) {
+
+    const project = selected(state);
+    const projectChanged = state.project !== rosterFor;
+    // A card click opened the drawer for the project we were just looking at; switching projects
+    // (arrow keys, the list, or the hub moving the selection) leaves it pointed at the wrong agent.
+    if (projectChanged) {
+      closeDrawer?.();
+      closeDrawer = null;
+    }
+    if (projectChanged || project?.updatedAt !== rosterUpdatedAt) {
       rosterFor = state.project;
-      roster = null;
-      rosterState = 'loading';
-      hiring = false;
+      rosterUpdatedAt = project?.updatedAt;
+      if (projectChanged) {
+        roster = null;
+        rosterState = 'loading';
+        hiring = false;
+      }
       if (state.project) loadRoster(state.project);
     }
     renderList(state);

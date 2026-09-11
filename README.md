@@ -297,7 +297,7 @@ forward or a public IP on any machine but the droplet.
 | 2 | Elastic multi-node cluster: nodes advertise job types and run `shell-task`s; a node dying mid-job requeues it onto another capable node; per-node deployment playbooks. |
 | 3 | Orchestration: portable project bundles, one long-lived orchestrator per project delegating to ephemeral subagents, master orchestrator, briefings, rehydration after a restart. Plus the management UI over the hub WebSocket. |
 | 4 | Telegram control and the personal assistant: git-versioned markdown memory + planner, commands and free-form chat, daily briefing, check-ins, alerts, and the confirmation gate for outward actions. |
-| 5b | The Mac mini's headed Chromium as a shared cluster resource: leases with owner preemption, a browser tool set for agents, frame-by-frame recording, and the 5F screening room. |
+| 5b | The Mac mini's headed Chromium as a shared cluster resource: leases with owner preemption, a browser tool set for agents, frame-by-frame recording, and the Computer page (shared browser). |
 | 6 | Owner login + daemon tokens, video generation on the Spark with the LLM/video exclusivity swap and `/video`, the four sanctioned external tools with an audit trail, the control-node switch and `/controlnode`, and the DigitalOcean proxy. |
 
 Not built, deliberately: Kokoro voice notes (the `OutgoingMessage.voice` seam

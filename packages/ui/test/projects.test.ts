@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { Priority, ProjectManifest, ProjectStatus } from '@agenthub/shared';
+import type { HubState, Priority, ProjectManifest, ProjectStatus } from '@agenthub/shared';
+import type { UiState } from '../src/store.js';
 import { allocationRows } from '../src/pages/allocation.js';
-import { filterProjects, stepSelection } from '../src/pages/projects.js';
+import { filterProjects, projectsSignature, stepSelection } from '../src/pages/projects.js';
 
 function project(slug: string, overrides: Partial<ProjectManifest> = {}): ProjectManifest {
   return {
@@ -84,5 +85,44 @@ describe('allocationRows', () => {
     const given = [project('b', { priority: 'batch' }), project('a', { priority: 'interactive' })];
     allocationRows(given);
     expect(given.map((p) => p.slug)).toEqual(['b', 'a']);
+  });
+});
+
+function hubState(projects: ProjectManifest[]): HubState {
+  return { nodes: [], agents: [], jobs: [], streams: {}, projects };
+}
+
+function uiState(overrides: Partial<UiState> = {}): UiState {
+  return {
+    hub: null, busy: new Set(), projectBusy: new Set(), page: 'projects',
+    project: null, connection: 'down', browserFrame: null,
+    ...overrides,
+  };
+}
+
+describe('projectsSignature', () => {
+  it('changes when the selected project changes', () => {
+    const hub = hubState([project('a'), project('b')]);
+    const s1 = projectsSignature(uiState({ hub, project: 'a' }));
+    const s2 = projectsSignature(uiState({ hub, project: 'b' }));
+    expect(s1).not.toBe(s2);
+  });
+
+  it('changes when the selected project is only touched — updatedAt moves with title/status/priority unchanged', () => {
+    const before = uiState({ hub: hubState([project('a', { updatedAt: 1 })]), project: 'a' });
+    const after = uiState({ hub: hubState([project('a', { updatedAt: 2 })]), project: 'a' });
+    expect(projectsSignature(before)).not.toBe(projectsSignature(after));
+  });
+
+  it('is stable when nothing relevant changed', () => {
+    const state = uiState({ hub: hubState([project('a', { updatedAt: 1 })]), project: 'a' });
+    expect(projectsSignature(state)).toBe(projectsSignature(state));
+  });
+
+  it('changes when who is mid-reply changes', () => {
+    const hub = hubState([project('a')]);
+    const s1 = projectsSignature(uiState({ hub, project: 'a', projectBusy: new Set() }));
+    const s2 = projectsSignature(uiState({ hub, project: 'a', projectBusy: new Set(['a:coder-1']) }));
+    expect(s1).not.toBe(s2);
   });
 });

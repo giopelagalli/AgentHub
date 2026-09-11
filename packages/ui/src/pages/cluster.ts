@@ -5,6 +5,10 @@ import { el } from './projects.js';
 const NODE_COLUMNS = ['Node', 'Status', 'Serving', 'Streams', 'Extras'] as const;
 const JOB_COLUMNS = ['Job', 'Type', 'Status', 'Node', 'Attempts', 'Project'] as const;
 
+/** Column indexes whose cells hold identifiers — names, ids, model strings — and so set in mono. */
+const NODE_MONO = new Set([0, 2, 3]);
+const JOB_MONO = new Set([0, 1, 3, 5]);
+
 function table(columns: readonly string[]): { node: HTMLTableElement; body: HTMLTableSectionElement } {
   const node = el('table', 'table');
   const head = node.createTHead().insertRow();
@@ -62,6 +66,7 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
 
   const fill = (
     body: HTMLTableSectionElement, empty: HTMLElement, rows: string[][], statusAt: number, none: string,
+    mono: ReadonlySet<number>,
   ): void => {
     body.replaceChildren();
     empty.hidden = rows.length > 0;
@@ -73,6 +78,7 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
         const cell = row.insertCell();
         cell.textContent = value;
         if (index === statusAt) cell.className = `status status--${value}`;
+        else if (mono.has(index)) cell.className = 'mono';
       });
     }
   };
@@ -87,6 +93,7 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
       ]),
       1,
       state.hub ? 'No node has registered.' : 'Waiting for the hub…',
+      NODE_MONO,
     );
     fill(
       jobs.body,
@@ -94,6 +101,7 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
       (state.hub?.jobs ?? []).map(jobRow),
       2,
       state.hub ? 'The queue is empty.' : 'Waiting for the hub…',
+      JOB_MONO,
     );
   };
 

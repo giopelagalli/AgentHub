@@ -1,28 +1,42 @@
-/* AgentHub — a flat management app.
+/* AgentHub — the management console.
 
-   Near-black violet ground, dark glass cards, one hot magenta and one electric
-   cyan doing all the signalling, monospace throughout. Nothing moves: the only
-   state changes are the ones the hub reports. */
+   A calm workspace, not a control room. Neutral charcoal surfaces stacked
+   three deep, 1px borders doing all the dividing, and one blue carrying every
+   signal a click can follow: active page, primary action, link, focus ring.
+   Status keeps its own muted quartet — green working, amber waiting, red
+   failed, grey done — and nothing else is coloured at all. Interface sans
+   throughout; the monospace is held back for the strings that are literally
+   identifiers. Nothing glows, nothing moves. */
 
 :root {
   color-scheme: dark;
 
-  --bg0: #07060f;
-  --bg1: #120b22;
-  --bg2: #1a1030;
-  --line: #2c1a4d;
-  --line-lit: #46306f;
-  --pale: #7c8ac0;
-  --cream: #aebbe6;
+  --bg0: #0d0f12;
+  --bg1: #14171c;
+  --bg2: #1b1f26;
+  --hover: #22272f;
+  --line: #262b33;
+  --line-lit: #343a44;
 
-  --magenta: #ff2d95;
-  --cyan: #22e0ff;
-  --amber: #ffb43c;
-  --green: #39ff88;
+  --text: #e6e8eb;
+  --text-dim: #9aa3ad;
+  --text-mute: #828b96;
 
+  /* One accent, three jobs: a bar or border, a label, a filled button. */
+  --accent: #3b82f6;
+  --accent-hi: #60a5fa;
+  --accent-fill: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.13);
+  --ring: rgba(59, 130, 246, 0.32);
+
+  --green: #34d399;
+  --amber: #f59e0b;
+  --red: #f87171;
+
+  --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Helvetica Neue', sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --card-w: 216px;
-  --radius: 3px;
+  --radius: 6px;
 }
 
 * {
@@ -34,11 +48,12 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 13px;
-  line-height: 1.55;
-  color: var(--cream);
+  line-height: 1.5;
+  color: var(--text);
   background: var(--bg0);
+  -webkit-font-smoothing: antialiased;
 }
 
 h1,
@@ -47,29 +62,34 @@ h3,
 h4 {
   margin: 0;
   font-size: 13px;
-  font-weight: normal;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
 }
 
 h1 {
   font-size: 16px;
-  letter-spacing: 0.04em;
-  color: var(--cream);
-  text-transform: none;
 }
 
-h2 {
-  color: var(--magenta);
-}
-
-h3,
 h4 {
-  color: var(--pale);
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 p {
   margin: 0;
+}
+
+/* The only place monospace is allowed: ids, slugs, model names, tool output. */
+.mono,
+.row__slug,
+.facts dd,
+.desk__queue,
+.chat__activity-details .chat__said {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-variant-ligatures: none;
 }
 
 /* --- shell ---------------------------------------------------------------- */
@@ -84,24 +104,25 @@ p {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 14px 10px;
+  padding: 16px 12px;
   background: var(--bg1);
   border-right: 1px solid var(--line);
 }
 
 .nav__brand {
-  margin-bottom: 14px;
-  padding-left: 6px;
+  margin-bottom: 16px;
+  padding-left: 10px;
   font-size: 14px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--magenta);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--text);
 }
 
 .nav__pages {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .nav__page {
@@ -109,7 +130,7 @@ p {
   padding: 7px 10px;
   font: inherit;
   text-align: left;
-  color: var(--pale);
+  color: var(--text-dim);
   background: none;
   border: 0;
   border-left: 2px solid transparent;
@@ -118,50 +139,64 @@ p {
 }
 
 .nav__page:hover {
-  color: var(--cyan);
-  background: var(--bg2);
+  color: var(--text);
+  background: var(--hover);
 }
 
 .nav__page[aria-current='page'] {
-  color: var(--magenta);
+  color: var(--text);
   background: var(--bg2);
-  border-left-color: var(--magenta);
+  border-left-color: var(--accent);
+}
+
+.nav__page[aria-current='page'] .nav__label {
+  font-weight: 500;
 }
 
 .nav__label {
   display: block;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .nav__hint {
   display: block;
   font-size: 11px;
-  letter-spacing: 0.04em;
-  color: var(--line-lit);
+  letter-spacing: 0;
+  color: var(--text-mute);
 }
 
 .nav__foot {
   margin-top: auto;
-  padding-left: 6px;
+  padding-left: 10px;
 }
 
 .badge {
-  display: inline-block;
-  padding: 1px 7px;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  color: var(--green);
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
   border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
+  border-radius: 999px;
 }
 
-.badge[data-status='polling'] {
-  color: var(--amber);
+.badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
 }
 
-.badge[data-status='down'] {
-  color: var(--magenta);
+.badge[data-status='polling']::before {
+  background: var(--amber);
+}
+
+.badge[data-status='down']::before {
+  background: var(--red);
 }
 
 .page {
@@ -173,10 +208,11 @@ p {
 /* --- shared parts --------------------------------------------------------- */
 
 .btn {
-  padding: 4px 11px;
+  padding: 5px 12px;
   font: inherit;
-  letter-spacing: 0.06em;
-  color: var(--cyan);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text);
   background: var(--bg2);
   border: 1px solid var(--line-lit);
   border-radius: var(--radius);
@@ -184,17 +220,23 @@ p {
 }
 
 .btn:hover:not(:disabled) {
-  border-color: var(--cyan);
+  background: var(--hover);
+  border-color: #414855;
 }
 
 .btn--primary {
-  color: var(--bg0);
-  background: var(--cyan);
-  border-color: var(--cyan);
+  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .btn:disabled {
-  color: var(--line-lit);
+  color: var(--text-mute);
   background: var(--bg1);
   border-color: var(--line);
   cursor: default;
@@ -202,12 +244,16 @@ p {
 
 .input,
 .select {
-  padding: 4px 6px;
+  padding: 5px 8px;
   font: inherit;
-  color: var(--cream);
+  color: var(--text);
   background: var(--bg0);
   border: 1px solid var(--line-lit);
   border-radius: var(--radius);
+}
+
+.input::placeholder {
+  color: var(--text-mute);
 }
 
 .input:focus,
@@ -215,71 +261,85 @@ p {
 .btn:focus-visible,
 .nav__page:focus-visible,
 .row:focus-visible,
-.card__open:focus-visible {
-  outline: 1px solid var(--cyan);
-  outline-offset: 1px;
-  border-color: var(--cyan);
+.card__open:focus-visible,
+.hire__avatar:focus-visible,
+.chat__form input:focus,
+.drawer__close:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--ring);
 }
 
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 
 .empty {
-  padding: 10px 0;
-  color: var(--line-lit);
+  padding: 12px 0;
+  color: var(--text-mute);
 }
 
 .note {
-  margin: 2px 0 10px;
-  color: var(--pale);
+  margin: 4px 0 12px;
+  color: var(--text-dim);
 }
 
 .pill {
-  padding: 0 6px;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 1px 8px;
   font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--pale);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-dim);
   border: 1px solid var(--line-lit);
-  border-radius: 9px;
+  border-radius: 999px;
+}
+
+.pill::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .pill--active {
   color: var(--green);
-  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  border-color: color-mix(in srgb, var(--green) 28%, var(--line-lit));
 }
 
 .pill--paused {
   color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 28%, var(--line-lit));
 }
 
 .pill--blocked {
-  color: var(--magenta);
-  border-color: color-mix(in srgb, var(--magenta) 50%, transparent);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 28%, var(--line-lit));
 }
 
 .pill--done {
-  color: var(--pale);
+  color: var(--text-mute);
   border-color: var(--line);
-  opacity: 0.7;
 }
 
 .dot {
+  flex: none;
   width: 7px;
   height: 7px;
   margin-left: auto;
   border-radius: 50%;
-  background: var(--line-lit);
+  background: var(--text-mute);
 }
 
 .dot--working {
   background: var(--green);
-  box-shadow: 0 0 6px var(--green);
 }
 
 .table {
@@ -290,18 +350,26 @@ p {
 
 .table th,
 .table td {
-  padding: 4px 14px 4px 0;
+  padding: 7px 16px 7px 0;
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid var(--line);
 }
 
 .table th {
-  font-weight: normal;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--pale);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-mute);
+}
+
+.table tbody tr:hover td {
+  background: var(--bg2);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .table--empty {
@@ -309,18 +377,21 @@ p {
 }
 
 .status--online,
-.status--running,
-.status--done {
+.status--running {
   color: var(--green);
 }
 
 .status--offline,
 .status--failed {
-  color: var(--magenta);
+  color: var(--red);
 }
 
 .status--queued {
   color: var(--amber);
+}
+
+.status--done {
+  color: var(--text-mute);
 }
 
 .panel {
@@ -333,7 +404,7 @@ p {
 }
 
 .panel h2 {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 /* --- projects page -------------------------------------------------------- */
@@ -347,10 +418,11 @@ p {
 .list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  padding: 14px 12px;
+  padding: 16px 12px;
   overflow-y: auto;
+  background: var(--bg1);
   border-right: 1px solid var(--line);
 }
 
@@ -361,34 +433,39 @@ p {
 .list__rows {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
 }
 
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 2px 6px;
-  padding: 7px 9px;
+  gap: 3px 8px;
+  align-items: center;
+  padding: 8px 10px;
   font: inherit;
   text-align: left;
-  color: var(--cream);
-  background: var(--bg1);
+  color: var(--text-dim);
+  background: none;
   border: 1px solid transparent;
   border-radius: var(--radius);
   cursor: pointer;
 }
 
 .row:hover {
-  border-color: var(--line-lit);
+  color: var(--text);
+  background: var(--hover);
 }
 
 .row[aria-current='true'] {
+  color: var(--text);
   background: var(--bg2);
-  border-color: var(--magenta);
+  border-color: var(--line-lit);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .row__title {
   overflow: hidden;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -396,24 +473,23 @@ p {
 .row__priority {
   grid-column: 1 / -1;
   font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--line-lit);
+  letter-spacing: 0;
+  color: var(--text-mute);
 }
 
 .row__slug {
   display: block;
-  font-size: 11px;
-  color: var(--line-lit);
+  color: var(--text-mute);
 }
 
 .detail {
   min-width: 0;
-  padding: 16px 20px 40px;
+  padding: 20px 24px 40px;
   overflow-y: auto;
 }
 
 .detail__head {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .detail__title {
@@ -423,25 +499,25 @@ p {
 }
 
 .detail__intent {
-  margin: 4px 0 12px;
-  max-width: 70ch;
-  color: var(--pale);
+  margin: 6px 0 14px;
+  max-width: 74ch;
+  color: var(--text-dim);
 }
 
 .hire {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 12px;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 16px;
   background: var(--bg1);
-  border: 1px solid var(--line-lit);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
 .hire__row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .hire__row .input {
@@ -451,11 +527,11 @@ p {
 
 .hire__avatars {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .hire__avatar {
-  padding: 3px;
+  padding: 4px;
   line-height: 0;
   background: var(--bg0);
   border: 1px solid var(--line);
@@ -463,9 +539,13 @@ p {
   cursor: pointer;
 }
 
+.hire__avatar:hover {
+  border-color: var(--line-lit);
+}
+
 .hire__avatar[aria-pressed='true'] {
-  border-color: var(--magenta);
-  box-shadow: 0 0 8px -2px var(--magenta);
+  background: var(--accent-soft);
+  border-color: var(--accent);
 }
 
 .hire__instructions {
@@ -478,7 +558,7 @@ p {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 /* The trunk between two tiers. */
@@ -541,14 +621,14 @@ p {
 
 .card__open {
   display: flex;
-  gap: 9px;
+  gap: 10px;
   align-items: center;
   width: 100%;
-  padding: 9px;
+  padding: 12px;
   font: inherit;
   text-align: left;
-  color: var(--cream);
-  background: var(--bg1);
+  color: var(--text);
+  background: var(--bg2);
   border: 1px solid var(--line);
   border-radius: var(--radius);
 }
@@ -558,18 +638,18 @@ button.card__open {
 }
 
 button.card__open:hover {
-  background: var(--bg2);
-  border-color: var(--cyan);
+  background: var(--hover);
+  border-color: var(--line-lit);
 }
 
 .card--owner .card__open {
-  background: var(--bg2);
-  border-color: var(--magenta);
+  background: var(--bg1);
+  border-color: var(--line-lit);
 }
 
 .card--master .card__open,
 .card--assistant .card__open {
-  border-color: var(--line-lit);
+  border-color: var(--line);
 }
 
 .card__avatar {
@@ -578,12 +658,13 @@ button.card__open:hover {
   place-items: center;
   width: 38px;
   height: 38px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  color: var(--magenta);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-dim);
   background: var(--bg0);
   border: 1px solid var(--line);
-  border-radius: 2px;
+  border-radius: 4px;
 }
 
 .avatar {
@@ -604,26 +685,31 @@ button.card__open:hover {
   white-space: nowrap;
 }
 
+.card__name {
+  font-weight: 500;
+}
+
 .card__role {
-  font-size: 11px;
-  color: var(--cyan);
+  font-size: 12px;
+  color: var(--text-dim);
 }
 
 .card__reports {
   font-size: 11px;
-  color: var(--line-lit);
+  color: var(--text-mute);
 }
 
 .card__remove {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  top: -7px;
+  right: -7px;
   width: 18px;
   height: 18px;
   padding: 0;
   font: inherit;
+  font-size: 12px;
   line-height: 1;
-  color: var(--pale);
+  color: var(--text-dim);
   background: var(--bg2);
   border: 1px solid var(--line-lit);
   border-radius: 50%;
@@ -631,9 +717,9 @@ button.card__open:hover {
 }
 
 .card__remove:hover {
-  color: var(--bg0);
-  background: var(--magenta);
-  border-color: var(--magenta);
+  color: #fff;
+  background: var(--red);
+  border-color: var(--red);
 }
 
 /* --- computer page -------------------------------------------------------- */
@@ -643,22 +729,23 @@ button.card__open:hover {
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 16px;
   height: 100%;
-  padding: 16px 20px;
+  padding: 20px 24px;
 }
 
 .screen {
   display: grid;
   place-items: center;
   min-height: 320px;
-  padding: 10px;
-  background: #000;
-  border: 1px solid var(--line-lit);
+  padding: 12px;
+  background: var(--bg0);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
 }
 
 .screen__frame {
   max-width: 100%;
   max-height: 100%;
+  border-radius: 3px;
 }
 
 .desk {
@@ -672,25 +759,32 @@ button.card__open:hover {
 .facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 0 12px;
-  margin: 10px 0;
+  gap: 4px 12px;
+  margin: 12px 0;
 }
 
 .facts dt {
-  color: var(--pale);
+  font-size: 12px;
+  color: var(--text-mute);
 }
 
 .facts dd {
   margin: 0;
   overflow-wrap: anywhere;
+  color: var(--text);
 }
 
 .desk .actions {
   margin: 12px 0;
 }
 
+.desk h3 {
+  margin-top: 12px;
+}
+
 .desk__queue {
-  color: var(--pale);
+  margin-top: 4px;
+  color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 
@@ -701,7 +795,7 @@ button.card__open:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 16px 20px;
+  padding: 20px 24px;
 }
 
 /* --- drawer --------------------------------------------------------------- */
@@ -715,27 +809,29 @@ button.card__open:hover {
   display: flex;
   flex-direction: column;
   width: min(400px, 46vw);
-  padding: 14px;
+  padding: 16px;
   background: var(--bg1);
-  border-left: 1px solid var(--magenta);
-  box-shadow: -14px 0 40px -20px var(--magenta);
+  border-left: 1px solid var(--line);
+  box-shadow: -24px 0 48px -24px rgba(0, 0, 0, 0.7);
 }
 
 .drawer__head {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  padding-bottom: 8px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
 }
 
 .drawer__head h2 {
-  color: var(--cream);
+  font-size: 14px;
+  color: var(--text);
 }
 
 .drawer__sub {
-  font-size: 11px;
-  color: var(--pale);
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-mute);
 }
 
 .drawer__close {
@@ -744,214 +840,255 @@ button.card__open:hover {
   font: inherit;
   font-size: 16px;
   line-height: 1;
-  color: var(--pale);
+  color: var(--text-mute);
   background: none;
   border: 0;
+  border-radius: 4px;
   cursor: pointer;
 }
 
 .drawer__close:hover {
-  color: var(--magenta);
+  color: var(--text);
 }
 
 .drawer__body {
   flex: 1;
   min-height: 0;
-  margin-top: 10px;
+  margin-top: 12px;
   overflow-y: auto;
 }
 
 .drawer .actions {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .chat__log {
   flex: 1;
   min-height: 0;
-  margin: 10px 0;
+  margin: 12px 0;
   overflow-y: auto;
 }
 
 .chat__msg {
-  margin-bottom: 8px;
+  margin-bottom: 12px;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .chat__who {
   display: block;
-  font-size: 10px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--cyan);
-}
-
-.chat__msg--own .chat__who {
-  color: var(--magenta);
+  margin-bottom: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-mute);
 }
 
 .chat__said {
   display: block;
-  padding: 5px 8px;
+  padding: 8px 10px;
+  color: var(--text);
   background: var(--bg2);
-  border-left: 2px solid var(--line-lit);
-  border-radius: 0 var(--radius) var(--radius) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 .chat__msg--own .chat__said {
-  border-left-color: var(--magenta);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
 }
 
 .chat__msg--typing .chat__said::after {
   content: '▍';
-  color: var(--cyan);
+  color: var(--text-mute);
 }
 
 .chat__msg--error .chat__said {
-  color: var(--magenta);
-  border-left-color: var(--magenta);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line));
 }
 
 .chat__note {
-  margin-bottom: 8px;
-  font-size: 11px;
-  color: var(--line-lit);
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-mute);
 }
 
 .chat__pending {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
   overflow-wrap: anywhere;
-  color: var(--amber);
+  color: var(--text);
+  background: var(--bg2);
+  border: 1px solid color-mix(in srgb, var(--amber) 30%, var(--line));
+  border-radius: var(--radius);
 }
 
 .chat__activity {
-  padding: 8px 0;
+  padding: 12px 0;
   margin-top: 8px;
   border-bottom: 1px solid var(--line);
 }
 
 .chat__activity-line {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   margin: 0 0 6px;
   font-size: 12px;
-  color: var(--pale);
+  color: var(--text-dim);
+}
+
+/* The status dot leads this line; it must not be shoved to the far right. */
+.chat__activity-line .dot {
+  margin-left: 0;
 }
 
 .chat__activity-excerpt {
-  color: var(--cream);
+  display: block;
+  color: var(--text);
 }
 
 .chat__activity-details summary {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--accent-hi);
   cursor: pointer;
 }
 
 .chat__activity-details .chat__msg {
-  margin-top: 8px;
+  margin-top: 10px;
 }
 
 .chat__pending button {
-  padding: 1px 7px;
+  padding: 3px 10px;
   font: inherit;
-  color: var(--bg0);
-  background: var(--cyan);
-  border: 1px solid var(--cyan);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--bg2);
+  border: 1px solid var(--line-lit);
   border-radius: var(--radius);
   cursor: pointer;
 }
 
+/* Both answers travel together, hard right of the proposal they answer. */
+.chat__pending button:first-of-type {
+  margin-left: auto;
+  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
 .chat__form {
   display: flex;
-  gap: 6px;
+  gap: 8px;
 }
 
 .chat__form .input,
 .chat__form input {
   flex: 1;
   min-width: 0;
-  padding: 5px 7px;
+  padding: 7px 10px;
   font: inherit;
-  color: var(--cream);
+  color: var(--text);
   background: var(--bg0);
   border: 1px solid var(--line-lit);
   border-radius: var(--radius);
 }
 
+.chat__form input::placeholder {
+  color: var(--text-mute);
+}
+
+.chat__form input:focus {
+  outline: none;
+}
+
 .chat__form button {
-  padding: 5px 12px;
+  padding: 7px 14px;
   font: inherit;
-  color: var(--bg0);
-  background: var(--cyan);
-  border: 1px solid var(--cyan);
+  font-weight: 500;
+  color: #fff;
+  background: var(--accent-fill);
+  border: 1px solid var(--accent-fill);
   border-radius: var(--radius);
   cursor: pointer;
 }
 
+.chat__form button:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 .chat__form input:disabled,
 .chat__form button:disabled {
-  color: var(--line-lit);
+  color: var(--text-mute);
   background: var(--bg1);
   border-color: var(--line);
   cursor: default;
 }
 
 .brief {
-  margin-bottom: 14px;
-  padding-bottom: 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
 
+.brief:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .brief__meta {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--pale);
+  margin-top: 2px;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text-mute);
 }
 
 .brief__summary {
-  margin-top: 5px;
-  color: var(--cream);
+  margin-top: 8px;
+  color: var(--text);
 }
 
 .brief ul {
-  margin: 2px 0 6px;
-  padding-left: 16px;
-  color: var(--pale);
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  color: var(--text-dim);
 }
 
 /* --- toast ---------------------------------------------------------------- */
 
 .toast {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 20px;
+  bottom: 20px;
   z-index: 30;
   display: flex;
-  gap: 10px;
+  gap: 12px;
   align-items: flex-start;
   max-width: min(520px, 60vw);
   max-height: 40vh;
-  padding: 10px 12px;
+  padding: 12px 14px;
   overflow-y: auto;
   white-space: pre-wrap;
-  color: var(--cream);
+  color: var(--text);
   background: var(--bg2);
-  border: 1px solid var(--cyan);
+  border: 1px solid var(--line-lit);
   border-radius: var(--radius);
-  box-shadow: 0 10px 30px -12px var(--cyan);
+  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
 }
 
 .toast--error {
-  border-color: var(--magenta);
-  box-shadow: 0 10px 30px -12px var(--magenta);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--line-lit));
 }
 
 .toast__close {
@@ -959,10 +1096,14 @@ button.card__open:hover {
   padding: 0 2px;
   font: inherit;
   line-height: 1;
-  color: var(--pale);
+  color: var(--text-mute);
   background: none;
   border: 0;
   cursor: pointer;
+}
+
+.toast__close:hover {
+  color: var(--text);
 }
 
 /* --- login ---------------------------------------------------------------- */
@@ -978,23 +1119,24 @@ button.card__open:hover {
 
 .login__box {
   width: min(340px, 86vw);
-  padding: 20px;
+  padding: 24px;
   background: var(--bg1);
-  border: 1px solid var(--magenta);
-  border-radius: var(--radius);
-  box-shadow: 0 0 40px -18px var(--magenta);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 16px 48px -20px rgba(0, 0, 0, 0.8);
 }
 
 .login__box h2 {
   margin-bottom: 4px;
+  font-size: 14px;
 }
 
 .login__hint {
-  margin-bottom: 12px;
-  color: var(--pale);
+  margin-bottom: 16px;
+  color: var(--text-dim);
 }
 
 .login__error {
-  margin-top: 8px;
-  color: var(--magenta);
+  margin-top: 10px;
+  color: var(--red);
 }

@@ -6,27 +6,29 @@ import { AVATARS, type Avatar } from '@agenthub/shared';
  * Each is authored as sixteen rows of sixteen characters — the grid is the art,
  * and reading it down the page is how you see the silhouette. Chassis chars are
  * shared so the six read as one production run; `a`/`b` are the robot's own
- * neon, which is what actually tells them apart at 32px, together with the
- * headgear: a dish, a crest, a monocle, a halo, an aerial, twin stubs.
+ * livery — one hue each, held to a moderate saturation so a row of them reads
+ * as profile pictures rather than a row of signs. What tells them apart at 32px
+ * is that hue together with the headgear: a dish, a crest, a monocle, a halo,
+ * an aerial, twin stubs.
  */
 
-/** Chassis ramp — the same blued chrome on every unit. */
+/** Chassis ramp — the same neutral graphite on every unit, so only the livery varies. */
 const CHASSIS: Record<string, string> = {
-  k: '#050410', // outline
-  d: '#14202c', // shadowed plate
-  m: '#2e4459', // plate
-  l: '#6f93ad', // lit edge
-  s: '#0e2c3d', // glass behind the eyes
+  k: '#0a0c0f', // outline
+  d: '#1f242b', // shadowed plate
+  m: '#363c45', // plate
+  l: '#7b848f', // lit edge
+  s: '#151a21', // glass behind the eyes
 };
 
-/** Per-robot neon: the lamp colour (`a`) and its hot core (`b`). */
+/** Per-robot livery: the lamp colour (`a`) and its lighter core (`b`). */
 const NEON: Record<Avatar, { a: string; b: string }> = {
-  'robot-cyan': { a: '#22e0ff', b: '#b9f6ff' },
-  'robot-magenta': { a: '#ff2d95', b: '#ffb3da' },
-  'robot-amber': { a: '#ffb43c', b: '#ffe2a8' },
-  'robot-violet': { a: '#b46bff', b: '#e3c8ff' },
-  'robot-green': { a: '#39ff88', b: '#c3ffd9' },
-  'robot-white': { a: '#dfe9ff', b: '#ffffff' },
+  'robot-cyan': { a: '#4cb5ab', b: '#a7dbd5' }, // teal
+  'robot-magenta': { a: '#c96a8e', b: '#e5adc0' }, // rose
+  'robot-amber': { a: '#d19a44', b: '#e8cd9b' }, // amber
+  'robot-violet': { a: '#8489e6', b: '#c2c4f3' }, // indigo
+  'robot-green': { a: '#5fae74', b: '#acd6b8' }, // green
+  'robot-white': { a: '#8d97a4', b: '#cdd3da' }, // slate
 };
 
 /** Dish-antenna scout: one wide visor, a mast and dish over the left shoulder. */

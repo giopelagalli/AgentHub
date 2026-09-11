@@ -13,34 +13,33 @@ export interface FloorDef {
 }
 
 export const FLOORS: { id: StaticFloorId; label: string }[] = [
-  { id: 'b1', label: 'B1 SERVER ROOM' },
-  { id: 'f1', label: '1F LOBBY' },
-  { id: 'f2', label: '2F GENERAL STAFF' },
-  { id: 'f5', label: '5F SCREENING ROOM' },
-  { id: 'ph', label: 'PH PENTHOUSE' },
+  { id: 'b1', label: 'B1' },
+  { id: 'f1', label: 'LOBBY' },
+  { id: 'f2', label: 'STAFF' },
+  { id: 'f5', label: 'SCREENING' },
+  { id: 'ph', label: 'PH' },
 ];
 
 const [B1, F1, F2, F5, PH] = FLOORS;
 
-const TITLE_MAX = 14;
+const TITLE_MAX = 12;
 
-function projectLabel(n: number, title: string): string {
+/** A tab is a strip, not a sign: the project's title, cut to fit one. */
+function projectLabel(title: string): string {
   const upper = title.toUpperCase();
-  const truncated = upper.length > TITLE_MAX ? `${upper.slice(0, TITLE_MAX)}…` : upper;
-  return `${n}F ${truncated}`;
+  return upper.length > TITLE_MAX ? `${upper.slice(0, TITLE_MAX).trimEnd()}…` : upper;
 }
 
 /**
- * The elevator's live floor list: the static basement/lobby/staff floors,
- * then one floor per project that hasn't finished, in the order the hub
- * reports them, then the screening room and the penthouse. Floor numbering for
- * projects starts at 3F — the first slot after the two static staff floors.
+ * The live floor list behind the tab bar: the static basement/lobby/staff
+ * floors, then one floor per project that hasn't finished, in the order the
+ * hub reports them, then the screening room and the penthouse.
  */
 export function floorsFor(state: UiState | { hub: HubState | null }): FloorDef[] {
   const projects = (state.hub?.projects ?? []).filter((p) => p.status !== 'done');
-  const projectFloors: FloorDef[] = projects.map((p, i) => ({
+  const projectFloors: FloorDef[] = projects.map((p) => ({
     id: `p:${p.slug}`,
-    label: projectLabel(i + 3, p.title),
+    label: projectLabel(p.title),
   }));
   return [B1, F1, F2, ...projectFloors, F5, PH];
 }

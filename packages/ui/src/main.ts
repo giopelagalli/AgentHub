@@ -1,17 +1,13 @@
 import './panels/panels.css';
 import { PALETTE } from './art/palette.js';
-import { SPRITES } from './art/sprites.js';
 import { badgeLabel } from './badge.js';
-import { Elevator, elevatorFrame } from './elevator.js';
 import { bindPointer } from './engine/input.js';
 import { startLoop } from './engine/loop.js';
 import { Screen } from './engine/screen.js';
-import { floorsFor } from './floors.js';
 import { connect } from './net.js';
 import { openBrowserPanel } from './panels/browser.js';
 import { openChat } from './panels/chat.js';
 import { closeDialog, dialogIsOpen, openDialog, tickDialog, type DialogChoice } from './panels/dialog.js';
-import { openElevatorMenu } from './panels/elevator.js';
 import { openLoginPanel } from './panels/login.js';
 import { openNodeInfo } from './panels/nodeinfo.js';
 import { openQueuePanel } from './panels/queue.js';
@@ -19,6 +15,7 @@ import { fetchProjectDetail, openTasksPanel } from './panels/tasks.js';
 import { hotspotsFor } from './render/floorplans.js';
 import { renderFloor } from './render/scene.js';
 import { Store } from './store.js';
+import { mountTabs, tabsFor } from './tabs.js';
 
 function hostElement(): HTMLElement {
   const element = document.getElementById('app');
@@ -33,8 +30,15 @@ for (const [name, hex] of Object.entries(PALETTE)) {
   document.documentElement.style.setProperty(`--c-${name}`, hex);
 }
 
-const screen = new Screen(app);
+// The tab bar sits above the canvas and shares its width, so the two are
+// stacked in one column inside the centring host.
+const stage = document.createElement('div');
+stage.className = 'gb-stage';
+app.appendChild(stage);
+
 const store = new Store();
+mountTabs(stage, store);
+const screen = new Screen(stage);
 
 const badge = document.createElement('div');
 badge.className = 'gb-badge';
@@ -89,21 +93,6 @@ function openPanel(close: () => void): () => void {
 function closeTopPanel(): void {
   panels[panels.length - 1]?.();
 }
-
-let closeMenu: (() => void) | null = null;
-
-const elevator = new Elevator(store, (state) => {
-  closeMenu?.();
-  closeMenu = null;
-  if (state.kind === 'menuOpen') {
-    closeMenu = openElevatorMenu(
-      document.body,
-      floorsFor(store.getState()),
-      store.getState().floor,
-      (floor) => elevator.choose(floor),
-    );
-  }
-});
 
 /** One chat at a time: a second one would land on top of the first. */
 let dismissChat: (() => void) | null = null;
@@ -237,18 +226,13 @@ async function openProjectOrchestratorDialog(slug: string, title: string): Promi
 }
 
 bindPointer(screen.canvas, (x, y) => {
-  if (elevator.state.kind !== 'idle' || dialogIsOpen()) return;
+  if (dialogIsOpen()) return;
   const state = store.getState();
   const spot = hotspotsFor(state.floor, state).find(
     (h) => x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h,
   );
   if (!spot) return;
 
-  // The lobby directory board is a second call button for the same car.
-  if (spot.id === 'elevator' || spot.id === 'directory') {
-    elevator.open();
-    return;
-  }
   if (spot.id === 'jobboard') {
     openPanel(openQueuePanel(document.body, state));
     return;
@@ -308,17 +292,15 @@ function typingInAnInput(): boolean {
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     if (dialogIsOpen()) closeDialog();
-    else if (elevator.state.kind === 'menuOpen') elevator.cancel();
     else closeTopPanel();
     return;
   }
-  // Shortcuts stay out of the way of the chat box, an open text screen, any
-  // informational panel (chat/queue/nodeinfo), and the elevator's own menu —
-  // riding the elevator underneath one of those would strand it.
-  if (typingInAnInput() || dialogIsOpen() || panels.length > 0 || elevator.state.kind !== 'idle') return;
-  // Number keys are shortcuts, not teleports: they ride the elevator too.
-  const floor = floorsFor(store.getState())[Number(event.key) - 1];
-  if (floor) elevator.choose(floor.id);
+  // Shortcuts stay out of the way of the chat box, an open text screen, and any
+  // informational panel (chat/queue/nodeinfo).
+  if (typingInAnInput() || dialogIsOpen() || panels.length > 0) return;
+  // Number keys pick the nth tab, same as clicking it.
+  const tab = tabsFor(store.getState())[Number(event.key) - 1];
+  if (tab) store.dispatch({ type: 'set-floor', floor: tab.id });
 });
 
 /**
@@ -343,17 +325,10 @@ let tick = 0;
 startLoop(
   (value) => {
     tick = value;
-    elevator.tick();
     tickDialog(value);
   },
   () => {
     const state = store.getState();
-    const ride = elevator.state;
-    const doors = elevatorFrame(
-      ride.kind,
-      'ticks' in ride ? ride.ticks : 0,
-      SPRITES.elevator.length,
-    );
-    renderFloor(screen.ctx, state.floor, state, tick, doors, screencast);
+    renderFloor(screen.ctx, state.floor, state, tick, screencast);
   },
 );

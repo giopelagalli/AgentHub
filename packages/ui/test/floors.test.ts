@@ -5,11 +5,11 @@ import { FLOORS, floorsFor } from '../src/floors.js';
 describe('FLOORS', () => {
   it('has the exact order, ids, and labels for the static floors', () => {
     expect(FLOORS).toEqual([
-      { id: 'b1', label: 'B1 SERVER ROOM' },
-      { id: 'f1', label: '1F LOBBY' },
-      { id: 'f2', label: '2F GENERAL STAFF' },
-      { id: 'f5', label: '5F SCREENING ROOM' },
-      { id: 'ph', label: 'PH PENTHOUSE' },
+      { id: 'b1', label: 'B1' },
+      { id: 'f1', label: 'LOBBY' },
+      { id: 'f2', label: 'STAFF' },
+      { id: 'f5', label: 'SCREENING' },
+      { id: 'ph', label: 'PH' },
     ]);
   });
 });
@@ -43,19 +43,19 @@ describe('floorsFor', () => {
     expect(floorsFor(hubState([]))).toEqual(FLOORS);
   });
 
-  it('inserts one floor per non-done project, numbered from 3F, before the screening room', () => {
+  it('inserts one floor per non-done project before the screening room', () => {
     const floors = floorsFor(
       hubState([project({ slug: 'acme', title: 'Acme' }), project({ slug: 'zeta', title: 'Zeta' })]),
     );
     expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:acme', 'p:zeta', 'f5', 'ph']);
     expect(floors.map((f) => f.label)).toEqual([
-      'B1 SERVER ROOM',
-      '1F LOBBY',
-      '2F GENERAL STAFF',
-      '3F ACME',
-      '4F ZETA',
-      '5F SCREENING ROOM',
-      'PH PENTHOUSE',
+      'B1',
+      'LOBBY',
+      'STAFF',
+      'ACME',
+      'ZETA',
+      'SCREENING',
+      'PH',
     ]);
   });
 
@@ -79,13 +79,13 @@ describe('floorsFor', () => {
     expect(floors.map((f) => f.id)).toEqual(['b1', 'f1', 'f2', 'p:a', 'p:b', 'f5', 'ph']);
   });
 
-  it('uppercases and truncates the title to 14 chars plus an ellipsis', () => {
+  it('uppercases and truncates the title to 12 chars plus an ellipsis', () => {
     const floors = floorsFor(hubState([project({ slug: 'x', title: 'a very long project title indeed' })]));
-    expect(floors[3].label).toBe('3F A VERY LONG PR…');
+    expect(floors[3].label).toBe('A VERY LONG…');
   });
 
   it('leaves a short title untouched apart from case', () => {
     const floors = floorsFor(hubState([project({ slug: 'x', title: 'short' })]));
-    expect(floors[3].label).toBe('3F SHORT');
+    expect(floors[3].label).toBe('SHORT');
   });
 });

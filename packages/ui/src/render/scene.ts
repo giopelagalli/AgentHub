@@ -60,17 +60,15 @@ function drawScreencast(
  * (painter's algorithm — a robot is listed before the desk it sits behind).
  * Live nodes and agents are appended by `dynamicFurniture`.
  *
- * `elevatorFrame` drives the doors (main.ts computes it every render via
- * `elevatorFrame()`); only callers that omit it — tests — get shut doors.
- * `screencast` is the decoded browser frame main.ts holds, drawn into the
- * screening room's TV once the furniture is down.
+ * The elevator is decoration now that the tabs do the travelling, so its doors
+ * rest on the open frame. `screencast` is the decoded browser frame main.ts
+ * holds, drawn into the screening room's TV once the furniture is down.
  */
 export function renderFloor(
   ctx: CanvasRenderingContext2D,
   floorId: FloorId,
   state: UiState,
   tick: number,
-  elevatorFrame?: number,
   screencast?: CanvasImageSource | null,
 ): void {
   const plan = planFor(floorId, state);
@@ -79,7 +77,7 @@ export function renderFloor(
   for (const item of [...plan.furniture, ...dynamicFurniture(floorId, state)]) {
     const frames = SPRITES[item.sprite];
     if (!frames) continue;
-    const pinned = item.sprite === 'elevator' ? (elevatorFrame ?? 0) : item.frame;
+    const pinned = item.sprite === 'elevator' ? frames.length - 1 : item.frame;
     const frame = pinned ?? frameFor(item.anim, tick, frames.length, item.x);
     drawSprite(ctx, frames, item.x, item.y + bobFor(item.anim, tick, item.x), frame);
   }

@@ -1,7 +1,7 @@
 import type { ChatMessage, Tier, ToolCall } from '@agenthub/shared';
 import type { Db } from '../db.js';
 
-export type SessionKind = 'master' | 'orchestrator' | 'subagent' | 'assistant';
+export type SessionKind = 'master' | 'orchestrator' | 'subagent' | 'assistant' | 'chat';
 export type SessionOutcome = 'stop' | 'budget-exhausted' | 'error' | 'aborted';
 
 export interface SessionRecord {

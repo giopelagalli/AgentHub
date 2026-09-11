@@ -18,6 +18,7 @@ import { AgentLoop } from './agents/loop.js';
 import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
+import { ProjectChat, resolveWho } from './projects/chat.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { InvalidSlugError, newTeamMember, SLUG_RE } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
@@ -168,6 +169,8 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
+  // One chat per hub; the bundle is resolved per message through the service's cache.
+  const chat = new ProjectChat({ loop, transcript, bundleFor: (slug) => projects.get(slug) });
   const resources = new ResourceManager({
     registry, gateway, store: sqliteSlotStore(db),
     ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
@@ -867,6 +870,51 @@ export function createHub(opts: HubOptions = {}): Hub {
       messages: transcript.messages(session.id).slice(-TEAM_ACTIVITY_MESSAGE_LIMIT),
       events: transcript.events(session.id),
     };
+  });
+
+  // --- project chat -------------------------------------------------------------
+
+  /** Resolves `:who` against the roster; replies 404 and returns null when nobody answers to it. */
+  const resolveChatWho = async (bundle: ProjectBundle, who: string, reply: FastifyReply): Promise<boolean> => {
+    if (await resolveWho(bundle, who)) return true;
+    reply.code(404).send({ error: 'unknown team member' });
+    return false;
+  };
+
+  app.get('/api/projects/:slug/chat/:who', async (req, reply) => {
+    const { slug, who } = req.params as { slug: string; who: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    if (!(await resolveChatWho(bundle, who, reply))) return reply;
+    return { messages: chat.messages(slug, who) };
+  });
+
+  app.post('/api/projects/:slug/chat/:who/messages', async (req, reply) => {
+    const { slug, who } = req.params as { slug: string; who: string };
+    const body = req.body as Partial<{ text: string }> | undefined;
+    if (!body || typeof body.text !== 'string' || !body.text) return reply.code(400).send({ error: 'invalid message' });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    if (!(await resolveChatWho(bundle, who, reply))) return reply;
+    // Same framing and abort wiring as the assistant route: a client that closes the stream should
+    // not leave a model session running to completion for nobody.
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    const ac = new AbortController();
+    reply.raw.on('close', () => ac.abort());
+    broadcast({ type: 'project-busy', slug, who, busy: true });
+    try {
+      const result = await chat.reply(slug, who, body.text, {
+        onToken: (token) => { reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`); },
+        signal: ac.signal,
+      });
+      reply.raw.write(`data: ${JSON.stringify({ done: true, full: result.text })}\n\n`);
+    } catch (err) {
+      reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    } finally {
+      broadcast({ type: 'project-busy', slug, who, busy: false });
+    }
+    reply.raw.end();
+    return reply;
   });
 
   app.get('/api/briefings', async () => projects.briefings());

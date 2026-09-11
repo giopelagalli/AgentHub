@@ -158,6 +158,8 @@ export interface HubState {
 export type WsMessage =
   | { type: 'state'; state: HubState }
   | { type: 'agent-busy'; agentId: number; busy: boolean }
+  // A project agent (the manager, or a roster member id) is mid-reply in a one-on-one chat.
+  | { type: 'project-busy'; slug: string; who: string; busy: boolean }
   // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
   // clients are not looking at the screening room.
   | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number };

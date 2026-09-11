@@ -80,8 +80,10 @@ describe('policyPillText', () => {
       .toBe('Fireworks: glm-5p3');
     expect(policyPillText({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM, workerModel: FLASH }))
       .toBe('Fireworks: glm-5p3 / glm-5p3-flash');
+    // Only the worker tier is overridden — say so, rather than a bare model name that would read
+    // as if the orchestrator used it too.
     expect(policyPillText({ prefer: 'cloud', provider: 'anthropic', workerModel: 'claude-sonnet-5' }))
-      .toBe('Anthropic: claude-sonnet-5');
+      .toBe('Anthropic: default / claude-sonnet-5');
   });
 
   it('shortens an id to its last path segment', () => {

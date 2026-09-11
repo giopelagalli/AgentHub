@@ -119,6 +119,25 @@ describe('POST /api/projects/:slug/model', () => {
     const res = await app().inject({ method: 'POST', url: '/api/projects/ghost/model', payload: { prefer: 'local' } });
     expect(res.statusCode).toBe(404);
   });
+
+  it('404s a bad slug before checking the catalog, even with a provider named', async () => {
+    await setup();
+    let catalogHits = 0;
+    // The mock is already listening by the time this test runs, so a Fastify hook is refused —
+    // count directly on the underlying HTTP server instead.
+    fireworks!.server.on('request', (req) => { if (req.url?.startsWith('/v1/models')) catalogHits++; });
+
+    const missing = await app().inject({
+      method: 'POST', url: '/api/projects/ghost/model',
+      payload: { prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM },
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(catalogHits).toBe(0); // resolveProject ran first, so the catalog was never fetched
+
+    // A real project with the same payload does fetch the catalog, confirming the hook works.
+    expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM })).statusCode).toBe(200);
+    expect(catalogHits).toBe(1);
+  });
 });
 
 describe('a project turn under a model policy', () => {

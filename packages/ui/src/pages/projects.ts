@@ -98,8 +98,18 @@ export function priorityPicker(slug: string, value: Priority): HTMLSelectElement
  * The project's model policy: one `<select>` over everything `/api/models` lists, plus — once a
  * cloud provider is chosen — a second one that can give the worker tier a cheaper model. Both post
  * the whole policy, so the hub never has to merge a partial one.
+ *
+ * `currentPolicy` reads the manifest's *current* policy at post time (defaulting to the `policy`
+ * this picker was rendered with) — the worker select's change handler uses it instead of closing
+ * over the render-time `policy`, so a policy change made between render and that click (e.g. the
+ * main select's own post still in flight) isn't clobbered by a stale orchestrator model.
  */
-export function modelPicker(slug: string, policy: ModelPolicy | undefined, catalog: ModelCatalog | null): HTMLElement {
+export function modelPicker(
+  slug: string,
+  policy: ModelPolicy | undefined,
+  catalog: ModelCatalog | null,
+  currentPolicy: () => ModelPolicy | undefined = () => policy,
+): HTMLElement {
   const wrap = el('div', 'models');
   const post = (next: ModelPolicy, revert: () => void): void => {
     void sendJson(`/api/projects/${slug}/model`, next)
@@ -111,13 +121,24 @@ export function modelPicker(slug: string, policy: ModelPolicy | undefined, catal
   };
 
   const main = el('select', 'select');
-  for (const option of modelOptions(catalog)) {
+  const options = modelOptions(catalog);
+  for (const option of options) {
     const item = document.createElement('option');
     item.value = option.value;
     item.textContent = option.label;
     main.appendChild(item);
   }
   const current = valueFromPolicy(policy);
+  // The catalog can fail to load (or not include this policy's model any more) while the manifest
+  // still names it — without this, `main.value = current` finds no matching option and the select
+  // renders blank instead of showing what the project is actually on.
+  if (!options.some((o) => o.value === current)) {
+    const missing = document.createElement('option');
+    missing.value = current;
+    missing.textContent = policyPillText(policy);
+    missing.disabled = true;
+    main.appendChild(missing);
+  }
   main.value = current;
   main.title = 'Models';
   main.addEventListener('change', () => post(policyFromValue(main.value), () => { main.value = current; }));
@@ -137,11 +158,14 @@ export function modelPicker(slug: string, policy: ModelPolicy | undefined, catal
       : SAME_AS_ORCHESTRATOR;
     worker.value = workerCurrent;
     worker.title = 'Worker model';
-    worker.addEventListener('change', () => post({
-      prefer: 'cloud', provider,
-      ...(policy?.orchestratorModel ? { orchestratorModel: policy.orchestratorModel } : {}),
-      ...(worker.value ? { workerModel: worker.value } : policy?.orchestratorModel ? { workerModel: policy.orchestratorModel } : {}),
-    }, () => { worker.value = workerCurrent; }));
+    worker.addEventListener('change', () => {
+      const live = currentPolicy();
+      post({
+        prefer: 'cloud', provider,
+        ...(live?.orchestratorModel ? { orchestratorModel: live.orchestratorModel } : {}),
+        ...(worker.value ? { workerModel: worker.value } : live?.orchestratorModel ? { workerModel: live.orchestratorModel } : {}),
+      }, () => { worker.value = workerCurrent; });
+    });
     wrap.appendChild(worker);
   }
   return wrap;
@@ -384,7 +408,10 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
     const controls = el('div', 'actions');
     controls.appendChild(priorityPicker(project.slug, project.priority));
-    controls.appendChild(modelPicker(project.slug, project.modelPolicy, catalog));
+    controls.appendChild(modelPicker(
+      project.slug, project.modelPolicy, catalog,
+      () => selected(store.getState())?.modelPolicy,
+    ));
 
     const paused = project.status === 'paused';
     const toggle = button(paused ? 'Resume' : 'Pause');

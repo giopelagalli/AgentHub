@@ -90,5 +90,7 @@ export function policyPillText(policy: ModelPolicy | undefined): string {
   if (orchestrator && worker && orchestrator !== worker) {
     return `${name}: ${shortModel(orchestrator)} / ${shortModel(worker)}`;
   }
+  // Only one tier is overridden — say which, rather than a bare model name that reads as both.
+  if (worker && !orchestrator) return `${name}: default / ${shortModel(worker)}`;
   return `${name}: ${shortModel((orchestrator ?? worker)!)}`;
 }

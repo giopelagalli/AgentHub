@@ -898,6 +898,8 @@ export function createHub(opts: HubOptions = {}): Hub {
         return reply.code(400).send({ error: `invalid ${field}` });
       }
     }
+    // Cheap, I/O-free checks above; a bad slug 404s here, before the catalog fetch below.
+    if (!(await resolveProject(slug, reply))) return reply;
     if (body.provider) {
       const row = (await modelCatalog()).cloud.find((c) => c.provider === body.provider);
       if (!row) return reply.code(400).send({ error: `provider not configured: ${body.provider}` });
@@ -909,7 +911,6 @@ export function createHub(opts: HubOptions = {}): Hub {
     } else if (body.orchestratorModel || body.workerModel) {
       return reply.code(400).send({ error: 'a model override needs a provider' });
     }
-    if (!(await resolveProject(slug, reply))) return reply;
     const manifest = await projects.setModelPolicy(slug, {
       prefer: body.prefer as ModelPolicy['prefer'],
       ...(body.provider ? { provider: body.provider } : {}),

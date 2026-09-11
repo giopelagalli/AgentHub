@@ -1,6 +1,58 @@
-/* Game Boy text boxes: cream card, hard ink border, cream outline as the
-   second bevel. Colours come from src/art/palette.ts, published as CSS
-   custom properties on <html> at boot — no hex lives here. */
+/* Cyberpunk terminal panels: near-black violet glass, a hot-magenta rule, and
+   a soft neon bloom instead of the old bevel. Colours come from
+   src/art/palette.ts, published as CSS custom properties on <html> at boot —
+   no hex lives here.
+
+   Panel text is bright on near-black: cyan for structure, icy `cream` for
+   anything long enough to read as prose, `pale` for muted labels. */
+
+/* The tower column: tab bar over the canvas, both the same width. */
+.gb-stage {
+  display: flex;
+  flex-direction: column;
+}
+
+.gb-tabs {
+  display: flex;
+  gap: 1px;
+  background: var(--c-ink);
+}
+
+.gb-tabs__tab {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 6px 4px 4px;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--c-pale);
+  background: var(--c-bg1);
+  border: 0;
+  border-bottom: 2px solid var(--c-ink);
+  cursor: pointer;
+}
+
+.gb-tabs__tab:hover {
+  color: var(--c-accentBlue);
+  border-bottom-color: var(--c-glass);
+}
+
+/* The active room: magenta label over a lit underline. */
+.gb-tabs__tab[aria-current='true'] {
+  color: var(--c-accentRed);
+  background: var(--c-ink);
+  border-bottom-color: var(--c-accentRed);
+  box-shadow: 0 6px 10px -6px var(--c-accentRed);
+}
+
+.gb-tabs__tab:focus-visible {
+  outline: 1px dotted var(--c-accentBlue);
+  outline-offset: -3px;
+}
 
 .gb-panel {
   position: fixed;
@@ -13,10 +65,12 @@
   line-height: 1.6;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--c-ink);
-  background: var(--c-cream);
-  border: 3px solid var(--c-ink);
-  outline: 3px solid var(--c-cream);
+  color: var(--c-accentBlue);
+  background: var(--c-bg1);
+  border: 2px solid var(--c-accentRed);
+  box-shadow:
+    0 0 0 1px var(--c-bg0),
+    0 0 24px color-mix(in srgb, var(--c-accentRed) 35%, transparent);
 }
 
 .gb-panel h2 {
@@ -24,19 +78,14 @@
   padding-bottom: 4px;
   font-size: 12px;
   letter-spacing: 0.12em;
-  border-bottom: 2px solid var(--c-mid);
+  color: var(--c-accentRed);
+  border-bottom: 1px solid var(--c-lit);
 }
 
 .gb-panel h3 {
   margin: 10px 0 4px;
   font-size: 12px;
-  color: var(--c-mid);
-}
-
-.gb-panel--menu {
-  top: 24px;
-  right: 24px;
-  min-width: 180px;
+  color: var(--c-pale);
 }
 
 .gb-panel--center {
@@ -57,6 +106,7 @@
 
 .gb-dialog__text {
   margin: 0;
+  color: var(--c-cream);
   min-height: 3.2em;
   white-space: pre-wrap;
 }
@@ -78,13 +128,14 @@
 
 .gb-chat__msg {
   margin: 0 0 6px;
+  color: var(--c-cream);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .gb-chat__who {
   margin-right: 6px;
-  color: var(--c-mid);
+  color: var(--c-accentRed);
 }
 
 .gb-chat__msg--error {
@@ -98,7 +149,7 @@
   align-items: center;
   margin: 0 0 6px;
   overflow-wrap: anywhere;
-  color: var(--c-mid);
+  color: var(--c-pale);
 }
 
 .gb-chat__pending button {
@@ -106,9 +157,9 @@
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  color: var(--c-cream);
-  background: var(--c-ink);
-  border: 2px solid var(--c-ink);
+  color: var(--c-bg0);
+  background: var(--c-accentBlue);
+  border: 2px solid var(--c-accentBlue);
   cursor: pointer;
 }
 
@@ -125,9 +176,9 @@
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  color: inherit;
-  background: var(--c-pale);
-  border: 2px solid var(--c-ink);
+  color: var(--c-cream);
+  background: var(--c-bg0);
+  border: 2px solid var(--c-lit);
 }
 
 .gb-chat__form button {
@@ -135,28 +186,32 @@
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  color: var(--c-cream);
-  background: var(--c-ink);
-  border: 2px solid var(--c-ink);
+  color: var(--c-bg0);
+  background: var(--c-accentBlue);
+  border: 2px solid var(--c-accentBlue);
   cursor: pointer;
 }
 
-/* The UA focus ring is off-palette; match the menu's dotted cue instead. */
+/* The UA focus ring is off-palette; match the tab bar's dotted cue instead. */
 .gb-chat__form input:focus-visible,
 .gb-chat__form button:focus-visible {
-  outline: 1px dotted var(--c-mid);
+  outline: 1px dotted var(--c-accentBlue);
   outline-offset: 2px;
+}
+
+.gb-chat__form input:focus {
+  border-color: var(--c-accentBlue);
 }
 
 .gb-chat__form input:disabled,
 .gb-chat__form button:disabled {
-  color: var(--c-mid);
-  border-color: var(--c-mid);
+  color: var(--c-pale);
+  border-color: var(--c-lit);
   cursor: default;
 }
 
 .gb-chat__form button:disabled {
-  background: var(--c-pale);
+  background: var(--c-lit);
 }
 
 /* The login box borrows the centred panel and the chat form row; only its refusal
@@ -178,21 +233,21 @@
   font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  color: var(--c-cream);
-  background: var(--c-ink);
-  border: 2px solid var(--c-ink);
+  color: var(--c-bg0);
+  background: var(--c-accentBlue);
+  border: 2px solid var(--c-accentBlue);
   cursor: pointer;
 }
 
 .gb-actions button:focus-visible {
-  outline: 1px dotted var(--c-mid);
+  outline: 1px dotted var(--c-accentBlue);
   outline-offset: 2px;
 }
 
 .gb-actions button:disabled {
-  color: var(--c-mid);
-  background: var(--c-pale);
-  border-color: var(--c-mid);
+  color: var(--c-pale);
+  background: var(--c-lit);
+  border-color: var(--c-lit);
   cursor: default;
 }
 
@@ -227,11 +282,11 @@
 
 /* The pointer arrow is the selection cue; the UA ring would fight the palette. */
 .gb-menu button:focus-visible {
-  outline: 1px dotted var(--c-mid);
+  outline: 1px dotted var(--c-accentBlue);
 }
 
 .gb-menu button[aria-current='true'] {
-  color: var(--c-mid);
+  color: var(--c-accentRed);
 }
 
 .gb-panel table {
@@ -254,7 +309,7 @@
 }
 
 .gb-panel th {
-  color: var(--c-mid);
+  color: var(--c-pale);
   font-weight: normal;
 }
 
@@ -266,7 +321,7 @@
 }
 
 .gb-panel dt {
-  color: var(--c-mid);
+  color: var(--c-pale);
 }
 
 .gb-panel dd {
@@ -279,7 +334,7 @@
 
 .gb-hint {
   margin: 8px 0 0;
-  color: var(--c-mid);
+  color: var(--c-pale);
 }
 
 .gb-badge {
@@ -292,7 +347,7 @@
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--c-ink);
-  background: var(--c-cream);
-  border: 2px solid var(--c-ink);
+  color: var(--c-ledGreen);
+  background: var(--c-bg1);
+  border: 1px solid var(--c-lit);
 }

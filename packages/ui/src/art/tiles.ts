@@ -196,9 +196,9 @@ export const TILES: Record<string, SpriteDef> = {
     ],
   },
 
-  // Lobby / penthouse hard flooring, alternated as a chequerboard.
+  // Lobby / penthouse hard flooring: polished stone, jointed every tile.
   floorCream: {
-    legend: { p: 'pale', c: 'cream' },
+    legend: { p: 'stoneLit', c: 'stone' },
     rows: [
       'pppppppppppppppp',
       'pccccccccccccccc',
@@ -219,8 +219,9 @@ export const TILES: Record<string, SpriteDef> = {
     ],
   },
 
+  // The lobby's carpet runner: deep magenta plush with a lit edge.
   floorPale: {
-    legend: { l: 'lit', p: 'pale' },
+    legend: { l: 'plush', p: 'plushDark' },
     rows: [
       'llllllllllllllll',
       'lppppppppppppppp',

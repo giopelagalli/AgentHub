@@ -20,7 +20,7 @@ import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import type { ProjectBundle } from './projects/bundle.js';
-import { InvalidSlugError, newTeamMember, SLUG_RE } from './projects/schema.js';
+import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
 import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
@@ -166,6 +166,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
     loop, gateway, queue, registry, transcript, leases, browser, external: projectExternal,
+    // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
+    // an orchestrator turn — always well after that — so the late-bound closure is safe.
+    onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
@@ -787,16 +790,12 @@ export function createHub(opts: HubOptions = {}): Hub {
   // --- project team roster ------------------------------------------------------
 
   /** What the roster shows about a session: its outcome and the tail of its last message. */
-  const teamSessionView = (session: SessionRecord): TeamSessionView => {
-    const last = [...transcript.messages(session.id)].reverse()
-      .find((m) => typeof m.content === 'string' && m.content.trim())?.content ?? '';
-    return {
-      id: session.id,
-      startedAt: session.startedAt,
-      outcome: session.outcome,
-      lastMessage: last.trim().slice(0, TEAM_LAST_MESSAGE_LIMIT),
-    };
-  };
+  const teamSessionView = (session: SessionRecord): TeamSessionView => ({
+    id: session.id,
+    startedAt: session.startedAt,
+    outcome: session.outcome,
+    lastMessage: transcript.lastMessage(session.id).slice(0, TEAM_LAST_MESSAGE_LIMIT),
+  });
 
   const teamStatus = (session: SessionRecord | undefined, now: number): TeamStatus =>
     session && session.outcome === null && now - session.startedAt < TEAM_WORKING_WINDOW_MS ? 'working' : 'idle';
@@ -833,10 +832,8 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { slug } = req.params as { slug: string };
     const bundle = await resolveProject(slug, reply);
     if (!bundle) return reply;
-    const members = await bundle.team();
-    const result = newTeamMember(req.body, members);
+    const result = await bundle.hireMember(req.body);
     if ('error' in result) return reply.code(result.code).send({ error: result.error });
-    await bundle.writeTeam([...members, result.member]);
     await bundle.commit(`owner: hire ${result.member.name} (${result.member.id})`);
     await refreshProjects();
     return reply.code(201).send(result.member);

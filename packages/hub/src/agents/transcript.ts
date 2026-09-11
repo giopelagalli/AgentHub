@@ -69,6 +69,18 @@ export class Transcript {
     this.db.prepare(`UPDATE sessions SET ended_at=?, outcome=? WHERE id=?`).run(now, outcome, id);
   }
 
+  /**
+   * The tail of a session's last non-blank message, without reading every message in it. The roster
+   * only needs a one-liner per member, and a subagent's worth of tool traffic is a lot of rows to
+   * pull and filter in JS just to keep the last one.
+   */
+  lastMessage(sessionId: number): string {
+    const row = this.db.prepare(
+      `SELECT content FROM messages WHERE session_id=? AND role<>'event' AND TRIM(content)<>'' ORDER BY id DESC LIMIT 1`,
+    ).get(sessionId) as { content: string } | undefined;
+    return row ? row.content.trim() : '';
+  }
+
   messages(sessionId: number): ChatMessage[] {
     const rows = this.db.prepare(`SELECT role, content, tool_call_json FROM messages WHERE session_id=? AND role<>'event' ORDER BY id`)
       .all(sessionId) as MessageRow[];

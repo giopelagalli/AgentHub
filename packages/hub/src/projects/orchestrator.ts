@@ -37,6 +37,8 @@ export interface ProjectOrchestratorDeps {
   browser?: BrowserProxy;
   /** The configured external tools; the orchestrator gets them and can hand them to a researcher. */
   external?: Tool[];
+  /** Notified with (memberId, busy) whenever a delegated subagent run starts or ends. */
+  onBusy?: (memberId: string, busy: boolean) => void;
 }
 
 /**
@@ -51,7 +53,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, leases, browser, external } = this.deps;
+    const { bundle, loop, queue, registry, transcript, leases, browser, external, onBusy } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -68,7 +70,7 @@ export class ProjectOrchestrator {
         ...hubTools(),
         ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
-        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external }),
+        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external, onBusy }),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,

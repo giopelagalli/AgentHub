@@ -259,11 +259,26 @@ describe('ProjectBundle team', () => {
     expect(reloaded[3]).toEqual(hire);
   });
 
-  it('reads an empty roster from a bundle that predates team.yaml', async () => {
+  it('backfills the default roster when opening a bundle that predates team.yaml', async () => {
     const bundle = await ProjectBundle.create(root, { slug: 'legacy', title: 'Legacy', intent: 'older bundle' });
     await rm(join(bundle.dir, 'team.yaml'));
 
     const reopened = await ProjectBundle.open(root, 'legacy');
-    expect(await reopened.team()).toEqual([]);
+    const team = await reopened.team();
+    expect(team.map((m) => m.id)).toEqual(['coder-1', 'researcher-1', 'reviewer-1']);
+  });
+
+  it('never reissues a removed member\'s id to whoever is hired next', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'churn', title: 'Churn', intent: 'hire and fire' });
+    const team = await bundle.team();
+    await bundle.writeTeam(team.filter((m) => m.id !== 'coder-1'));
+
+    const result = await bundle.hireMember({ name: 'Byte', role: 'coder', avatar: 'robot-violet' });
+    if ('error' in result) throw new Error(`unexpected error: ${result.error}`);
+    expect(result.member.id).not.toBe('coder-1');
+    expect(result.member.id).toBe('coder-4');
+
+    const reopened = await ProjectBundle.open(root, 'churn');
+    expect((await reopened.team()).map((m) => m.id)).toEqual(['researcher-1', 'reviewer-1', 'coder-4']);
   });
 });

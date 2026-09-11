@@ -404,7 +404,11 @@ const SUBAGENT_RESULT_LIMIT = 4000;
  * only, and hands its final report back as the tool result. Parallel fan-out is a later
  * optimization; the caller's tool budget is what bounds how many of these a turn can start.
  */
-export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; browser?: BrowserToolDeps; external?: Tool[] }): Tool {
+export function spawnSubagentTool(deps: {
+  loop: AgentLoop; subject: string; browser?: BrowserToolDeps; external?: Tool[];
+  /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
+  onBusy?: (memberId: string, busy: boolean) => void;
+}): Tool {
   return {
     def: {
       type: 'tool', name: 'spawn_subagent',
@@ -443,7 +447,7 @@ export function spawnSubagentTool(deps: { loop: AgentLoop; subject: string; brow
         system: subagentSystemPrompt(role, extras.map((t) => t.def.name), member?.instructions),
         user: task,
         tools,
-        ...(member ? { memberId: member.id } : {}),
+        ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
         // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
         ctx: { bundle: ctx.bundle },
         maxToolCalls: SUBAGENT_TOOL_CALLS,

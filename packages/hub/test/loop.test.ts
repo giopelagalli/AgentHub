@@ -257,4 +257,33 @@ describe('AgentLoop', () => {
     expect(transcript.events(res.sessionId)).toHaveLength(1);
     expect(transcript.events(res.sessionId)[0].content).toContain('gateway error');
   });
+
+  it('calls onBusy(true) then onBusy(false) around a run tagged with a member id', async () => {
+    const { loop, ctx } = await setup([{ content: 'done' }]);
+    const calls: boolean[] = [];
+
+    const res = await loop.run({ ...runOpts({ memberId: 'coder-1', onBusy: (busy) => calls.push(busy) }), ctx });
+
+    expect(res.outcome).toBe('stop');
+    expect(calls).toEqual([true, false]);
+  });
+
+  it('never calls onBusy for a run with no member id', async () => {
+    const { loop, ctx } = await setup([{ content: 'done' }]);
+    const calls: boolean[] = [];
+
+    await loop.run({ ...runOpts({ onBusy: (busy) => calls.push(busy) }), ctx });
+
+    expect(calls).toEqual([]);
+  });
+
+  it('still calls onBusy(false) when a member-tagged run ends abnormally', async () => {
+    const { loop, ctx } = await setup([], { serveWorker: false });
+    const calls: boolean[] = [];
+
+    const res = await loop.run({ ...runOpts({ memberId: 'coder-1', onBusy: (busy) => calls.push(busy) }), ctx });
+
+    expect(res.outcome).toBe('error');
+    expect(calls).toEqual([true, false]);
+  });
 });

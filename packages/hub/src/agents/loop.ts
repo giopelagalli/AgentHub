@@ -20,6 +20,8 @@ export interface AgentRunOptions {
   tools: Tool[];
   /** The project roster member this run belongs to; tags the session so the team API can find it. */
   memberId?: string;
+  /** Called with true when a roster member's run starts and false when it ends, for a "working" dot. */
+  onBusy?: (busy: boolean) => void;
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
   maxToolCalls: number;
   signal?: AbortSignal;
@@ -48,6 +50,7 @@ export class AgentLoop {
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});
+    if (opts.memberId) opts.onBusy?.(true);
     const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal };
     const toolDefs = opts.tools.map((t) => t.def);
 
@@ -62,6 +65,7 @@ export class AgentLoop {
 
     const finish = (outcome: SessionOutcome): AgentRunResult => {
       transcript.endSession(sessionId, outcome);
+      if (opts.memberId) opts.onBusy?.(false);
       return { sessionId, text, toolCalls, outcome, truncated };
     };
 

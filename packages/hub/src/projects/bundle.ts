@@ -4,7 +4,7 @@ import { join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
 import type { Priority, TeamMember } from '@agenthub/shared';
-import { validateBriefing, validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
+import { newTeamMember, validateBriefing, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
 const CONTEXT_PACK_LIMIT = 12000;
 const CONTEXT_PACK_MARKER = '\n[truncated]';
@@ -33,6 +33,19 @@ function defaultTeam(now: number): TeamMember[] {
     { id: 'researcher-1', name: 'Sol', role: 'researcher', avatar: 'robot-magenta', createdAt: now },
     { id: 'reviewer-1', name: 'Vex', role: 'reviewer', avatar: 'robot-amber', createdAt: now },
   ];
+}
+
+/** The hire counter a fresh roster starts at, one past the three default members' `-1` ids. */
+const DEFAULT_TEAM_NEXT_ID = 4;
+
+/** Computes a safe hire counter for a team.yaml written before `nextId` existed. */
+function fallbackNextId(members: TeamMember[]): number {
+  let max = 0;
+  for (const m of members) {
+    const n = Number(m.id.slice(m.id.lastIndexOf('-') + 1));
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
 }
 
 function projectTemplate(title: string, intent: string): string {
@@ -155,7 +168,7 @@ export class ProjectBundle {
     await writeFile(join(dir, 'project.md'), projectTemplate(init.title, init.intent), 'utf8');
     await writeFile(join(dir, 'decisions.log.md'), '# Decisions\n', 'utf8');
     await writeFile(join(dir, 'tasks.yaml'), dump({ tasks: [] } satisfies Tasks), 'utf8');
-    await writeFile(join(dir, 'team.yaml'), dump({ members: defaultTeam(now) }), 'utf8');
+    await writeFile(join(dir, 'team.yaml'), dump({ nextId: DEFAULT_TEAM_NEXT_ID, members: defaultTeam(now) }), 'utf8');
 
     const git = simpleGit(dir);
     await git.init();
@@ -184,6 +197,11 @@ export class ProjectBundle {
     // gitignore; put them back rather than have every bundle method guard against ENOENT.
     for (const sub of SCAFFOLD_DIRS) await mkdir(join(dir, sub), { recursive: true });
     if (!existsSync(join(dir, '.gitignore'))) await writeFile(join(dir, '.gitignore'), BUNDLE_GITIGNORE, 'utf8');
+    // A project bundle from before team.yaml existed gets the default roster once, the same one a
+    // freshly created project starts with — otherwise its org chart would stay empty forever.
+    if (!existsSync(join(dir, 'team.yaml'))) {
+      await writeFile(join(dir, 'team.yaml'), dump({ nextId: DEFAULT_TEAM_NEXT_ID, members: defaultTeam(Date.now()) }), 'utf8');
+    }
     return new ProjectBundle(dir, simpleGit(dir));
   }
 
@@ -266,19 +284,49 @@ export class ProjectBundle {
   }
 
   /**
-   * The project's roster. A bundle created before team.yaml existed simply has no file — that reads
-   * as an empty roster rather than an error, so old bundles keep working.
+   * team.yaml's roster plus its hire counter. A bundle created before team.yaml existed (or before
+   * `nextId` did) has no counter on disk — that falls back to one derived from whoever is currently
+   * on the roster, since no history of earlier, now-removed members is available to do better.
    */
-  async team(): Promise<TeamMember[]> {
+  private async teamState(): Promise<{ nextId: number; members: TeamMember[] }> {
     const raw = await readFile(join(this.dir, 'team.yaml'), 'utf8').catch(() => null);
-    if (raw === null) return [];
-    const data = load(raw) as { members?: TeamMember[] } | undefined;
-    return data?.members ?? [];
+    if (raw === null) return { nextId: DEFAULT_TEAM_NEXT_ID, members: [] };
+    const data = load(raw) as { nextId?: number; members?: TeamMember[] } | undefined;
+    const members = data?.members ?? [];
+    return { nextId: typeof data?.nextId === 'number' ? data.nextId : fallbackNextId(members), members };
   }
 
-  async writeTeam(members: TeamMember[]): Promise<void> {
-    await writeFile(join(this.dir, 'team.yaml'), dump({ members }), 'utf8');
+  private async writeTeamState(state: { nextId: number; members: TeamMember[] }): Promise<void> {
+    await writeFile(join(this.dir, 'team.yaml'), dump(state), 'utf8');
     await this.touch();
+  }
+
+  /**
+   * The project's roster. `open()` backfills team.yaml the moment it's missing, so in practice this
+   * only reads an empty roster if the file vanished from under an already-open bundle — that still
+   * reads as empty rather than an error, exactly as it did before the backfill existed.
+   */
+  async team(): Promise<TeamMember[]> {
+    return (await this.teamState()).members;
+  }
+
+  /** Overwrites the roster, preserving the persisted hire counter untouched (removal doesn't reuse ids). */
+  async writeTeam(members: TeamMember[]): Promise<void> {
+    const { nextId } = await this.teamState();
+    await this.writeTeamState({ nextId, members });
+  }
+
+  /**
+   * Validates and appends an owner-supplied hire, assigning its id from the persisted counter and
+   * advancing it in the same write — so an id is never handed out twice, even across a member who was
+   * later removed.
+   */
+  async hireMember(body: unknown, now = Date.now()): Promise<NewMemberResult> {
+    const { nextId, members } = await this.teamState();
+    const result = newTeamMember(body, members, nextId, now);
+    if ('error' in result) return result;
+    await this.writeTeamState({ nextId: result.nextId, members: [...members, result.member] });
+    return result;
   }
 
   async skills(): Promise<{ name: string; body: string }[]> {

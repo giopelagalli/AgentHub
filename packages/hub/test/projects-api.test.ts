@@ -228,7 +228,9 @@ describe('project team API', () => {
       payload: { name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only' },
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json()).toMatchObject({ id: 'coder-2', name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only' });
+    // The default roster already spent ids -1 through the three seed members, so the first hire
+    // continues the persisted counter at 4 rather than recomputing a per-role count of 2.
+    expect(created.json()).toMatchObject({ id: 'coder-4', name: 'Byte', role: 'coder', avatar: 'robot-violet', instructions: 'small diffs only' });
 
     for (const payload of [
       { name: 'Nix', role: 'wizard', avatar: 'robot-violet' },
@@ -247,12 +249,33 @@ describe('project team API', () => {
 
     expect((await app().inject({ method: 'GET', url: '/api/projects/demo/team' })).json().members).toHaveLength(4);
 
-    const removed = await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-2' });
+    const removed = await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-4' });
     expect(removed.statusCode).toBe(204);
-    expect((await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-2' })).statusCode).toBe(404);
+    expect((await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-4' })).statusCode).toBe(404);
 
     const after = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
     expect(after.json().members.map((m: { id: string }) => m.id)).toEqual(['coder-1', 'researcher-1', 'reviewer-1']);
+  });
+
+  it('never reissues a removed member\'s id, so a replacement does not inherit their chat history', async () => {
+    const transcript = await seeded();
+    const oldSession = transcript.startSession('chat', 'demo:coder-1', 'orchestrator');
+    transcript.append(oldSession, { role: 'user', content: 'how is it going' });
+    transcript.append(oldSession, { role: 'assistant', content: 'going well' });
+    transcript.endSession(oldSession, 'stop');
+
+    expect((await app().inject({ method: 'DELETE', url: '/api/projects/demo/team/coder-1' })).statusCode).toBe(204);
+
+    const hired = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team', payload: { name: 'Byte', role: 'coder', avatar: 'robot-violet' },
+    });
+    expect(hired.statusCode).toBe(201);
+    const newId = hired.json().id as string;
+    expect(newId).not.toBe('coder-1');
+
+    const history = await app().inject({ method: 'GET', url: `/api/projects/demo/chat/${newId}` });
+    expect(history.statusCode).toBe(200);
+    expect(history.json().messages).toEqual([]);
   });
 
   it('returns a member\'s latest session as their activity', async () => {

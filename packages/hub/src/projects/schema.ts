@@ -76,23 +76,17 @@ export function validateBriefing(b: unknown): asserts b is Briefing {
 export const TEAM_NAME_LIMIT = 40;
 export const TEAM_INSTRUCTIONS_LIMIT = 2000;
 
-/** Either the member to append, or the status and message the API should answer with. */
-export type NewMemberResult = { member: TeamMember } | { error: string; code: 400 | 409 };
-
-/** `<role>-<n>`, with `n` walked past whatever the roster already holds — ids are never reused. */
-function nextMemberId(role: TeamRole, existing: TeamMember[]): string {
-  const taken = new Set(existing.map((m) => m.id));
-  let n = existing.filter((m) => m.role === role).length + 1;
-  while (taken.has(`${role}-${n}`)) n++;
-  return `${role}-${n}`;
-}
+/** Either the member to append (plus the counter's next value), or the API's error status/message. */
+export type NewMemberResult = { member: TeamMember; nextId: number } | { error: string; code: 400 | 409 };
 
 /**
- * Validates an owner-supplied roster addition and assigns its id. Names are unique per project
+ * Validates an owner-supplied roster addition and assigns its id from the caller-supplied monotonic
+ * counter (`<role>-<nextId>`) — never derived from who currently happens to be on the roster, so a
+ * removed member's id is never reissued to whoever is hired next. Names are unique per project
  * case-insensitively: the roster is how the owner and the orchestrator refer to an employee, and two
  * Adas would make both references ambiguous.
  */
-export function newTeamMember(body: unknown, existing: TeamMember[], now = Date.now()): NewMemberResult {
+export function newTeamMember(body: unknown, existing: TeamMember[], nextId: number, now = Date.now()): NewMemberResult {
   const b = (body ?? {}) as Record<string, unknown>;
   const name = typeof b.name === 'string' ? b.name.trim() : '';
   if (!name || name.length > TEAM_NAME_LIMIT) return { error: 'invalid name', code: 400 };
@@ -105,9 +99,9 @@ export function newTeamMember(body: unknown, existing: TeamMember[], now = Date.
   if (existing.some((m) => m.name.toLowerCase() === name.toLowerCase())) return { error: 'duplicate name', code: 409 };
 
   const role = b.role as TeamRole;
-  const id = nextMemberId(role, existing);
+  const id = `${role}-${nextId}`;
   // The id is a roster key the UI puts in a URL path; a role that stopped being slug-ish would make
   // one that isn't, so it is checked rather than assumed.
   validateSlug(id);
-  return { member: { id, name, role, avatar: b.avatar, ...(instructions ? { instructions } : {}), createdAt: now } };
+  return { member: { id, name, role, avatar: b.avatar, ...(instructions ? { instructions } : {}), createdAt: now }, nextId: nextId + 1 };
 }

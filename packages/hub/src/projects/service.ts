@@ -29,6 +29,8 @@ export interface ProjectServiceDeps {
   browser?: BrowserProxy;
   /** The configured external tools (grok/gemini/search), minus anything outward. */
   external?: Tool[];
+  /** Notified with (slug, memberId, busy) whenever a project's delegated subagent run starts or ends. */
+  onBusy?: (slug: string, memberId: string, busy: boolean) => void;
   tickIntervalMs?: number;
   /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
   turnTimeoutMs?: number;
@@ -269,9 +271,10 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, leases, browser, external } = this.deps;
+    const { loop, gateway, queue, registry, transcript, leases, browser, external, onBusy } = this.deps;
     const orchestrator = new ProjectOrchestrator({
       bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser, external,
+      ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
     });
     this.orchestrators.set(slug, orchestrator);
     return orchestrator;

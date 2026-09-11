@@ -1,5 +1,6 @@
 import type { ChatMessage, TeamMember } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
+import { routeFor } from '../gateway.js';
 import { workspaceTools, type Tool } from '../agents/tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from '../agents/transcript.js';
 import type { ProjectBundle } from './bundle.js';
@@ -111,6 +112,9 @@ export class ProjectChat {
           CHAT_FRAMING,
         ].join('\n');
 
+      // A chat is a turn's persona answering a question, so it runs on the same model the project's
+      // policy gives the orchestrator tier.
+      const route = routeFor((await bundle.manifest()).modelPolicy, 'orchestrator');
       const result = await this.deps.loop.run({
         kind: KIND, subject: subjectFor(slug, who), tier: 'orchestrator',
         system,
@@ -118,6 +122,7 @@ export class ProjectChat {
         user: text,
         tools: workspaceTools().filter((t: Tool) => READ_ONLY_TOOLS.includes(t.def.name)),
         ctx: { bundle },
+        ...(route ? { route } : {}),
         maxToolCalls: MAX_TOOL_CALLS,
         ...(target === 'manager' ? {} : { memberId: target.id }),
         ...(opts.onToken ? { onToken: opts.onToken } : {}),

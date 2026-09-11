@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, HubState, Job, JobResult, JobSpec, JobType, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
 import { PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -11,9 +11,13 @@ import { openDb, type Db } from './db.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
-import { ModelGateway } from './gateway.js';
+import { ModelGateway, isCloudEndpoint } from './gateway.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL, type AnthropicLike } from './providers/anthropic.js';
+import {
+  DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL, DEFAULT_FIREWORKS_WORKER_MODEL,
+  FIREWORKS_API_KEY_ENV, FIREWORKS_BASE_URL, FireworksCatalog,
+} from './providers/fireworks.js';
 import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
@@ -63,6 +67,8 @@ export interface Hub {
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
+const PREFERENCES: ModelPolicy['prefer'][] = ['local', 'cloud', 'auto'];
+const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'fireworks'];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
 const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
 const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';
@@ -137,10 +143,14 @@ export interface HubOptions {
     stopDelayMs?: number;
   };
   /**
-   * Serving that isn't a node: with `anthropic` present the hub registers the synthetic,
-   * always-online `cloud-anthropic` node and answers its two tiers through the Anthropic SDK, so
-   * the system runs with no local GPU at all. Local nodes, when any are online, are still preferred
-   * (`ModelGateway.pick`). `client` is for tests; otherwise the SDK resolves its own credentials.
+   * Serving that isn't a node: each provider present here registers a synthetic, always-online
+   * `cloud-<provider>` node whose two tiers the hub answers itself, so the system runs with no local
+   * GPU at all. Local nodes, when any are online, are still preferred (`ModelGateway.pick`) unless a
+   * project's `modelPolicy` says otherwise.
+   *
+   * `anthropic` goes through the SDK (`client` is for tests; otherwise the SDK resolves its own
+   * credentials). `fireworks` is OpenAI-compatible HTTP with a bearer read from `FIREWORKS_API_KEY`
+   * at request time (`baseUrl` is for tests, which point it at a fake server).
    */
   cloud?: {
     anthropic?: {
@@ -149,11 +159,18 @@ export interface HubOptions {
       maxStreams?: number;
       client?: AnthropicLike;
     };
+    fireworks?: {
+      orchestratorModel?: string;
+      workerModel?: string;
+      maxStreams?: number;
+      baseUrl?: string;
+    };
   };
 }
 
-/** The synthetic node's name — it is not a machine, so nothing may claim jobs or a browser for it. */
+/** The synthetic nodes' names — they are not machines, so nothing may claim jobs or a browser for them. */
 export const CLOUD_NODE_NAME = 'cloud-anthropic';
+export const CLOUD_FIREWORKS_NODE_NAME = 'cloud-fireworks';
 
 export function createHub(opts: HubOptions = {}): Hub {
   const dbPath = opts.dbPath ?? ':memory:';
@@ -167,12 +184,28 @@ export function createHub(opts: HubOptions = {}): Hub {
   // no `video` and no `browser` — none of those can be reached through an API key.
   const cloud = opts.cloud?.anthropic;
   const anthropic: AnthropicLike | undefined = cloud ? cloud.client ?? new Anthropic() : undefined;
+  // Names the hub owns: a daemon may not register under one, and the sweep keeps them online.
+  const cloudNodes: string[] = [];
   if (cloud) {
+    cloudNodes.push(CLOUD_NODE_NAME);
     registry.register({
       name: CLOUD_NODE_NAME, arch: 'cloud',
       endpoints: [
         { tier: 'orchestrator', provider: 'anthropic', url: 'anthropic://', model: cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL, maxStreams: cloud.maxStreams ?? 4 },
         { tier: 'worker', provider: 'anthropic', url: 'anthropic://', model: cloud.workerModel ?? DEFAULT_WORKER_MODEL, maxStreams: cloud.maxStreams ?? 8 },
+      ],
+    });
+  }
+  const fireworks = opts.cloud?.fireworks;
+  const fireworksBase = fireworks?.baseUrl ?? FIREWORKS_BASE_URL;
+  const fireworksCatalog = fireworks ? new FireworksCatalog({ baseUrl: fireworksBase }) : undefined;
+  if (fireworks) {
+    cloudNodes.push(CLOUD_FIREWORKS_NODE_NAME);
+    registry.register({
+      name: CLOUD_FIREWORKS_NODE_NAME, arch: 'cloud',
+      endpoints: [
+        { tier: 'orchestrator', provider: 'fireworks', url: fireworksBase, apiKeyEnv: FIREWORKS_API_KEY_ENV, model: fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL, maxStreams: fireworks.maxStreams ?? 4 },
+        { tier: 'worker', provider: 'fireworks', url: fireworksBase, apiKeyEnv: FIREWORKS_API_KEY_ENV, model: fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL, maxStreams: fireworks.maxStreams ?? 8 },
       ],
     });
   }
@@ -466,7 +499,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   const sweepAndRequeue = () => {
     // The cloud node has no daemon to heartbeat for it, so the hub does it here — every sweep, on
     // whichever path runs it — and the node is never swept offline.
-    if (cloud) registry.heartbeat(CLOUD_NODE_NAME);
+    for (const name of cloudNodes) registry.heartbeat(name);
     for (const node of registry.sweep()) {
       // Read before requeueing: afterwards the jobs no longer name this node.
       for (const job of queue.list('running')) if (job.nodeId === node.id) releaseVideoSlot(job, node.name);
@@ -525,8 +558,8 @@ export function createHub(opts: HubOptions = {}): Hub {
   }
 
   app.post('/api/nodes/register', async (req, reply) => {
-    // The synthetic cloud node is owned by the hub; a daemon may not replace its row.
-    if (cloud && (req.body as NodeRegistration)?.name === CLOUD_NODE_NAME) {
+    // The synthetic cloud nodes are owned by the hub; a daemon may not replace one of their rows.
+    if (cloudNodes.includes((req.body as NodeRegistration)?.name)) {
       return reply.code(409).send({ error: 'reserved node name' });
     }
     const result = registry.register(req.body as NodeRegistration);
@@ -551,6 +584,45 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/nodes', async () => {
     sweepAndRequeue();
     return registry.all();
+  });
+
+  /**
+   * Everything the owner can point a project at. The local half is whatever is serving right now;
+   * the cloud half is per configured provider, and Fireworks' list is fetched (and cached for ten
+   * minutes) from the account's own catalog, so it is the truth about which ids exist rather than a
+   * hard-coded guess.
+   */
+  const modelCatalog = async (): Promise<ModelCatalog> => {
+    const local: ModelCatalog['local'] = [];
+    for (const node of registry.online()) {
+      for (const ep of node.endpoints) {
+        if (!isCloudEndpoint(ep)) local.push({ node: node.name, tier: ep.tier, model: ep.model });
+      }
+    }
+    const cloudRows: ModelCatalog['cloud'] = [];
+    if (cloud) {
+      const configured = {
+        orchestrator: cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL,
+        worker: cloud.workerModel ?? DEFAULT_WORKER_MODEL,
+      };
+      cloudRows.push({ provider: 'anthropic', models: [...new Set([configured.orchestrator, configured.worker])].sort(), configured });
+    }
+    if (fireworks && fireworksCatalog) {
+      cloudRows.push({
+        provider: 'fireworks',
+        models: await fireworksCatalog.models(process.env[FIREWORKS_API_KEY_ENV]),
+        configured: {
+          orchestrator: fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL,
+          worker: fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL,
+        },
+      });
+    }
+    return { local, cloud: cloudRows };
+  };
+
+  app.get('/api/models', async () => {
+    sweepAndRequeue();
+    return modelCatalog();
   });
 
   app.get('/api/state', async () => {
@@ -801,6 +873,49 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     if (!(await resolveProject(slug, reply))) return reply;
     const manifest = await projects.setPriority(slug, body.priority);
+    await refreshProjects();
+    return manifest;
+  });
+
+  /**
+   * The owner's model choice for one project. A named provider is checked against the live catalog:
+   * a model id the account cannot serve is a 400 rather than a policy that fails on the next turn.
+   * The provider's own configured ids always pass — they are what the tier uses today, and a catalog
+   * call that failed (or an unset key) must not lock the owner out of its defaults.
+   */
+  app.post('/api/projects/:slug/model', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = (req.body ?? {}) as Partial<ModelPolicy>;
+    if (!PREFERENCES.includes(body.prefer as ModelPolicy['prefer'])) {
+      return reply.code(400).send({ error: 'invalid prefer' });
+    }
+    if (body.provider !== undefined && !CLOUD_PROVIDERS.includes(body.provider)) {
+      return reply.code(400).send({ error: 'invalid provider' });
+    }
+    for (const field of ['orchestratorModel', 'workerModel'] as const) {
+      const value = body[field];
+      if (value !== undefined && (typeof value !== 'string' || !value)) {
+        return reply.code(400).send({ error: `invalid ${field}` });
+      }
+    }
+    if (body.provider) {
+      const row = (await modelCatalog()).cloud.find((c) => c.provider === body.provider);
+      if (!row) return reply.code(400).send({ error: `provider not configured: ${body.provider}` });
+      const known = new Set([...row.models, row.configured.orchestrator, row.configured.worker]);
+      for (const field of ['orchestratorModel', 'workerModel'] as const) {
+        const value = body[field];
+        if (value && !known.has(value)) return reply.code(400).send({ error: `unknown model: ${value}` });
+      }
+    } else if (body.orchestratorModel || body.workerModel) {
+      return reply.code(400).send({ error: 'a model override needs a provider' });
+    }
+    if (!(await resolveProject(slug, reply))) return reply;
+    const manifest = await projects.setModelPolicy(slug, {
+      prefer: body.prefer as ModelPolicy['prefer'],
+      ...(body.provider ? { provider: body.provider } : {}),
+      ...(body.orchestratorModel ? { orchestratorModel: body.orchestratorModel } : {}),
+      ...(body.workerModel ? { workerModel: body.workerModel } : {}),
+    });
     await refreshProjects();
     return manifest;
   });

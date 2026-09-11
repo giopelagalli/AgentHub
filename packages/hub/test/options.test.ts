@@ -61,6 +61,18 @@ describe('optionsFromEnv', () => {
       .toEqual({ anthropic: { orchestratorModel: 'claude-opus-5', workerModel: 'claude-haiku-4-5' } });
   });
 
+  it('enables the fireworks tier on a key (or CLOUD_FIREWORKS=1), with optional model overrides', () => {
+    expect(optionsFromEnv({}, quiet).options.cloud).toBeUndefined();
+    // Having the key is the switch — there is no way to reach Fireworks without one.
+    expect(optionsFromEnv({ FIREWORKS_API_KEY: 'fw' }, quiet).options.cloud).toEqual({ fireworks: {} });
+    expect(optionsFromEnv({ CLOUD_FIREWORKS: '1' }, quiet).options.cloud).toEqual({ fireworks: {} });
+    expect(optionsFromEnv({ FIREWORKS_API_KEY: 'fw', FIREWORKS_ORCHESTRATOR_MODEL: 'a', FIREWORKS_WORKER_MODEL: 'b' }, quiet).options.cloud)
+      .toEqual({ fireworks: { orchestratorModel: 'a', workerModel: 'b' } });
+    // Both providers can be on at once; each keeps its own overrides.
+    expect(optionsFromEnv({ CLOUD_ANTHROPIC: '1', FIREWORKS_API_KEY: 'fw' }, quiet).options.cloud)
+      .toEqual({ anthropic: {}, fireworks: {} });
+  });
+
   it('keeps an external tool only when its key is present and its provider is known', () => {
     const { options } = optionsFromEnv({ XAI_API_KEY: 'x', SEARCH_API_KEY: 'k', SEARCH_PROVIDER: 'tavily' }, quiet);
     expect(options.external).toMatchObject({ xaiKey: 'x', search: { provider: 'tavily', key: 'k' } });

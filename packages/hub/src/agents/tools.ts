@@ -9,6 +9,7 @@ import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
 import { validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import type { AgentLoop } from './loop.js';
+import type { Route } from '../gateway.js';
 
 const TOOL_RESULT_LIMIT = 8000;
 const TRUNCATION_MARKER = '\n[truncated]';
@@ -406,6 +407,8 @@ const SUBAGENT_RESULT_LIMIT = 4000;
  */
 export function spawnSubagentTool(deps: {
   loop: AgentLoop; subject: string; browser?: BrowserToolDeps; external?: Tool[];
+  /** The project's model policy resolved for the worker tier; absent, the gateway's own ordering. */
+  route?: Route;
   /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
 }): Tool {
@@ -448,6 +451,7 @@ export function spawnSubagentTool(deps: {
         user: task,
         tools,
         ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
+        ...(deps.route ? { route: deps.route } : {}),
         // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
         ctx: { bundle: ctx.bundle },
         maxToolCalls: SUBAGENT_TOOL_CALLS,

@@ -1,15 +1,44 @@
-import type { ChatMessage, ChatResult, NodeInfo, ServingEndpoint, Tier, ToolCall, ToolDef } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, CloudProvider, ModelPolicy, NodeInfo, ServingEndpoint, Tier, ToolCall, ToolDef } from '@agenthub/shared';
 import type { NodeRegistry } from './node-registry.js';
 import { anthropicChat, isRetryableAnthropicError, type AnthropicLike } from './providers/anthropic.js';
 
 export interface PickResult { node: NodeInfo; endpoint: ServingEndpoint; }
 
-export interface ChatOptions { onToken?: (t: string) => void; tools?: ToolDef[]; signal?: AbortSignal; }
+/**
+ * One caller's model preference for one request — a project's `modelPolicy` resolved for the tier
+ * it is about to use (`routeFor`). Absent, the gateway behaves exactly as it did before: local
+ * endpoints first, cloud as overflow.
+ */
+export interface Route {
+  prefer?: ModelPolicy['prefer'];
+  provider?: CloudProvider;
+  /** Overrides the chosen endpoint's model — only ever on a cloud endpoint of `provider`. */
+  model?: string;
+}
+
+export interface ChatOptions { onToken?: (t: string) => void; tools?: ToolDef[]; signal?: AbortSignal; route?: Route }
 
 const UNHEALTHY_MS = 10_000;
 
-/** Anything not spoken over a local OpenAI-compatible endpoint — today, the Anthropic cloud tier. */
-const isCloud = (ep: ServingEndpoint): boolean => (ep.provider ?? 'openai') !== 'openai';
+/** Anything not spoken over a local OpenAI-compatible endpoint — the Anthropic and Fireworks tiers. */
+export const isCloudEndpoint = (ep: ServingEndpoint): boolean => (ep.provider ?? 'openai') !== 'openai';
+
+/** The tier-specific slice of a project's policy, or undefined when it has none (i.e. `auto`). */
+export function routeFor(policy: ModelPolicy | undefined, tier: Tier): Route | undefined {
+  if (!policy) return undefined;
+  const model = tier === 'orchestrator' ? policy.orchestratorModel : policy.workerModel;
+  return {
+    prefer: policy.prefer,
+    ...(policy.provider ? { provider: policy.provider } : {}),
+    ...(model ? { model } : {}),
+  };
+}
+
+/** Whether `route.model` may replace `ep`'s own model: cloud only, and the asked-for provider only. */
+function modelOverrideApplies(ep: ServingEndpoint, route: Route | undefined): boolean {
+  if (!route?.model || !isCloudEndpoint(ep)) return false;
+  return !route.provider || ep.provider === route.provider;
+}
 
 export class ModelGateway {
   private active = new Map<string, number>(); // `${node.name}|${tier}|${endpoint.url}` -> active streams
@@ -18,6 +47,8 @@ export class ModelGateway {
   // `unhealthyUntil` this has no expiry: the endpoint's serving process is actually stopped, and
   // only the manager that parked it knows when it is back.
   private parked = new Set<string>();
+  /** `apiKeyEnv` names already reported missing, so an unset key costs one log line, not one per pick. */
+  private missingKeysLogged = new Set<string>();
   private now: () => number;
   /** Serves every `provider: 'anthropic'` endpoint; absent when no cloud tier is configured. */
   private anthropic: AnthropicLike | undefined;
@@ -33,45 +64,82 @@ export class ModelGateway {
     this.unhealthyUntil.set(key, this.now() + UNHEALTHY_MS);
   }
 
-  // Whether some endpoint other than `excludeKey` could currently serve `tier` (i.e. registered,
-  // online, and not itself already marked unhealthy). Used to decide whether it's safe to blacklist
-  // a failing endpoint: doing so when it's the sole candidate would black out the tier entirely.
-  private hasOtherHealthyCandidate(tier: Tier, excludeKey: string): boolean {
+  /**
+   * The bearer token `ep` needs, or null when it names an env var the process doesn't have — which
+   * takes the endpoint out of rotation rather than sending an unauthenticated request. Endpoints
+   * without `apiKeyEnv` need no token and return undefined.
+   */
+  private bearer(ep: ServingEndpoint): string | null | undefined {
+    if (!ep.apiKeyEnv) return undefined;
+    const value = process.env[ep.apiKeyEnv];
+    if (value) return value;
+    if (!this.missingKeysLogged.has(ep.apiKeyEnv)) {
+      this.missingKeysLogged.add(ep.apiKeyEnv);
+      console.warn(`[gateway] ${ep.apiKeyEnv} is not set; ${ep.url} is unavailable`);
+    }
+    return null;
+  }
+
+  /**
+   * Every endpoint that could serve `tier` right now under `route`: online, not parked, not marked
+   * unhealthy, and with the token it needs. Capacity is *not* checked here — `pick` adds that, while
+   * `hasOtherHealthyCandidate` deliberately ignores it.
+   */
+  private eligible(tier: Tier, route?: Route): { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] {
     const now = this.now();
+    // `prefer: 'local'` means local only — the cloud is a fallback for a tier nothing local serves
+    // at all, not overflow for a local endpoint that happens to be busy or briefly unhealthy.
+    const localOnly = route?.prefer === 'local' && this.hasLocalEndpoint(tier);
+    const out: { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] = [];
     for (const node of this.registry.online()) {
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
+        if (localOnly && isCloudEndpoint(endpoint)) continue;
         const key = this.key(node, endpoint);
-        if (key === excludeKey || this.parked.has(key)) continue;
+        if (this.parked.has(key)) continue;
         const until = this.unhealthyUntil.get(key);
         if (until !== undefined && until > now) continue;
-        return true;
+        if (this.bearer(endpoint) === null) continue;
+        out.push({ node, endpoint, key });
       }
     }
+    return out;
+  }
+
+  /** Whether any online node serves `tier` locally at all — busy, unhealthy or parked included. */
+  private hasLocalEndpoint(tier: Tier): boolean {
+    for (const node of this.registry.online()) {
+      for (const endpoint of node.endpoints) if (endpoint.tier === tier && !isCloudEndpoint(endpoint)) return true;
+    }
     return false;
+  }
+
+  /** Lower sorts first: the group `route` asks for, then the rest. */
+  private rank(ep: ServingEndpoint, route?: Route): number {
+    const cloud = isCloudEndpoint(ep);
+    if (route?.prefer !== 'cloud') return cloud ? 1 : 0; // 'auto' and 'local': local first
+    if (cloud && (!route.provider || ep.provider === route.provider)) return 0;
+    return cloud ? 2 : 1; // a local endpoint is a better fallback than the wrong cloud
+  }
+
+  // Whether some endpoint other than `excludeKey` could currently serve `tier` (i.e. registered,
+  // online, and not itself already marked unhealthy). Used to decide whether it's safe to blacklist
+  // a failing endpoint: doing so when it's the sole candidate would black out the tier entirely.
+  private hasOtherHealthyCandidate(tier: Tier, excludeKey: string, route?: Route): boolean {
+    return this.eligible(tier, route).some((c) => c.key !== excludeKey);
   }
 
   health(): Record<string, number> {
     return Object.fromEntries(this.unhealthyUntil);
   }
 
-  pick(tier: Tier): PickResult | null {
-    const now = this.now();
-    const candidates: { pick: PickResult; active: number; cloud: boolean }[] = [];
-    for (const node of this.registry.online()) {
-      for (const endpoint of node.endpoints) {
-        if (endpoint.tier !== tier) continue;
-        const key = this.key(node, endpoint);
-        if (this.parked.has(key)) continue;
-        const until = this.unhealthyUntil.get(key);
-        if (until !== undefined && until > now) continue;
-        const active = this.active.get(key) ?? 0;
-        if (active < endpoint.maxStreams) candidates.push({ pick: { node, endpoint }, active, cloud: isCloud(endpoint) });
-      }
-    }
-    // Hardware the owner already paid for comes first: a cloud endpoint is only picked when no local
-    // one for this tier has capacity. Within each group the least busy endpoint wins, as before.
-    candidates.sort((a, b) => (a.cloud === b.cloud ? a.active - b.active : a.cloud ? 1 : -1));
+  pick(tier: Tier, route?: Route): PickResult | null {
+    const candidates = this.eligible(tier, route)
+      .map((c) => ({ pick: { node: c.node, endpoint: c.endpoint }, active: this.active.get(c.key) ?? 0, rank: this.rank(c.endpoint, route) }))
+      .filter((c) => c.active < c.pick.endpoint.maxStreams);
+    // Hardware the owner already paid for comes first unless the route says otherwise; within a
+    // group the least busy endpoint wins, as before.
+    candidates.sort((a, b) => (a.rank === b.rank ? a.active - b.active : a.rank - b.rank));
     return candidates[0]?.pick ?? null;
   }
 
@@ -125,20 +193,23 @@ export class ModelGateway {
   }
 
   private async chatInternal(tier: Tier, messages: ChatMessage[], opts: ChatOptions): Promise<ChatResult> {
-    const { onToken, tools, signal } = opts;
+    const { onToken, tools, signal, route } = opts;
     for (let attempt = 0; ; attempt++) {
-      const picked = this.pick(tier);
+      const picked = this.pick(tier, route);
       if (!picked) throw new Error(`no capacity for tier: ${tier}`);
       const key = this.key(picked.node, picked.endpoint);
+      // A project that named a model gets it, but only on the cloud it named: a local endpoint
+      // serves whatever its node loaded, and asking it for another model would just 404.
+      const model = modelOverrideApplies(picked.endpoint, route) ? route!.model! : picked.endpoint.model;
       this.active.set(key, (this.active.get(key) ?? 0) + 1);
       let streamedAny = false;
       let nonRetryable = false;
       try {
-        if (isCloud(picked.endpoint)) {
+        if (picked.endpoint.provider === 'anthropic') {
           if (!this.anthropic) { nonRetryable = true; throw new Error(`no anthropic client configured for ${picked.endpoint.url}`); }
           try {
             return await anthropicChat(this.anthropic, {
-              model: picked.endpoint.model, messages,
+              model, messages,
               ...(tools ? { tools } : {}),
               onToken: (t) => { streamedAny = true; onToken?.(t); },
               ...(signal ? { signal } : {}),
@@ -148,14 +219,20 @@ export class ModelGateway {
             throw err;
           }
         }
+        // Everything else — local endpoints and Fireworks alike — is OpenAI-compatible HTTP; the
+        // only difference is the bearer a remote one needs.
+        const token = this.bearer(picked.endpoint);
+        if (token === null) { nonRetryable = true; throw new Error(`missing ${picked.endpoint.apiKeyEnv} for ${picked.endpoint.url}`); }
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ model: picked.endpoint.model, messages, stream: true, ...(tools ? { tools } : {}) }),
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ model, messages, stream: true, ...(tools ? { tools } : {}) }),
           signal,
         });
         if (!res.ok) {
           await res.body?.cancel().catch(() => {});
-          if (res.status < 500) nonRetryable = true;
+          // 429 is the cloud saying "later", not "never": retryable like the Anthropic path's.
+          if (res.status < 500 && res.status !== 429) nonRetryable = true;
           throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`);
         }
         if (!res.body) { nonRetryable = true; throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`); }
@@ -202,7 +279,7 @@ export class ModelGateway {
         return { content: full, toolCalls, finish };
       } catch (err) {
         const aborted = signal?.aborted || (err instanceof Error && err.name === 'AbortError');
-        if (attempt === 0 && !streamedAny && !nonRetryable && !aborted && this.hasOtherHealthyCandidate(tier, key)) {
+        if (attempt === 0 && !streamedAny && !nonRetryable && !aborted && this.hasOtherHealthyCandidate(tier, key, route)) {
           this.markUnhealthy(key);
           continue;
         }

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type Priority } from '@agenthub/shared';
+import { PRIORITY_RANK, type ModelPolicy, type Priority } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -137,6 +137,13 @@ export class ProjectService {
     const bundle = await this.get(slug);
     await bundle.setPriority(priority);
     await bundle.commit(`agent: set priority ${priority}`);
+    return bundle.manifest();
+  }
+
+  async setModelPolicy(slug: string, policy: ModelPolicy | undefined): Promise<Manifest> {
+    const bundle = await this.get(slug);
+    await bundle.setModelPolicy(policy);
+    await bundle.commit('owner: set model policy');
     return bundle.manifest();
   }
 

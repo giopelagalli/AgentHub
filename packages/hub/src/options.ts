@@ -110,14 +110,29 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
       : {}),
   };
 
-  // No local GPU? `CLOUD_ANTHROPIC=1` gives the hub an always-online cloud node for the
-  // orchestrator and worker tiers; the SDK resolves its own credentials (ANTHROPIC_API_KEY, or an
-  // `ant auth login` profile), so no key is read here.
-  const cloud = env.CLOUD_ANTHROPIC === '1'
-    ? { anthropic: {
+  // No local GPU? Each configured cloud provider gives the hub an always-online node for the
+  // orchestrator and worker tiers. The Anthropic SDK resolves its own credentials (ANTHROPIC_API_KEY,
+  // or an `ant auth login` profile); Fireworks' key is read from the environment per request by the
+  // gateway. Neither secret is read here — only the names and the model overrides.
+  const anthropicCloud = env.CLOUD_ANTHROPIC === '1'
+    ? {
         ...(env.CLOUD_ORCHESTRATOR_MODEL ? { orchestratorModel: env.CLOUD_ORCHESTRATOR_MODEL } : {}),
         ...(env.CLOUD_WORKER_MODEL ? { workerModel: env.CLOUD_WORKER_MODEL } : {}),
-      } }
+      }
+    : undefined;
+  // Fireworks needs a key to be reachable at all, so having one *is* the switch; CLOUD_FIREWORKS=1
+  // registers the node anyway (the gateway then parks it with one log line until the key shows up).
+  const fireworksCloud = env.FIREWORKS_API_KEY || env.CLOUD_FIREWORKS === '1'
+    ? {
+        ...(env.FIREWORKS_ORCHESTRATOR_MODEL ? { orchestratorModel: env.FIREWORKS_ORCHESTRATOR_MODEL } : {}),
+        ...(env.FIREWORKS_WORKER_MODEL ? { workerModel: env.FIREWORKS_WORKER_MODEL } : {}),
+      }
+    : undefined;
+  const cloud = anthropicCloud || fireworksCloud
+    ? {
+        ...(anthropicCloud ? { anthropic: anthropicCloud } : {}),
+        ...(fireworksCloud ? { fireworks: fireworksCloud } : {}),
+      }
     : undefined;
 
   const options: HubOptions = {

@@ -4,6 +4,9 @@ export const PRIORITY_RANK: Record<Priority, number> = { interactive: 0, project
 export type JobType = 'llm-session' | 'video-gen' | 'shell-task' | 'browser-lease';
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
+/** The cloud providers the hub can serve a tier from; each has its own synthetic node. */
+export type CloudProvider = 'anthropic' | 'fireworks';
+
 export interface ServingEndpoint {
   tier: Tier;
   url: string;
@@ -13,8 +16,30 @@ export interface ServingEndpoint {
    * Which wire protocol `url` speaks. Absent means `openai` — every locally served endpoint — so
    * nodes registered before this field still parse. `anthropic` endpoints are served by the hub's
    * own SDK client rather than by an HTTP endpoint, and carry the placeholder url `anthropic://`.
+   * `fireworks` is OpenAI-compatible over HTTP: same wire format, a bearer token, a remote url.
    */
-  provider?: 'openai' | 'anthropic';
+  provider?: 'openai' | 'anthropic' | 'fireworks';
+  /**
+   * Name of the environment variable holding a bearer token for `url`. Set on any endpoint that
+   * needs `Authorization: Bearer ...` — the cloud ones, and a local endpoint put behind a token.
+   * The *name* travels, never the secret: only the hub process reads the value.
+   */
+  apiKeyEnv?: string;
+}
+
+/**
+ * How one project picks the model that serves a tier (`ProjectManifest.modelPolicy`).
+ *
+ * `auto` is the hub's default: local endpoints first, cloud as overflow. `local` keeps the work on
+ * hardware the owner already paid for and only reaches the cloud for a tier nothing local serves at
+ * all. `cloud` goes out first and falls back to local. `provider` narrows which cloud is preferred;
+ * the two model fields override that provider's configured model for their tier.
+ */
+export interface ModelPolicy {
+  prefer: 'local' | 'cloud' | 'auto';
+  provider?: CloudProvider;
+  orchestratorModel?: string;
+  workerModel?: string;
 }
 
 export interface NodeRegistration {
@@ -125,6 +150,23 @@ export interface ProjectManifest {
   createdAt: number;
   updatedAt: number;
   index: string[]; // relative paths of bundle files
+  /** Absent means `auto` — the hub-wide default of local first, cloud as overflow. */
+  modelPolicy?: ModelPolicy;
+}
+
+/**
+ * What `GET /api/models` answers: every model this hub can actually route to right now. `local` is
+ * one row per online serving endpoint; `cloud` is one row per configured provider, with the ids that
+ * provider will serve (Fireworks lists them; Anthropic has no catalog call, so it reports the two it
+ * is configured with) and the ids each tier uses today.
+ */
+export interface ModelCatalog {
+  local: { node: string; tier: Tier; model: string }[];
+  cloud: {
+    provider: CloudProvider;
+    models: string[];
+    configured: { orchestrator: string; worker: string };
+  }[];
 }
 
 export type BrowserRequesterKind = 'owner' | 'orchestrator' | 'subagent';

@@ -1,4 +1,4 @@
-import type { ModelGateway } from '../gateway.js';
+import { routeFor, type ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
@@ -57,6 +57,10 @@ export class ProjectOrchestrator {
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
+    // The owner's model choice for this project, resolved per tier: the turn itself runs on the
+    // orchestrator tier, and everything it delegates runs on the worker one.
+    const orchestratorRoute = routeFor(manifest.modelPolicy, 'orchestrator');
+    const workerRoute = routeFor(manifest.modelPolicy, 'worker');
 
     const result = await loop.run({
       kind: 'orchestrator',
@@ -70,9 +74,10 @@ export class ProjectOrchestrator {
         ...hubTools(),
         ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
-        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external, onBusy }),
+        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external, onBusy, ...(workerRoute ? { route: workerRoute } : {}) }),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
+      ...(orchestratorRoute ? { route: orchestratorRoute } : {}),
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
     });

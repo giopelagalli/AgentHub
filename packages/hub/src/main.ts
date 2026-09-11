@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { optionsFromEnv } from './options.js';
 import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL } from './providers/anthropic.js';
+import { DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL, DEFAULT_FIREWORKS_WORKER_MODEL } from './providers/fireworks.js';
 import { createHub } from './server.js';
 import { GrammyPort } from './telegram/grammy-port.js';
 
@@ -22,6 +23,13 @@ const cloud = options.cloud?.anthropic;
 if (cloud) {
   const short = (model: string) => model.replace(/^claude-/, '');
   console.log(`[hub] cloud tier: anthropic (${short(cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL)} / ${short(cloud.workerModel ?? DEFAULT_WORKER_MODEL)})`);
+}
+
+const fireworks = options.cloud?.fireworks;
+if (fireworks) {
+  const short = (model: string) => model.slice(model.lastIndexOf('/') + 1);
+  const key = process.env.FIREWORKS_API_KEY ? '' : ' — FIREWORKS_API_KEY is not set, so it will be skipped';
+  console.log(`[hub] cloud tier: fireworks (${short(fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL)} / ${short(fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL)})${key}`);
 }
 
 const hub = createHub({ ...options, uiDist });

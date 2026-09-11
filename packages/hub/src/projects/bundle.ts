@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { Priority, TeamMember } from '@agenthub/shared';
+import type { ModelPolicy, Priority, TeamMember } from '@agenthub/shared';
 import { newTeamMember, validateBriefing, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
 const CONTEXT_PACK_LIMIT = 12000;
@@ -249,6 +249,15 @@ export class ProjectBundle {
   async setPriority(priority: Priority): Promise<void> {
     const m = await this.manifest();
     m.priority = priority;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /** The owner's model choice for this project; `undefined` clears it back to the hub default. */
+  async setModelPolicy(policy: ModelPolicy | undefined): Promise<void> {
+    const m = await this.manifest();
+    if (policy) m.modelPolicy = policy;
+    else delete m.modelPolicy;
     m.updatedAt = Date.now();
     await this.writeManifest(m);
   }

@@ -1,5 +1,5 @@
 import type { ChatMessage, ChatResult, Tier } from '@agenthub/shared';
-import type { ModelGateway } from '../gateway.js';
+import type { ModelGateway, Route } from '../gateway.js';
 import { runToolCall, type Tool, type ToolContext } from './tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from './transcript.js';
 
@@ -23,6 +23,8 @@ export interface AgentRunOptions {
   /** Called with true when a roster member's run starts and false when it ends, for a "working" dot. */
   onBusy?: (busy: boolean) => void;
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
+  /** Which model serves this run's tier — a project's `modelPolicy`, resolved by `routeFor`. */
+  route?: Route;
   maxToolCalls: number;
   signal?: AbortSignal;
   onToken?: (t: string) => void;
@@ -86,6 +88,7 @@ export class AgentLoop {
           onToken: opts.onToken,
           signal: opts.signal,
           ...(toolDefs.length ? { tools: toolDefs } : {}),
+          ...(opts.route ? { route: opts.route } : {}),
         });
       } catch (err) {
         const aborted = opts.signal?.aborted || (err instanceof Error && err.name === 'AbortError');

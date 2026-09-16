@@ -28,6 +28,11 @@ export interface ChatTarget {
   pendingBase?: string;
   /** The "What they're doing" section; omitted for the assistant, which isn't on any roster. */
   activity?: ChatActivity;
+  /**
+   * Called once a reply has finished streaming. The document tabs use it to re-read the PRD,
+   * roadmap or docs the agent has just edited; an aborted send (the drawer closed) doesn't fire.
+   */
+  onReply?: () => void;
 }
 
 interface PendingAction {
@@ -319,6 +324,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     } finally {
       pending.delete(controller);
       reply.parentElement?.classList.remove('chat__msg--typing');
+      if (!controller.signal.aborted) target.onReply?.();
       // Don't steal focus back if the reader clicked into something else.
       if (panel.isConnected && pending.size === 0 && wasOurs) input.focus();
     }

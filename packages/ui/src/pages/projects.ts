@@ -1,12 +1,21 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type HubState, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { avatarSvg } from '../avatars.js';
+import { button, el } from '../dom.js';
 import { modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../models.js';
 import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
 import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
+import { openProjectWizard } from '../panels/wizard.js';
 import type { Store, UiState } from '../store.js';
+import { activeTab, stepTab, tabModel, type TabId } from '../tabs.js';
 import { toast } from '../toast.js';
+import { mountDocs } from '../views/docs.js';
+import type { ViewContext } from '../views/parts.js';
+import { mountPrd } from '../views/prd.js';
+import { mountRoadmap } from '../views/roadmap.js';
+
+export { button, el };
 
 const PRIORITIES = Object.keys(PRIORITY_RANK) as Priority[];
 
@@ -28,15 +37,17 @@ export function filterProjects(projects: ProjectManifest[], query: string): Proj
 
 /**
  * Everything that decides what the projects page looks like, short of the roster itself: project
- * selection, who's chatting, and each project's own fields — including `updatedAt`, so a hire, a
- * removal, or a turn (each of which touches a project without necessarily changing its title, status
- * or priority) still changes the signature and triggers a fresh render and roster reload.
+ * selection, which tab it is open on, who's chatting, and each project's own fields — including
+ * `updatedAt`, so a hire, a removal, or a turn (each of which touches a project without necessarily
+ * changing its title, status or priority) still changes the signature and triggers a fresh render
+ * and roster reload.
  */
 export function projectsSignature(state: UiState): string {
   const projects = state.hub?.projects ?? [];
   const current = projects.find((p) => p.slug === state.project);
   return [
     state.project,
+    activeTab(state.projectTabs, state.project),
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),
     projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}`).join('|'),
@@ -49,21 +60,6 @@ export function stepSelection(projects: ProjectManifest[], slug: string | null, 
   const at = projects.findIndex((p) => p.slug === slug);
   if (at < 0) return projects[0].slug;
   return projects[Math.min(projects.length - 1, Math.max(0, at + step))].slug;
-}
-
-export function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K, className?: string, text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-export function button(label: string, className = 'btn'): HTMLButtonElement {
-  const node = el('button', className, label);
-  node.type = 'button';
-  return node;
 }
 
 function selectBox(options: readonly string[], value: string): HTMLSelectElement {
@@ -269,21 +265,37 @@ function hireForm(slug: string, onHired: () => void): HTMLFormElement {
   return form;
 }
 
+/** The three document tabs; Team is the org chart, which this page draws itself. */
+const VIEWS: Record<Exclude<TabId, 'team'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
+  prd: mountPrd,
+  roadmap: mountRoadmap,
+  docs: mountDocs,
+};
+
 /**
- * The projects page: the list on the left, the selected project's org chart on
- * the right, and a chat drawer over the lot when a card is clicked.
+ * The projects page: the list on the left, and on the right the selected project — its header, a
+ * tab strip, and whichever of Team, PRD, Roadmap and Docs is open under it. A chat drawer opens
+ * over the lot, from an org-chart card or from a document tab's "Chat to adjust".
  */
 export function mountProjects(host: HTMLElement, store: Store): () => void {
   const page = el('div', 'projects');
 
   const listPane = el('section', 'list');
+  const create = el('button', 'btn btn--primary list__new', 'New project');
+  create.type = 'button';
   const search = el('input', 'input list__search');
   search.type = 'search';
   search.placeholder = 'Search projects';
   const rows = el('div', 'list__rows');
-  listPane.append(search, rows);
+  listPane.append(create, search, rows);
 
   const detail = el('section', 'detail');
+  const headBox = el('header', 'detail__head');
+  const tabsBox = el('div', 'tabs');
+  tabsBox.setAttribute('role', 'tablist');
+  tabsBox.setAttribute('aria-label', 'Project views');
+  const bodyBox = el('div', 'detail__body');
+  detail.append(headBox, tabsBox, bodyBox);
   page.append(listPane, detail);
   host.appendChild(page);
 
@@ -305,6 +317,10 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   let hiring = false;
   /** Bumped per fetch so a slow roster reply for a project we've left is dropped. */
   let rosterToken = 0;
+  /** The document tab on screen, kept across re-renders so it isn't refetched on every hub tick. */
+  let tabView: { slug: string; tab: TabId; dispose: () => void } | null = null;
+  /** Questions the wizard's draft left open, handed to the PRD tab the first time it mounts. */
+  let seedQuestions: string[] = [];
 
   const projectsOf = (state: UiState): ProjectManifest[] => state.hub?.projects ?? [];
   const selected = (state: UiState): ProjectManifest | null =>
@@ -369,6 +385,33 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       .catch((error: unknown) => toast(`Could not remove: ${String(error)}`, 'error'));
   };
 
+  const setTab = (slug: string, tab: TabId): void => {
+    store.dispatch({ type: 'set-project-tab', slug, tab });
+  };
+
+  /**
+   * A project the hub has only just been told about isn't in the pushed state yet, so pull it
+   * before selecting — otherwise the next push would find the slug unknown and move the selection
+   * back to the top of the list.
+   */
+  const openNewProject = (slug: string, questions: string[]): void => {
+    seedQuestions = questions;
+    void getJson<HubState>('/api/state')
+      .then((state) => store.dispatch({ type: 'hub-state', state }))
+      .catch(() => { /* the socket will bring it along in a moment */ })
+      .finally(() => {
+        store.dispatch({ type: 'set-project', slug });
+        setTab(slug, 'prd');
+        toast(questions.length
+          ? `PRD drafted — ${questions.length} open question${questions.length === 1 ? '' : 's'}`
+          : 'PRD drafted.');
+      });
+  };
+
+  create.addEventListener('click', () => {
+    openProjectWizard(document.body, { onDone: openNewProject });
+  });
+
   function renderList(state: UiState): void {
     const matches = filterProjects(projectsOf(state), search.value);
     rows.replaceChildren();
@@ -389,22 +432,16 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     }
   }
 
-  function renderDetail(state: UiState): void {
-    const project = selected(state);
-    detail.replaceChildren();
-    if (!project) {
-      detail.appendChild(el('p', 'empty', state.hub ? 'No projects yet.' : 'Waiting for the hub…'));
-      return;
-    }
-
-    const head = el('header', 'detail__head');
+  /** The header row: what the project is, and the levers that apply on every tab. */
+  function renderHead(project: ProjectManifest): void {
+    headBox.replaceChildren();
     const line = el('div', 'detail__title');
     line.append(
       el('h1', undefined, project.title),
       el('span', `pill pill--${project.status}`, project.status),
       el('span', 'pill pill--models', policyPillText(project.modelPolicy)),
     );
-    head.append(line, el('p', 'detail__intent', project.intent));
+    headBox.append(line, el('p', 'detail__intent', project.intent));
 
     const controls = el('div', 'actions');
     controls.appendChild(priorityPicker(project.slug, project.priority));
@@ -444,15 +481,38 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     });
 
     controls.append(toggle, turn, hire);
-    head.appendChild(controls);
+    headBox.appendChild(controls);
     if (hiring) {
-      head.appendChild(hireForm(project.slug, () => {
+      headBox.appendChild(hireForm(project.slug, () => {
         hiring = false;
         loadRoster(project.slug);
       }));
     }
-    detail.appendChild(head);
+  }
 
+  /** The tab strip: click, or ←/→ while the focus is on it. */
+  function renderTabs(project: ProjectManifest, tab: TabId): void {
+    tabsBox.replaceChildren();
+    for (const entry of tabModel(tab)) {
+      const node = button(entry.label, entry.current ? 'tab tab--on' : 'tab');
+      node.setAttribute('role', 'tab');
+      node.setAttribute('aria-selected', String(entry.current));
+      node.tabIndex = entry.current ? 0 : -1;
+      node.addEventListener('click', () => setTab(project.slug, entry.id));
+      node.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        event.stopPropagation();
+        const next = stepTab(tab, event.key === 'ArrowRight' ? 1 : -1);
+        setTab(project.slug, next);
+        tabsBox.querySelector<HTMLElement>('.tab--on')?.focus();
+      });
+      tabsBox.appendChild(node);
+    }
+  }
+
+  /** The org chart, which is what the Team tab is. */
+  function orgChart(project: ProjectManifest, state: UiState): HTMLElement {
     const chatting = new Set(
       [...state.projectBusy]
         .filter((key) => key.startsWith(`${project.slug}:`))
@@ -465,7 +525,50 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         ? orgTierNode(tier, (card) => openCard(project.slug, card), (card) => removeCard(project.slug, card))
         : el('p', 'empty', EMPLOYEES_EMPTY[rosterState]));
     }
-    detail.appendChild(chart);
+    return chart;
+  }
+
+  const dropTabView = (): void => {
+    tabView?.dispose();
+    tabView = null;
+  };
+
+  /**
+   * The tab body. Team is redrawn on every render because the roster and who's chatting move under
+   * it; a document tab owns its own element and is left alone until the project or the tab changes,
+   * so a hub tick doesn't throw away a half-read page or an open editor.
+   */
+  function renderBody(project: ProjectManifest, tab: TabId, state: UiState): void {
+    if (tab === 'team') {
+      dropTabView();
+      bodyBox.replaceChildren(orgChart(project, state));
+      return;
+    }
+    if (tabView && tabView.slug === project.slug && tabView.tab === tab) return;
+    dropTabView();
+    bodyBox.replaceChildren();
+    const ctx: ViewContext = { slug: project.slug, title: project.title, openDrawer };
+    const seed = tab === 'prd' ? seedQuestions : [];
+    seedQuestions = [];
+    tabView = { slug: project.slug, tab, dispose: VIEWS[tab](bodyBox, ctx, seed) };
+  }
+
+  function renderDetail(state: UiState): void {
+    const project = selected(state);
+    if (!project) {
+      dropTabView();
+      headBox.replaceChildren();
+      tabsBox.replaceChildren();
+      bodyBox.replaceChildren(el(
+        'p', 'empty',
+        state.hub ? (state.project ? `Opening ${state.project}…` : 'No projects yet — New project starts one.') : 'Waiting for the hub…',
+      ));
+      return;
+    }
+    const tab = activeTab(state.projectTabs, project.slug);
+    renderHead(project);
+    renderTabs(project, tab);
+    renderBody(project, tab, state);
   }
 
   let last = '';
@@ -510,6 +613,10 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   const onKey = (event: KeyboardEvent): void => {
     if (typing() || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    // Inside the tab strip the same two keys walk the tabs, and inside a drawer or the wizard they
+    // belong to whatever is focused there.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.closest('.tabs, .drawer, .modal')) return;
     const state = store.getState();
     const matches = filterProjects(projectsOf(state), search.value);
     const next = stepSelection(matches, state.project, event.key === 'ArrowRight' ? 1 : -1);
@@ -524,6 +631,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     unsubscribe();
     window.removeEventListener('keydown', onKey);
     closeDrawer?.();
+    dropTabView();
     rosterToken++;
     page.remove();
   };

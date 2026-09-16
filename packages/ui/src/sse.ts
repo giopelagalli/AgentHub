@@ -6,6 +6,8 @@ export interface SseEvent {
   error?: string;
   /** Outward actions the assistant proposed in this reply; they run only once confirmed. */
   pending?: { id: string; description: string }[];
+  /** What a PRD draft still wants answered; only the drafting routes send it. */
+  questions?: string[];
 }
 
 const DATA_LINE = /^data: (\{.*\})$/m;

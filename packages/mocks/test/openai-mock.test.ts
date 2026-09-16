@@ -71,7 +71,14 @@ describe('mock openai server', () => {
     app = createMockOpenAI();
     const res = await app.inject({
       method: 'POST', url: '/v1/chat/completions',
-      payload: { model: 'mock-model', messages: [{ role: 'user', content: 'hi' }, { role: 'tool', tool_call_id: 'call_0', content: 'file contents' }] },
+      payload: {
+        model: 'mock-model',
+        messages: [
+          { role: 'user', content: 'hi' },
+          { role: 'assistant', content: null, tool_calls: [{ id: 'call_0', type: 'function', function: { name: 'read_file', arguments: '{}' } }] },
+          { role: 'tool', tool_call_id: 'call_0', content: 'file contents' },
+        ],
+      },
     });
     expect(res.json().choices[0].message.content).toBe('echo: file contents');
     expect(app.lastRequest().messages.at(-1).content).toBe('file contents');

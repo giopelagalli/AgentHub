@@ -61,6 +61,43 @@ export function toOpenAiTools(tools: ToolDef[]): unknown[] {
   }));
 }
 
+/** The OpenAI wire shape for one `tool_calls` entry — see `toOpenAiMessages`. */
+interface OpenAiToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
+
+/** The OpenAI wire shape for one outgoing message — see `toOpenAiMessages`. */
+type OpenAiMessage =
+  | { role: 'system' | 'user'; content: string }
+  | { role: 'assistant'; content: string | null; tool_calls?: OpenAiToolCall[] }
+  | { role: 'tool'; tool_call_id: string; content: string };
+
+/**
+ * Our `ChatMessage[]` → the `messages` array the OpenAI wire format defines. `system`, `user` and
+ * `tool` messages already match the wire shape; only `assistant` differs, the same envelope
+ * mismatch as `toOpenAiTools`: our `ToolCall` is `{ id, name, arguments }`, the wire wants
+ * `{ id, type: 'function', function: { name, arguments } }` with `arguments` a JSON string, and a
+ * tool-calling turn with no text must send `content: null`, not `''` — some validators reject an
+ * empty string there.
+ */
+export function toOpenAiMessages(messages: ChatMessage[]): OpenAiMessage[] {
+  return messages.map((m) => {
+    if (m.role !== 'assistant') return m;
+    const toolCalls = m.tool_calls ?? [];
+    return {
+      role: 'assistant',
+      content: toolCalls.length && !m.content ? null : m.content,
+      ...(toolCalls.length
+        ? {
+            tool_calls: toolCalls.map((tc) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: typeof tc.arguments === 'string' ? tc.arguments : JSON.stringify(tc.arguments) },
+            })),
+          }
+        : {}),
+    };
+  });
+}
+
 /** A JSON-Schema object shaped so a strict validator always accepts it as an object schema. */
 function toParameterSchema(parameters: Record<string, unknown> | undefined): Record<string, unknown> {
   const properties =
@@ -271,7 +308,7 @@ export class ModelGateway {
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ model, messages, stream: true, ...(tools ? { tools: toOpenAiTools(tools) } : {}) }),
+          body: JSON.stringify({ model, messages: toOpenAiMessages(messages), stream: true, ...(tools ? { tools: toOpenAiTools(tools) } : {}) }),
           signal,
         });
         if (!res.ok) {

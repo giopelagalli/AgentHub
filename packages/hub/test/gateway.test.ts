@@ -2,10 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createMockOpenAI } from '@agenthub/mocks';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { createServer } from 'node:net';
-import type { ToolDef } from '@agenthub/shared';
+import type { ChatMessage, ToolDef } from '@agenthub/shared';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
-import { ModelGateway } from '../src/gateway.js';
+import { ModelGateway, toOpenAiMessages } from '../src/gateway.js';
 
 // Binds an ephemeral port and closes it immediately, yielding a URL that reliably
 // rejects with ECONNREFUSED — used to simulate an unreachable endpoint.
@@ -300,5 +300,41 @@ describe('ModelGateway upstream errors', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('toOpenAiMessages', () => {
+  it('wraps an assistant tool_calls entry in the OpenAI function envelope with stringified arguments', () => {
+    const messages: ChatMessage[] = [
+      { role: 'assistant', content: null, tool_calls: [{ id: 'call_0', name: 'read_file', arguments: '{"path":"."}' }] },
+    ];
+    expect(toOpenAiMessages(messages)).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'call_0', type: 'function', function: { name: 'read_file', arguments: '{"path":"."}' } }],
+      },
+    ]);
+  });
+
+  it('sends content: null, not "", for a tool-calling turn with no text', () => {
+    const messages: ChatMessage[] = [
+      { role: 'assistant', content: '', tool_calls: [{ id: 'call_0', name: 'read_file', arguments: '{}' }] },
+    ];
+    expect(toOpenAiMessages(messages)[0]).toMatchObject({ content: null });
+  });
+
+  it('passes system, user and tool messages through unchanged', () => {
+    const messages: ChatMessage[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'tool', tool_call_id: 'call_0', content: 'result' },
+    ];
+    expect(toOpenAiMessages(messages)).toEqual(messages);
+  });
+
+  it('leaves a plain-text assistant message untouched', () => {
+    const messages: ChatMessage[] = [{ role: 'assistant', content: 'hello' }];
+    expect(toOpenAiMessages(messages)).toEqual(messages);
   });
 });

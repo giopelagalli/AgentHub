@@ -7,6 +7,8 @@ export interface MockOptions {
   tokenDelayMs?: number;
   replyFor?: (lastUser: string) => string;
   script?: ScriptStep[];
+  /** Validate requests like a strict OpenAI-compatible provider (see `validationError`). Default true. */
+  strict?: boolean;
 }
 
 export interface MockOpenAI extends FastifyInstance {
@@ -14,9 +16,40 @@ export interface MockOpenAI extends FastifyInstance {
   requests: any[];
 }
 
-interface ChatBody { model: string; stream?: boolean; messages: { role: string; content: string | null }[]; }
+interface WireToolCall { id?: unknown; type?: unknown; function?: { name?: unknown; arguments?: unknown } }
+interface WireMessage { role: string; content?: string | null; tool_calls?: WireToolCall[]; tool_call_id?: unknown; }
+interface WireTool { type?: unknown; function?: { name?: unknown; parameters?: unknown } }
+interface ChatBody { model: string; stream?: boolean; messages: WireMessage[]; tools?: WireTool[]; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * What a strict OpenAI-compatible provider (e.g. Fireworks) rejects a request for, or null when
+ * it's clean. Exists so this mock catches the wire-format mistakes a lenient local server would
+ * silently accept — see the gateway.ts `toOpenAiMessages`/`toOpenAiTools` boundary this guards.
+ */
+function validationError(body: ChatBody): string | null {
+  for (const t of body.tools ?? []) {
+    if (t.type !== 'function' || typeof t.function?.name !== 'string' || t.function.parameters === undefined) {
+      return `invalid tools entry, expected {type:'function', function:{name, parameters}}: ${JSON.stringify(t)}`;
+    }
+  }
+  const knownToolCallIds = new Set<string>();
+  for (const m of body.messages) {
+    if (m.role === 'assistant') {
+      for (const tc of m.tool_calls ?? []) {
+        if (typeof tc.id !== 'string' || tc.type !== 'function' || typeof tc.function?.name !== 'string' || typeof tc.function?.arguments !== 'string') {
+          return `invalid assistant tool_calls entry, expected {id, type:'function', function:{name, arguments:string}}: ${JSON.stringify(tc)}`;
+        }
+        knownToolCallIds.add(tc.id);
+      }
+    }
+    if (m.role === 'tool' && (typeof m.tool_call_id !== 'string' || !knownToolCallIds.has(m.tool_call_id))) {
+      return `tool message tool_call_id does not match a preceding tool call: ${JSON.stringify(m)}`;
+    }
+  }
+  return null;
+}
 
 // Splits a JSON string into at least 2 fragments (to exercise streamed-argument
 // assembly on the consumer side); returns [text] unchanged when it can't be split.
@@ -27,7 +60,7 @@ function splitArguments(json: string): string[] {
 }
 
 export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
-  const { tokenDelayMs = 0, replyFor = (u) => `echo: ${u}`, script = [] } = opts;
+  const { tokenDelayMs = 0, replyFor = (u) => `echo: ${u}`, script = [], strict = true } = opts;
   const app = Fastify() as unknown as MockOpenAI;
   const requests: any[] = [];
   app.requests = requests;
@@ -39,6 +72,10 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
   app.post('/v1/chat/completions', async (req, reply) => {
     const body = req.body as ChatBody;
     requests.push(body);
+    if (strict) {
+      const error = validationError(body);
+      if (error) return reply.code(400).send({ error: { message: error } });
+    }
     const step = stepIndex < script.length ? script[stepIndex++] : undefined;
 
     if (step && 'toolCalls' in step) {

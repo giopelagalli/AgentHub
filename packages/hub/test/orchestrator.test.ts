@@ -173,7 +173,7 @@ describe('ProjectOrchestrator', () => {
     const workerMessages = transcript.messages(subagentSessions[0].id);
     expect(workerMessages[1]).toMatchObject({ role: 'user', content: 'summarize the repo' });
     expect(workerMessages[0].content).toContain('researcher');
-    const offered = (worker.lastRequest().tools as { name: string }[]).map((t) => t.name);
+    const offered = (worker.lastRequest().tools as { function: { name: string } }[]).map((t) => t.function.name);
     expect(offered).toEqual(workspaceTools().map((t) => t.def.name));
   });
 

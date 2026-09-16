@@ -74,7 +74,7 @@ describe('the docs persona', () => {
     const system = lastSystem(mock);
     expect(system).toContain("maintain this project's living documentation");
     expect(system).toContain('supersede it with a dated note');
-    expect(mock.lastRequest().tools.map((t: { name: string }) => t.name).sort())
+    expect(mock.lastRequest().tools.map((t: { function: { name: string } }) => t.function.name).sort())
       .toEqual(['list_dir', 'list_docs', 'read_doc', 'read_file', 'write_doc']);
   });
 

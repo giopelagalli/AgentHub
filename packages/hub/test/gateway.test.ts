@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createMockOpenAI } from '@agenthub/mocks';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { createServer } from 'node:net';
+import type { ToolDef } from '@agenthub/shared';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
@@ -206,4 +207,98 @@ describe('ModelGateway failover', () => {
   // (which suppresses failover once any token has been emitted) isn't exercised by
   // a non-abort mid-stream failure here; extending the mock with such an option was
   // out of scope for this task's file list.
+});
+
+describe('ModelGateway upstream errors', () => {
+  it('includes the upstream error body in the thrown message', async () => {
+    const bad = Fastify();
+    bad.post('/v1/chat/completions', async (_req, reply) =>
+      reply.code(400).send({
+        error: { message: "56 request validation errors: Input should be 'function', field: 'tools[0].type'" },
+      }));
+    await bad.listen({ port: 0, host: '127.0.0.1' });
+    const badUrl = `http://127.0.0.1:${(bad.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'bad', arch: 'arm64', endpoints: [{ tier: 'worker', url: badUrl, model: 'mock-model', maxStreams: 2 }] });
+      const gateway = new ModelGateway(registry);
+      const tools: ToolDef[] = [
+        { type: 'tool', name: 'list_nodes', description: 'list registered nodes', parameters: { type: 'object', properties: {}, required: [] } },
+      ];
+
+      let error: unknown;
+      try {
+        await gateway.chat('worker', [{ role: 'user', content: 'hi' }], { tools });
+      } catch (err) {
+        error = err;
+      }
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain('endpoint error 400');
+      expect((error as Error).message).toContain('request validation errors');
+    } finally {
+      await bad.close();
+    }
+  });
+
+  it('sends tools in the OpenAI function envelope a strict validator accepts', async () => {
+    type ToolEntry = {
+      type?: unknown;
+      function?: { name?: unknown; parameters?: { type?: unknown; properties?: unknown; required?: unknown } };
+    };
+    const isValidEntry = (entry: ToolEntry): boolean =>
+      entry.type === 'function' &&
+      typeof entry.function?.name === 'string' &&
+      entry.function.parameters?.type === 'object' &&
+      typeof entry.function.parameters?.properties === 'object' &&
+      entry.function.parameters?.properties !== null &&
+      !Array.isArray(entry.function.parameters?.properties) &&
+      Array.isArray(entry.function.parameters?.required);
+
+    const chatBodies: { tools?: ToolEntry[] }[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      const body = req.body as { tools?: ToolEntry[] };
+      chatBodies.push(body);
+      const invalid = (body.tools ?? []).find((t) => !isValidEntry(t));
+      if (invalid) return reply.code(400).send({ error: { message: `invalid tool entry: ${JSON.stringify(invalid)}` } });
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunk = (delta: unknown, finish: string | null) => `data: ${JSON.stringify({
+        choices: [{ index: 0, delta, finish_reason: finish }],
+      })}\n\n`;
+      reply.raw.write(chunk({ tool_calls: [{ index: 0, id: 'call_1', function: { name: 'list_nodes', arguments: '{}' } }] }, null));
+      reply.raw.write(chunk({}, 'tool_calls'));
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [{ tier: 'worker', url, model: 'mock-model', maxStreams: 2 }] });
+      const gateway = new ModelGateway(registry);
+
+      // Exercises the defects toParameterSchema must fix: an already-clean empty-object schema
+      // (list_nodes), a free-form nested property (submit_job's payload), and a schema that omits
+      // `required` entirely (read_doc).
+      const tools: ToolDef[] = [
+        { type: 'tool', name: 'list_nodes', description: 'list registered nodes', parameters: { type: 'object', properties: {}, required: [] } },
+        {
+          type: 'tool', name: 'submit_job', description: 'submit a job',
+          parameters: { type: 'object', properties: { payload: { type: 'object', description: 'free-form job payload' } }, required: ['payload'] },
+        },
+        { type: 'tool', name: 'read_doc', description: 'read a project doc', parameters: { type: 'object', properties: { slug: { type: 'string' } } } },
+      ];
+
+      const result = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], { tools });
+      expect(result.toolCalls[0].name).toBe('list_nodes');
+
+      const sent = chatBodies[0].tools!;
+      expect(sent[0].type).toBe('function');
+      const readDoc = sent.find((t) => t.function?.name === 'read_doc');
+      expect(readDoc?.function?.parameters?.required).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
 });

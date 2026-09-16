@@ -23,6 +23,56 @@ const UNHEALTHY_MS = 10_000;
 /** Anything not spoken over a local OpenAI-compatible endpoint — the Anthropic and Fireworks tiers. */
 export const isCloudEndpoint = (ep: ServingEndpoint): boolean => (ep.provider ?? 'openai') !== 'openai';
 
+/** How much of a rejected response body is quoted back, and how long reading it may take. */
+const ERROR_BODY_LIMIT = 2000;
+const ERROR_BODY_TIMEOUT_MS = 2000;
+
+/**
+ * The upstream's own explanation of a rejected request, bounded and best-effort: a body that is
+ * slow, huge or unreadable costs the turn nothing beyond `ERROR_BODY_TIMEOUT_MS` and yields ''.
+ */
+async function readErrorBody(res: Response): Promise<string> {
+  if (!res.body) return '';
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), ERROR_BODY_TIMEOUT_MS);
+    });
+    const text = await Promise.race([res.text(), timeout]);
+    return text.slice(0, ERROR_BODY_LIMIT).trim();
+  } catch {
+    await res.body?.cancel().catch(() => {});
+    return '';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Our `ToolDef[]` → the `tools` array the OpenAI wire format defines. The two differ in the
+ * envelope: a ToolDef carries `type: 'tool'` with the name beside it, while the wire wants
+ * `{ type: 'function', function: { ... } }`. Fireworks validates this strictly and rejects
+ * anything else with a 400; local servers were simply lenient about it.
+ */
+export function toOpenAiTools(tools: ToolDef[]): unknown[] {
+  return tools.map((t) => ({
+    type: 'function',
+    function: { name: t.name, description: t.description, parameters: toParameterSchema(t.parameters) },
+  }));
+}
+
+/** A JSON-Schema object shaped so a strict validator always accepts it as an object schema. */
+function toParameterSchema(parameters: Record<string, unknown> | undefined): Record<string, unknown> {
+  const properties =
+    parameters?.properties && typeof parameters.properties === 'object' && !Array.isArray(parameters.properties)
+      ? parameters.properties
+      : {};
+  const required = Array.isArray(parameters?.required)
+    ? parameters.required.filter((k): k is string => typeof k === 'string' && k in properties)
+    : [];
+  return { ...parameters, type: 'object', properties, required };
+}
+
 /** The tier-specific slice of a project's policy, or undefined when it has none (i.e. `auto`). */
 export function routeFor(policy: ModelPolicy | undefined, tier: Tier): Route | undefined {
   if (!policy) return undefined;
@@ -221,14 +271,14 @@ export class ModelGateway {
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ model, messages, stream: true, ...(tools ? { tools } : {}) }),
+          body: JSON.stringify({ model, messages, stream: true, ...(tools ? { tools: toOpenAiTools(tools) } : {}) }),
           signal,
         });
         if (!res.ok) {
-          await res.body?.cancel().catch(() => {});
+          const detail = await readErrorBody(res);
           // 429 is the cloud saying "later", not "never": retryable like the Anthropic path's.
           if (res.status < 500 && res.status !== 429) nonRetryable = true;
-          throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`);
+          throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}${detail ? `: ${detail}` : ''}`);
         }
         if (!res.body) { nonRetryable = true; throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`); }
         let full = '';

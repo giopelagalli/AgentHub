@@ -1,5 +1,6 @@
 import { button, el } from '../dom.js';
 import { openChat } from '../panels/chat.js';
+import type { TabId } from '../tabs.js';
 
 /** What a document tab needs from the page it lives in. */
 export interface ViewContext {
@@ -7,6 +8,8 @@ export interface ViewContext {
   title: string;
   /** Opens a drawer, closing whichever one is already open. */
   openDrawer(open: (into: HTMLElement) => () => void): void;
+  /** Switches the project detail pane to another tab, e.g. an empty state pointing at the PRD. */
+  switchTab(tab: TabId): void;
 }
 
 /** The three document agents a tab can talk to; each is a `who` on the project's chat routes. */

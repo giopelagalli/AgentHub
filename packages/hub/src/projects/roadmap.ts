@@ -8,6 +8,12 @@ export function currentMilestoneId(milestones: Milestone[]): string | null {
   return milestones.find((m) => m.status !== 'done')?.id ?? null;
 }
 
+// Milestone ids are positional, not stable: `write_roadmap` (below, via `normalizeMilestones`)
+// renumbers m1..mN from list order on every persona rewrite, while `moveMilestone` reorders the
+// list without renumbering it. A `dependsOn` value captured before either call is not guaranteed
+// to still point at the same milestone afterwards — don't rely on it surviving until milestones
+// get an id of their own that isn't just their position.
+
 /** Moves one milestone one place up or down. Already at the edge (or unknown) leaves the order alone. */
 export function moveMilestone(milestones: Milestone[], id: string, direction: 'up' | 'down'): Milestone[] {
   const from = milestones.findIndex((m) => m.id === id);

@@ -547,7 +547,10 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     if (tabView && tabView.slug === project.slug && tabView.tab === tab) return;
     dropTabView();
     bodyBox.replaceChildren();
-    const ctx: ViewContext = { slug: project.slug, title: project.title, openDrawer };
+    const ctx: ViewContext = {
+      slug: project.slug, title: project.title, openDrawer,
+      switchTab: (nextTab) => setTab(project.slug, nextTab),
+    };
     const seed = tab === 'prd' ? seedQuestions : [];
     seedQuestions = [];
     tabView = { slug: project.slug, tab, dispose: VIEWS[tab](bodyBox, ctx, seed) };

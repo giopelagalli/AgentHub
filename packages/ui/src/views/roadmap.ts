@@ -1,6 +1,7 @@
 import { getJson, sendJson } from '../api.js';
 import { button, el } from '../dom.js';
-import { MILESTONE_STATUSES, roadmapRows, type MilestoneStatus, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
+import type { PrdDoc } from '../prd.js';
+import { MILESTONE_STATUSES, roadmapEmptyState, roadmapRows, type MilestoneStatus, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
 import { streamPost } from '../stream.js';
 import { toast } from '../toast.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
@@ -11,6 +12,8 @@ import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
  */
 export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
   let doc: RoadmapDoc | null = null;
+  /** Whether the PRD exists yet, for the empty state; unknown defaults to true (today's behavior). */
+  let prdDrafted = true;
   let state: 'loading' | 'ready' | 'failed' = 'loading';
   let failure = '';
   let token = 0;
@@ -21,10 +24,15 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
   const load = (): void => {
     const mine = ++token;
     if (!doc) state = 'loading';
-    void getJson<RoadmapDoc>(`/api/projects/${ctx.slug}/roadmap`)
-      .then((next) => {
+    void Promise.all([
+      getJson<RoadmapDoc>(`/api/projects/${ctx.slug}/roadmap`),
+      // The PRD only decides what the empty state offers; a failed fetch shouldn't fail the roadmap.
+      getJson<PrdDoc>(`/api/projects/${ctx.slug}/prd`).catch(() => null),
+    ])
+      .then(([next, prd]) => {
         if (mine !== token || !alive) return;
         doc = next;
+        prdDrafted = prd?.drafted ?? true;
         state = 'ready';
         render();
       })
@@ -149,14 +157,15 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
 
     const rows = roadmapRows(doc);
     if (!rows.length) {
+      const info = roadmapEmptyState(prdDrafted);
       const empty = el('div', 'blank');
       empty.append(
-        el('p', 'blank__line', 'No roadmap yet — generate from the PRD.'),
-        el('p', 'blank__hint', 'The planner reads the PRD and proposes the milestones in order.'),
+        el('p', 'blank__line', info.line),
+        el('p', 'blank__hint', info.hint),
       );
-      const start = el('button', 'btn btn--primary', 'Generate roadmap');
+      const start = el('button', 'btn btn--primary', info.action === 'generate' ? 'Generate roadmap' : 'Go to the PRD');
       start.type = 'button';
-      start.addEventListener('click', generate);
+      start.addEventListener('click', info.action === 'generate' ? generate : () => ctx.switchTab('prd'));
       empty.appendChild(start);
       host.appendChild(empty);
       return;

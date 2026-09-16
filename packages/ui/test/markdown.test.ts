@@ -38,6 +38,17 @@ describe('renderMarkdown — hostile input', () => {
     }
   });
 
+  it('refuses a backslash-prefixed path, which a browser also resolves off-site', () => {
+    for (const url of ['/\\evil.com', '/\\\\evil.com']) {
+      const html = renderMarkdown(`[a](${url})`);
+      expect(html, url).not.toContain('<a ');
+    }
+  });
+
+  it('still links an ordinary site-absolute path', () => {
+    expect(renderMarkdown('[a](/ok/path)')).toContain('href="/ok/path"');
+  });
+
   it('cannot be talked out of the href quoting by a quote in the url', () => {
     const html = renderMarkdown('[x](/a" onmouseover="alert(1))');
     expect(html).not.toContain('onmouseover="alert');

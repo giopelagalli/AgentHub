@@ -37,6 +37,31 @@ function status(value: string | undefined): MilestoneStatus {
     : 'planned';
 }
 
+export interface RoadmapEmptyState {
+  line: string;
+  hint: string;
+  /** `generate` runs the planner; `prd` sends the owner to the tab that has to exist first. */
+  action: 'generate' | 'prd';
+}
+
+/**
+ * What the empty roadmap tab says and offers. Generating reads the PRD, so offering it before a
+ * PRD is drafted just invites a 400 — point at the PRD tab instead until one exists.
+ */
+export function roadmapEmptyState(prdDrafted: boolean): RoadmapEmptyState {
+  return prdDrafted
+    ? {
+      line: 'No roadmap yet — generate from the PRD.',
+      hint: 'The planner reads the PRD and proposes the milestones in order.',
+      action: 'generate',
+    }
+    : {
+      line: 'The roadmap comes from the PRD.',
+      hint: 'Draft the PRD first — the planner reads it to propose the milestones.',
+      action: 'prd',
+    };
+}
+
 /** The rows the tab draws, in the order the hub gave them. */
 export function roadmapRows(doc: RoadmapDoc | null): RoadmapRow[] {
   const milestones = doc?.milestones ?? [];

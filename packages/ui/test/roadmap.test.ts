@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { roadmapRows, type Milestone, type RoadmapDoc } from '../src/roadmap.js';
+import { roadmapEmptyState, roadmapRows, type Milestone, type RoadmapDoc } from '../src/roadmap.js';
 
 function milestone(id: string, overrides: Partial<Milestone> = {}): Milestone {
   return { id, title: id, summary: `${id} summary`, status: 'planned', ...overrides };
@@ -53,5 +53,15 @@ describe('roadmapRows', () => {
   it('has no rows for an empty or missing roadmap', () => {
     expect(roadmapRows({ milestones: [] })).toEqual([]);
     expect(roadmapRows(null)).toEqual([]);
+  });
+});
+
+describe('roadmapEmptyState', () => {
+  it('offers to generate once the PRD is drafted', () => {
+    expect(roadmapEmptyState(true).action).toBe('generate');
+  });
+
+  it('points at the PRD tab instead, when there is no PRD yet to generate from', () => {
+    expect(roadmapEmptyState(false).action).toBe('prd');
   });
 });

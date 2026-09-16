@@ -1,4 +1,5 @@
-import { sendJson } from '../api.js';
+import type { ProjectManifest } from '@agenthub/shared';
+import { getJson, sendJson } from '../api.js';
 import { deriveSlug, intentFrom, slugProblem, type Source } from '../newproject.js';
 import { streamPost } from '../stream.js';
 
@@ -274,6 +275,25 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   pick('idea');
   host.appendChild(scrim);
   (options.existing ? idea : name).focus();
+
+  // A re-draft for a project that already has an intake: prefill it, so a failed first draft
+  // doesn't mean re-pasting the owner's idea or PRD.
+  if (options.existing) {
+    const slugValue = options.existing.slug;
+    void getJson<{ manifest: ProjectManifest }>(`/api/projects/${slugValue}`)
+      .then(({ manifest }) => {
+        if (closed) return;
+        const intake = manifest.intake;
+        if (intake?.prd) {
+          prd.value = intake.prd;
+          pick('prd');
+        } else if (intake?.idea) {
+          idea.value = intake.idea;
+          pick('idea');
+        }
+      })
+      .catch(() => { /* no intake to prefill; the blank form still works */ });
+  }
 
   return dispose;
 }

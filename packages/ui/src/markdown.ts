@@ -21,11 +21,12 @@ export function escapeHtml(src: string): string {
 }
 
 /**
- * The only link targets that become an `<a>`: the web, this page, or this site. The `(?!\/)` is
- * the difference between a site-absolute path and `//somewhere-else`, which is a link off-site
- * wearing a path's clothes.
+ * The only link targets that become an `<a>`: the web, this page, or this site. The
+ * `(?![\/\\])` is the difference between a site-absolute path and `//somewhere-else` or
+ * `/\somewhere-else` — both of which a browser resolves as a link off-site wearing a path's
+ * clothes, since a backslash after a leading slash is treated the same as another slash.
  */
-const SAFE_URL = /^(?:https?:|#|\/(?!\/))/;
+const SAFE_URL = /^(?:https?:|#|\/(?![\/\\]))/;
 
 /**
  * The `id` a heading gets, and the anchor an audit chip scrolls to. Entities are dropped rather

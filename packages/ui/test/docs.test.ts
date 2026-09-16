@@ -5,7 +5,7 @@ describe('docsEntries', () => {
   it('puts the index first, the pages next, and pins the decision log last', () => {
     const entries = docsEntries({
       index: '# Overview',
-      pages: [{ page: 'architecture.md', title: 'Architecture' }, { page: 'api.md', title: 'API' }],
+      pages: [{ slug: 'architecture', title: 'Architecture' }, { slug: 'api', title: 'API' }],
       decisions: '# Decisions',
     });
     expect(entries.map((e) => e.kind)).toEqual(['index', 'page', 'page', 'decisions']);
@@ -14,7 +14,7 @@ describe('docsEntries', () => {
 
   it('carries the markdown it already has, and leaves a page to be fetched', () => {
     const [index, page, decisions] = docsEntries({
-      index: '# Overview', pages: [{ page: 'a.md', title: 'A' }], decisions: '',
+      index: '# Overview', pages: [{ slug: 'a', title: 'A' }], decisions: '',
     });
     expect(index.markdown).toBe('# Overview');
     expect(page.markdown).toBeUndefined();
@@ -27,9 +27,9 @@ describe('docsEntries', () => {
 
   it('names a page the hub gave no title for, and drops one with no path', () => {
     const entries = docsEntries({
-      pages: [{ page: 'notes.md', title: '  ' }, { page: '', title: 'Nowhere' }],
+      pages: [{ slug: 'notes', title: '  ' }, { slug: '', title: 'Nowhere' }],
     });
-    expect(entries.filter((e) => e.kind === 'page').map((e) => e.title)).toEqual(['notes.md']);
+    expect(entries.filter((e) => e.kind === 'page').map((e) => e.title)).toEqual(['notes']);
   });
 
   it('has no list at all before the first answer arrives', () => {

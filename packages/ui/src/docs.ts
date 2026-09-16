@@ -7,9 +7,10 @@
  */
 
 export interface DocsPageRef {
-  /** Path segment for `GET .../docs/:page`. */
-  page: string;
+  /** Path segment for `GET .../docs/:slug`, and the page's identity in the list. */
+  slug: string;
   title: string;
+  updatedAt?: number;
 }
 
 export interface DocsIndex {
@@ -21,13 +22,13 @@ export interface DocsIndex {
 }
 
 export interface DocsPage {
-  page: string;
+  slug: string;
   title: string;
   markdown: string;
 }
 
 export interface DocsEntry {
-  /** Unique within the list; also the `page` to fetch for `kind: 'page'`. */
+  /** Unique within the list; also the page slug to fetch for `kind: 'page'`. */
   key: string;
   title: string;
   kind: 'index' | 'page' | 'decisions';
@@ -43,8 +44,8 @@ export function docsEntries(doc: DocsIndex | null): DocsEntry[] {
     entries.push({ key: '__index', title: 'Overview', kind: 'index', markdown: doc.index });
   }
   for (const page of doc.pages ?? []) {
-    if (!page?.page) continue;
-    entries.push({ key: page.page, title: page.title?.trim() || page.page, kind: 'page' });
+    if (!page?.slug) continue;
+    entries.push({ key: page.slug, title: page.title?.trim() || page.slug, kind: 'page' });
   }
   entries.push({
     key: '__decisions',

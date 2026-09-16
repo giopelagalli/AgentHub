@@ -23,16 +23,16 @@ describe('deriveSlug', () => {
 
   it('never produces something the hub would reject', () => {
     const long = deriveSlug('a'.repeat(200));
-    expect(long.length).toBe(63);
+    expect(long.length).toBe(40);
     expect(SLUG_PATTERN.test(long)).toBe(true);
     // Truncation must not leave the slug ending on a dash.
-    expect(deriveSlug(`${'a'.repeat(62)} tail`)).toBe('a'.repeat(62));
+    expect(deriveSlug(`${'a'.repeat(39)} tail`)).toBe('a'.repeat(39));
   });
 });
 
 describe('slugProblem', () => {
-  it('accepts what the hub accepts', () => {
-    for (const slug of ['ab', 'acme-portal', 'a1', '2026-planning', `${'a'.repeat(63)}`]) {
+  it('accepts a subset of what the hub accepts', () => {
+    for (const slug of ['ab', 'acme-portal', 'a1', '2026-planning', 'a'.repeat(40)]) {
       expect(slugProblem(slug), slug).toBeNull();
     }
   });
@@ -40,7 +40,7 @@ describe('slugProblem', () => {
   it('rejects an empty, too-short or too-long slug', () => {
     expect(slugProblem('')).toBe('A slug is required.');
     expect(slugProblem('a')).toBe('At least 2 characters.');
-    expect(slugProblem('a'.repeat(64))).toBe('At most 63 characters.');
+    expect(slugProblem('a'.repeat(41))).toBe('At most 40 characters.');
   });
 
   it('rejects uppercase, spaces, underscores and a leading dash', () => {

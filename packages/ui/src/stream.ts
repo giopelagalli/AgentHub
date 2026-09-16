@@ -22,7 +22,13 @@ export async function streamPost(
     body: JSON.stringify(body ?? {}),
     signal,
   });
-  if (!response.ok || !response.body) throw new Error(`hub replied ${response.status}`);
+  if (!response.ok || !response.body) {
+    // A refusal arrives as JSON before the stream opens ("the PRD has not been drafted yet"), and
+    // that sentence is far more use to a reader than the status code it came with.
+    const said = await response.text().catch(() => '');
+    const reason = said.startsWith('{') ? (JSON.parse(said) as { error?: string }).error : '';
+    throw new Error(reason || `hub replied ${response.status}`);
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

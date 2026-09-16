@@ -4,10 +4,14 @@
  * list will show. Pure — the DOM lives in `panels/wizard.ts`.
  */
 
-/** What the hub accepts as a project slug: 2–63 chars, lowercase, starting on a letter or digit. */
-export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/;
+/**
+ * What this form accepts as a project slug. The hub's own rule is `^[a-z0-9-]{1,40}$`; this is a
+ * deliberately stricter subset — at least two characters and never opening on a dash — so anything
+ * the wizard lets through, the hub will take. The length cap is the hub's, not ours to relax.
+ */
+export const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,39}$/;
 
-const MAX_SLUG = 63;
+const MAX_SLUG = 40;
 /** The project list shows the intent as one line, so there is no point carrying more than this. */
 export const MAX_INTENT = 200;
 

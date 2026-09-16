@@ -3,32 +3,38 @@ import { headingId } from './markdown.js';
 /**
  * The PRD tab's wire shapes and its completeness strip. Pure — the DOM lives in `views/prd.ts`.
  *
- * The hub decides how well each section of the PRD is covered; this file turns that verdict into
- * a row of chips. Everything here tolerates a missing or half-filled `audit`, because the tab
- * still has to render when the hub answers with less than it promised.
+ * The hub grades the PRD section by section against its own fixed section list and hands back
+ * `present`/`thin` per section plus a score; this file turns that verdict into a row of chips.
+ * Everything here tolerates a missing or half-filled `audit`, because the tab still has to render
+ * when the hub answers with less than it promised.
  */
 
-/** How well one section is covered. `present` is accepted as a synonym of `filled`. */
+/** How well one section is covered, once the hub's two booleans are collapsed into one word. */
 export type SectionState = 'filled' | 'thin' | 'missing';
 
 export interface PrdAuditSection {
-  /** The heading this verdict is about, as it appears in the document. */
-  heading: string;
-  state: SectionState | 'present';
+  /** Stable key from the hub's section list (`overview`, `goals`, …). */
+  key: string;
+  /** The heading as it appears in the document — what the chip shows, and what it scrolls to. */
+  title: string;
+  present: boolean;
+  thin: boolean;
 }
 
 export interface PrdAudit {
+  sections: PrdAuditSection[];
   /** 0–100; the strip shows it on the right. */
   score: number;
-  sections: PrdAuditSection[];
+  /** Titles of the sections that are missing or thin — the same ground the chips cover. */
+  missing?: string[];
 }
 
 export interface PrdDoc {
-  /** False before anything has been drafted — the tab shows its empty state instead. */
+  /** False while the PRD is still the scaffold — the tab shows its empty state instead. */
   drafted: boolean;
   markdown: string;
   audit?: PrdAudit;
-  /** What the drafter still wants answered. */
+  /** What the drafter still wants answered; only the draft stream reports these. */
   questions?: string[];
   updatedAt?: number;
 }
@@ -57,16 +63,17 @@ export interface AuditStrip {
   scoreLabel: string;
 }
 
-function normalise(state: SectionState | 'present' | undefined): SectionState {
-  if (state === 'present' || state === 'filled') return 'filled';
-  return state === 'thin' ? 'thin' : 'missing';
+/** A section that isn't there at all reads as missing; one that is there but slight reads as thin. */
+export function sectionState(section: Pick<PrdAuditSection, 'present' | 'thin'>): SectionState {
+  if (!section.present) return 'missing';
+  return section.thin ? 'thin' : 'filled';
 }
 
 /** The completeness strip: one chip per section the hub graded, plus the score. */
 export function auditStrip(audit: PrdAudit | undefined): AuditStrip {
   const chips = (audit?.sections ?? []).map((section) => {
-    const state = normalise(section.state);
-    const heading = section.heading?.trim() || 'Untitled section';
+    const state = sectionState(section);
+    const heading = section.title?.trim() || section.key || 'Untitled section';
     return {
       heading,
       state,

@@ -1,5 +1,6 @@
 import type { HubState } from '@agenthub/shared';
 import type { PageId } from './nav.js';
+import { rememberTab, type TabId } from './tabs.js';
 
 /** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the page. */
 export interface BrowserFrame {
@@ -23,6 +24,8 @@ export interface UiState {
   page: PageId;
   /** Slug selected on the projects page; null when the hub has no project to show. */
   project: string | null;
+  /** Which tab each project was last left on, for this visit only. */
+  projectTabs: Record<string, TabId>;
   connection: 'live' | 'polling' | 'down';
   /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
   browserFrame: BrowserFrame | null;
@@ -35,6 +38,7 @@ export type StoreEvent =
   | { type: 'busy-reset' }
   | { type: 'set-page'; page: PageId }
   | { type: 'set-project'; slug: string }
+  | { type: 'set-project-tab'; slug: string; tab: TabId }
   | { type: 'browser-frame'; frame: BrowserFrame }
   | { type: 'connection'; status: UiState['connection'] };
 
@@ -45,6 +49,7 @@ export class Store {
     projectBusy: new Set(),
     page: 'projects',
     project: null,
+    projectTabs: {},
     connection: 'down',
     browserFrame: null,
   };
@@ -97,6 +102,12 @@ export class Store {
         break;
       case 'set-project':
         this.state = { ...this.state, project: event.slug };
+        break;
+      case 'set-project-tab':
+        this.state = {
+          ...this.state,
+          projectTabs: rememberTab(this.state.projectTabs, event.slug, event.tab),
+        };
         break;
       case 'browser-frame':
         this.state = { ...this.state, browserFrame: event.frame };

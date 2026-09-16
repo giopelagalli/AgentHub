@@ -264,7 +264,12 @@ p {
 .card__open:focus-visible,
 .hire__avatar:focus-visible,
 .chat__form input:focus,
-.drawer__close:focus-visible {
+.drawer__close:focus-visible,
+.tab:focus-visible,
+.chip:focus-visible,
+.docs__row:focus-visible,
+.seg__option:focus-visible,
+.callout__close:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-color: var(--accent);
@@ -281,6 +286,11 @@ p {
 .empty {
   padding: 12px 0;
   color: var(--text-mute);
+}
+
+/* A fetch that failed says so where the content would have been, in the failure colour. */
+.empty--error {
+  color: var(--red);
 }
 
 .note {
@@ -328,6 +338,16 @@ p {
 .pill--done {
   color: var(--text-mute);
   border-color: var(--line);
+}
+
+.pill--in-progress {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 28%, var(--line-lit));
+}
+
+.pill--planned {
+  color: var(--text-dim);
+  border-color: var(--line-lit);
 }
 
 /* Which models this project runs on — quieter than the status pill beside it. */
@@ -438,6 +458,10 @@ p {
   overflow-y: auto;
   background: var(--bg1);
   border-right: 1px solid var(--line);
+}
+
+.list__new {
+  width: 100%;
 }
 
 .list__search {
@@ -734,6 +758,486 @@ button.card__open:hover {
   color: var(--text);
   background: #b91c1c;
   border-color: #b91c1c;
+}
+
+/* --- project tabs --------------------------------------------------------- */
+
+/* One strip under the header, on every tab. The active tab is the only thing
+   the accent touches here; the rest is the same quiet grey as the nav. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  padding: 7px 12px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--radius) var(--radius) 0 0;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.tab--on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.detail__body {
+  min-width: 0;
+}
+
+/* --- documents ------------------------------------------------------------ */
+
+/* What this tab is, and what can be done to it — the same row on all three. */
+.doc__bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  margin-bottom: 14px;
+}
+
+.doc__label {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--text-mute);
+}
+
+/* The completeness strip: one chip per section the hub graded, score hard right.
+   Held to a measure near the document's own, so the tab reads as one column
+   rather than a band stretched across the window with the score stranded at the
+   far end — and wide enough that the score stays on the chips' last line. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  max-width: 96ch;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: var(--bg1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.chip {
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-mute);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--hover);
+}
+
+/* Covered, thin, missing: filled accent, an amber outline, and a whisper. */
+.chip--filled {
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+}
+
+.chip--thin {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
+}
+
+.chip--missing {
+  color: var(--text-mute);
+  border-style: dashed;
+}
+
+.chips__score {
+  margin-left: auto;
+  padding-left: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* The drafter's open questions, until they are waved away. */
+.callout {
+  max-width: 72ch;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  background: var(--bg1);
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--line));
+  border-left: 2px solid var(--amber);
+  border-radius: var(--radius);
+}
+
+.callout__head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.callout__head h3 {
+  color: var(--amber);
+}
+
+.callout__close {
+  margin-left: auto;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-mute);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.callout__close:hover {
+  color: var(--text);
+}
+
+.callout ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+}
+
+.callout li {
+  margin-bottom: 4px;
+}
+
+/* A tab with nothing in it yet: what is missing, why, and the one way forward. */
+.blank {
+  max-width: 60ch;
+  padding: 28px 0;
+}
+
+.blank__line {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.blank__hint {
+  margin: 6px 0 16px;
+  color: var(--text-mute);
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 96ch;
+}
+
+.editor__area {
+  min-height: 60vh;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* --- roadmap -------------------------------------------------------------- */
+
+.roadmap {
+  max-width: 96ch;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.milestone {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) max-content max-content;
+  gap: 4px 14px;
+  align-items: start;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  border-left: 2px solid transparent;
+}
+
+.milestone:last-child {
+  border-bottom: 0;
+}
+
+.milestone:hover {
+  background: var(--bg1);
+}
+
+/* The one being worked on wears the accent, the same way the selected row does. */
+.milestone--current {
+  background: var(--bg1);
+  border-left-color: var(--accent);
+}
+
+.milestone__order {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-mute);
+}
+
+.milestone__text {
+  min-width: 0;
+}
+
+.milestone__title {
+  font-size: 13px;
+}
+
+/* Two lines of the summary; the rest is the milestone's own page to open. */
+.milestone__summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-dim);
+}
+
+.milestone__meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 1px;
+}
+
+.milestone__estimate {
+  font-size: 11px;
+  color: var(--text-mute);
+  white-space: nowrap;
+}
+
+.milestone__controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.milestone__moves {
+  display: flex;
+  gap: 4px;
+}
+
+.btn--icon {
+  width: 26px;
+  padding: 4px 0;
+  line-height: 1;
+  text-align: center;
+}
+
+/* --- docs ----------------------------------------------------------------- */
+
+.docs {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 0 24px;
+  align-items: start;
+}
+
+.docs__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: 16px;
+  border-right: 1px solid var(--line);
+}
+
+.docs__row {
+  padding: 6px 10px;
+  font: inherit;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  cursor: pointer;
+}
+
+.docs__row:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.docs__row[aria-current='true'] {
+  color: var(--text);
+  background: var(--bg2);
+  border-left-color: var(--accent);
+}
+
+/* The decision log is pinned under the pages, and reads as a separate thing. */
+.docs__row--pinned {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.docs__page {
+  min-width: 0;
+}
+
+/* --- rendered markdown ---------------------------------------------------- */
+
+/* One reading measure for every document in the app. Headings are the only
+   thing that gets bigger than the interface; everything else is the same
+   13px the rest of the console is set in. */
+.md {
+  display: block;
+  max-width: 72ch;
+  color: var(--text-dim);
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  margin: 22px 0 8px;
+  color: var(--text);
+  scroll-margin-top: 16px;
+}
+
+.md h1 {
+  font-size: 17px;
+}
+
+.md h2 {
+  font-size: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md h3 {
+  font-size: 13px;
+}
+
+.md h4 {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.md p {
+  margin: 0 0 10px;
+}
+
+.md strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.md li {
+  margin-bottom: 4px;
+}
+
+.md li > ul,
+.md li > ol {
+  margin: 4px 0 0;
+}
+
+.md a {
+  color: var(--accent-hi);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.md a:hover {
+  border-bottom-color: var(--accent-hi);
+}
+
+.md code {
+  padding: 1px 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.md pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.md pre code {
+  padding: 0;
+  line-height: 1.6;
+  background: none;
+  border: 0;
+}
+
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  color: var(--text-mute);
+  border-left: 2px solid var(--line-lit);
+}
+
+.md hr {
+  height: 0;
+  margin: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.md table {
+  width: 100%;
+  margin: 0 0 12px;
+  border-collapse: collapse;
+}
+
+.md th,
+.md td {
+  padding: 6px 12px 6px 0;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+
+.md th {
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.md td {
+  color: var(--text-dim);
 }
 
 /* --- computer page -------------------------------------------------------- */
@@ -1077,6 +1581,166 @@ button.card__open:hover {
   margin: 4px 0 8px;
   padding-left: 18px;
   color: var(--text-dim);
+}
+
+/* --- modal: the New Project wizard ---------------------------------------- */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.modal__box {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 94vw);
+  max-height: min(86vh, 760px);
+  padding: 20px 22px;
+  background: var(--bg1);
+  border: 1px solid var(--line-lit);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.85);
+}
+
+.modal__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modal__head h2 {
+  font-size: 15px;
+}
+
+.modal__sub {
+  margin-top: 3px;
+  color: var(--text-mute);
+}
+
+.modal__body {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 0;
+  overflow-y: auto;
+}
+
+.modal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+/* Empty until something goes wrong, and it holds its line either way so the
+   buttons don't jump when a complaint appears. */
+.modal__error {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.5em;
+  overflow-wrap: anywhere;
+  color: transparent;
+}
+
+.modal__error--on {
+  color: var(--red);
+}
+
+.modal__note {
+  margin-bottom: 10px;
+  color: var(--text-dim);
+}
+
+.wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Name and slug share a line: they are one decision, and the card stays short. */
+.wizard__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.field__label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.field__note {
+  min-height: 1.4em;
+  font-size: 11px;
+  color: var(--amber);
+}
+
+/* Two mutually exclusive ways to start, drawn as one segmented control. */
+.seg {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 2px;
+  background: var(--bg0);
+  border: 1px solid var(--line-lit);
+  border-radius: var(--radius);
+}
+
+.seg__option {
+  padding: 4px 12px;
+  font: inherit;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.seg__option:hover {
+  color: var(--text);
+}
+
+.seg__option[aria-checked='true'] {
+  color: #fff;
+  background: var(--accent-fill);
+}
+
+.wizard__source {
+  resize: vertical;
+  line-height: 1.6;
+}
+
+/* The draft as it is written. Monospace, because it is markdown, not prose yet. */
+.stream {
+  max-height: 46vh;
+  padding: 12px 14px;
+  margin: 0;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-dim);
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
 }
 
 /* --- toast ---------------------------------------------------------------- */

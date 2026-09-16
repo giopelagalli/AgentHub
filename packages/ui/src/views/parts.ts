@@ -1,18 +1,18 @@
+import type { ArtifactId } from '../artifacts.js';
 import { button, el } from '../dom.js';
-import { openChat } from '../panels/chat.js';
-import type { TabId } from '../tabs.js';
+import type { ChatTarget } from '../panels/chat.js';
 
-/** What a document tab needs from the page it lives in. */
+/** What a document view needs from the sheet it lives in. */
 export interface ViewContext {
   slug: string;
   title: string;
-  /** Opens a drawer, closing whichever one is already open. */
-  openDrawer(open: (into: HTMLElement) => () => void): void;
-  /** Switches the project detail pane to another tab, e.g. an empty state pointing at the PRD. */
-  switchTab(tab: TabId): void;
+  /** Opens the chat drawer beside this view, closing whichever one is already open. */
+  openChat(target: ChatTarget): void;
+  /** Swaps the sheet to another artifact, e.g. an empty roadmap pointing at the PRD. */
+  openArtifact(id: ArtifactId): void;
 }
 
-/** The three document agents a tab can talk to; each is a `who` on the project's chat routes. */
+/** The three document agents a view can talk to; each is a `who` on the project's chat routes. */
 export type DocWho = 'prd' | 'roadmap' | 'docs';
 
 const WHO_NAMES: Record<DocWho, string> = {
@@ -29,22 +29,25 @@ const WHO_NAMES: Record<DocWho, string> = {
 export function chatToAdjust(ctx: ViewContext, who: DocWho, onReply: () => void): HTMLButtonElement {
   const open = button('Chat to adjust');
   open.addEventListener('click', () => {
-    ctx.openDrawer((into) => openChat(into, {
+    ctx.openChat({
       name: WHO_NAMES[who],
       subtitle: `${ctx.title} · ${who}`,
       endpoint: `/api/projects/${ctx.slug}/chat/${who}/messages`,
       historyEndpoint: `/api/projects/${ctx.slug}/chat/${who}`,
       onReply,
-    }));
+    });
   });
   return open;
 }
 
-/** The bar above every document: what it is on the left, what you can do to it on the right. */
-export function docBar(label: string): { bar: HTMLElement; actions: HTMLElement } {
+/**
+ * The toolbar above every document. The sheet's header already names the artifact, so this row is
+ * only what can be done to it, held hard right.
+ */
+export function docBar(): { bar: HTMLElement; actions: HTMLElement } {
   const bar = el('div', 'doc__bar');
   const actions = el('div', 'actions');
-  bar.append(el('h2', 'doc__label', label), actions);
+  bar.appendChild(actions);
   return { bar, actions };
 }
 

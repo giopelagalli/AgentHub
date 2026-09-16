@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { HubState, Priority, ProjectManifest, ProjectStatus } from '@agenthub/shared';
 import type { UiState } from '../src/store.js';
 import { allocationRows } from '../src/pages/allocation.js';
-import { filterProjects, projectsSignature, stepSelection } from '../src/pages/projects.js';
+import { projectsSignature } from '../src/pages/projects.js';
 
 function project(slug: string, overrides: Partial<ProjectManifest> = {}): ProjectManifest {
   return {
@@ -19,47 +19,6 @@ function project(slug: string, overrides: Partial<ProjectManifest> = {}): Projec
     ...overrides,
   };
 }
-
-const list = [
-  project('acme-portal', { title: 'Acme Portal' }),
-  project('beta-site', { title: 'Beta Site' }),
-  project('gamma', { title: 'Gamma Rework' }),
-];
-
-describe('filterProjects', () => {
-  it('returns everything for an empty or blank query', () => {
-    expect(filterProjects(list, '')).toEqual(list);
-    expect(filterProjects(list, '   ')).toEqual(list);
-  });
-
-  it('matches title or slug, case-insensitively', () => {
-    expect(filterProjects(list, 'acme').map((p) => p.slug)).toEqual(['acme-portal']);
-    expect(filterProjects(list, 'SITE').map((p) => p.slug)).toEqual(['beta-site']);
-    expect(filterProjects(list, 'rework').map((p) => p.slug)).toEqual(['gamma']);
-  });
-
-  it('comes back empty when nothing matches', () => {
-    expect(filterProjects(list, 'zzz')).toEqual([]);
-  });
-});
-
-describe('stepSelection', () => {
-  it('moves one row and stops at the ends', () => {
-    expect(stepSelection(list, 'acme-portal', 1)).toBe('beta-site');
-    expect(stepSelection(list, 'beta-site', -1)).toBe('acme-portal');
-    expect(stepSelection(list, 'acme-portal', -1)).toBe('acme-portal');
-    expect(stepSelection(list, 'gamma', 1)).toBe('gamma');
-  });
-
-  it('lands on the first row when nothing is selected or the selection was filtered out', () => {
-    expect(stepSelection(list, null, 1)).toBe('acme-portal');
-    expect(stepSelection(list, 'gone', -1)).toBe('acme-portal');
-  });
-
-  it('has nowhere to go in an empty list', () => {
-    expect(stepSelection([], 'acme-portal', 1)).toBeNull();
-  });
-});
 
 describe('allocationRows', () => {
   it('orders by priority, then most recently updated', () => {
@@ -95,7 +54,7 @@ function hubState(projects: ProjectManifest[]): HubState {
 function uiState(overrides: Partial<UiState> = {}): UiState {
   return {
     hub: null, busy: new Set(), projectBusy: new Set(), page: 'projects',
-    project: null, projectTabs: {}, connection: 'down', browserFrame: null,
+    project: null, prdSeed: null, connection: 'down', browserFrame: null,
     ...overrides,
   };
 }

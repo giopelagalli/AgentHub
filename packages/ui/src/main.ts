@@ -1,12 +1,11 @@
 import './app.css';
-import { badgeLabel } from './badge.js';
 import { connect } from './net.js';
-import { mountNav, type PageId } from './nav.js';
 import { mountAllocation } from './pages/allocation.js';
 import { mountCluster } from './pages/cluster.js';
 import { mountComputer } from './pages/computer.js';
 import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
+import { mountRail, type PageId } from './rail.js';
 import { Store } from './store.js';
 
 /** Every page mounts into the same host and hands back its own teardown. */
@@ -26,33 +25,18 @@ function hostElement(): HTMLElement {
 const app = hostElement();
 const store = new Store();
 
-const nav = document.createElement('aside');
-nav.className = 'nav';
-const brand = document.createElement('div');
-brand.className = 'nav__brand';
-brand.textContent = 'AgentHub';
-nav.appendChild(brand);
-mountNav(nav, store);
-
-const foot = document.createElement('div');
-foot.className = 'nav__foot';
-const badge = document.createElement('span');
-badge.className = 'badge';
-foot.appendChild(badge);
-nav.appendChild(foot);
+const rail = document.createElement('aside');
+rail.className = 'rail';
 
 const page = document.createElement('main');
 page.className = 'page';
-app.append(nav, page);
+app.append(rail, page);
 
-store.subscribe((state) => {
-  badge.textContent = badgeLabel(state.connection);
-  badge.dataset.status = state.connection;
+mountRail(rail, store, {
+  onCollapsed: (collapsed) => app.classList.toggle('app--tight', collapsed),
 });
-badge.textContent = badgeLabel(store.getState().connection);
-badge.dataset.status = store.getState().connection;
 
-/** The page on screen, swapped whole when the nav selection changes. */
+/** The page on screen, swapped whole when the rail selection changes. */
 let showing: PageId | null = null;
 let teardown: (() => void) | null = null;
 

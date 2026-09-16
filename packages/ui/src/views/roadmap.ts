@@ -7,7 +7,7 @@ import { toast } from '../toast.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
 
 /**
- * The roadmap tab: the milestones in the order they will be done, with the two edits that don't
+ * The roadmap view: the milestones in the order they will be done, with the two edits that don't
  * need a conversation — move one up or down, and change its status.
  */
 export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
@@ -18,7 +18,7 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
   let failure = '';
   let token = 0;
   let alive = true;
-  /** Set while the generator is streaming; aborted if the tab goes away under it. */
+  /** Set while the generator is streaming; aborted if the view goes away under it. */
   let generating: AbortController | null = null;
 
   const load = (): void => {
@@ -104,17 +104,16 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
     return item;
   };
 
-  /** Generating runs in place of the list, so the tab shows the work rather than going blank. */
+  /** Generating runs in place of the list, so the sheet shows the work rather than going blank. */
   const generate = (): void => {
     host.replaceChildren();
-    const { bar } = docBar('Roadmap');
     const progress = el('pre', 'stream');
     progress.setAttribute('aria-live', 'polite');
     const line = el('p', 'modal__note', 'Reading the PRD and planning the milestones…');
     const cancel = button('Cancel');
     const actions = el('div', 'actions');
     actions.appendChild(cancel);
-    host.append(bar, line, progress, actions);
+    host.append(line, progress, actions);
 
     const controller = new AbortController();
     generating = controller;
@@ -142,7 +141,7 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar('Roadmap');
+    const { bar, actions } = docBar();
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the roadmap…')); return; }
@@ -165,7 +164,7 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
       );
       const start = el('button', 'btn btn--primary', info.action === 'generate' ? 'Generate roadmap' : 'Go to the PRD');
       start.type = 'button';
-      start.addEventListener('click', info.action === 'generate' ? generate : () => ctx.switchTab('prd'));
+      start.addEventListener('click', info.action === 'generate' ? generate : () => ctx.openArtifact('prd'));
       empty.appendChild(start);
       host.appendChild(empty);
       return;

@@ -204,7 +204,7 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
 
   /**
    * The draft failed but the project is already there — offer the way in rather than stranding the
-   * owner on a dead card, since the PRD tab's own empty state can start the draft again.
+   * owner on a dead card, since the PRD view's own empty state can start the draft again.
    */
   const draftFailed = (slugValue: string, message: string): void => {
     draft = null;

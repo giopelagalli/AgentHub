@@ -43,6 +43,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -96,37 +100,90 @@ p {
 
 #app {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 264px minmax(0, 1fr);
   height: 100%;
 }
 
-.nav {
+/* Collapsed, the rail keeps only what it can say in two letters. */
+#app.app--tight {
+  grid-template-columns: 56px minmax(0, 1fr);
+}
+
+/* One rail: the three whole-app pages, New project, and the project list. */
+.rail {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 16px 12px;
+  gap: 12px;
+  min-height: 0;
+  padding: 14px 12px;
   background: var(--bg1);
   border-right: 1px solid var(--line);
 }
 
-.nav__brand {
-  margin-bottom: 16px;
+.rail__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   padding-left: 10px;
+}
+
+.rail__brand {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  text-transform: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text);
 }
 
-.nav__pages {
+.rail__toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-mute);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.rail__toggle:hover {
+  color: var(--text);
+  background: var(--hover);
+  border-color: var(--line-lit);
+}
+
+/* A caret drawn from two borders: pointing back at the rail, or out of it. */
+.rail__chevron {
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-bottom: 1.5px solid currentcolor;
+  border-left: 1.5px solid currentcolor;
+  transform: rotate(45deg);
+}
+
+.app--tight .rail__chevron {
+  margin-right: 2px;
+  margin-left: 0;
+  transform: rotate(-135deg);
+}
+
+.rail__pages {
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 
-.nav__page {
+.rail__page {
   display: block;
+  width: 100%;
   padding: 7px 10px;
   font: inherit;
   text-align: left;
@@ -138,37 +195,105 @@ p {
   cursor: pointer;
 }
 
-.nav__page:hover {
+.rail__page:hover {
   color: var(--text);
   background: var(--hover);
 }
 
-.nav__page[aria-current='page'] {
+.rail__page[aria-current='page'] {
   color: var(--text);
   background: var(--bg2);
   border-left-color: var(--accent);
 }
 
-.nav__page[aria-current='page'] .nav__label {
-  font-weight: 500;
+.rail__page[aria-current='page'] .rail__label,
+.rail__page[aria-current='page'] .rail__initial {
+  font-weight: 600;
 }
 
-.nav__label {
+.rail__initial {
+  display: none;
+}
+
+.rail__label {
   display: block;
   letter-spacing: 0;
-  text-transform: none;
 }
 
-.nav__hint {
+.rail__hint {
   display: block;
   font-size: 11px;
   letter-spacing: 0;
   color: var(--text-mute);
 }
 
-.nav__foot {
+.rail__new {
+  width: 100%;
+}
+
+.rail__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.rail__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.rail__foot {
   margin-top: auto;
   padding-left: 10px;
+}
+
+/* The strip: initials for the pages, a + for New project, and nothing else. */
+.app--tight .rail {
+  padding: 14px 8px;
+}
+
+.app--tight .rail__head {
+  justify-content: center;
+  padding-left: 0;
+}
+
+.app--tight .rail__brand,
+.app--tight .rail__label,
+.app--tight .rail__hint {
+  display: none;
+}
+
+.app--tight .rail__page {
+  padding: 9px 4px 9px 2px;
+}
+
+.app--tight .rail__initial {
+  display: block;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-align: center;
+}
+
+.app--tight .rail__new {
+  padding: 6px 0;
+  font-size: 16px;
+  line-height: 1.1;
+}
+
+.app--tight .rail__foot {
+  display: flex;
+  justify-content: center;
+  padding-left: 0;
+}
+
+.app--tight .badge {
+  padding: 5px;
 }
 
 .badge {
@@ -259,13 +384,14 @@ p {
 .input:focus,
 .select:focus,
 .btn:focus-visible,
-.nav__page:focus-visible,
+.rail__page:focus-visible,
+.rail__toggle:focus-visible,
+.artifact:focus-visible,
 .row:focus-visible,
 .card__open:focus-visible,
 .hire__avatar:focus-visible,
 .chat__form input:focus,
 .drawer__close:focus-visible,
-.tab:focus-visible,
 .chip:focus-visible,
 .docs__row:focus-visible,
 .seg__option:focus-visible,
@@ -441,39 +567,9 @@ p {
   margin-bottom: 10px;
 }
 
-/* --- projects page -------------------------------------------------------- */
+/* --- project view --------------------------------------------------------- */
 
-.projects {
-  display: grid;
-  grid-template-columns: 270px minmax(0, 1fr);
-  height: 100%;
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  padding: 16px 12px;
-  overflow-y: auto;
-  background: var(--bg1);
-  border-right: 1px solid var(--line);
-}
-
-.list__new {
-  width: 100%;
-}
-
-.list__search {
-  width: 100%;
-}
-
-.list__rows {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
+/* One row of the rail's project list. */
 .row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -523,11 +619,10 @@ p {
 .detail {
   min-width: 0;
   padding: 20px 24px 40px;
-  overflow-y: auto;
 }
 
 .detail__head {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .detail__title {
@@ -760,37 +855,87 @@ button.card__open:hover {
   border-color: #b91c1c;
 }
 
-/* --- project tabs --------------------------------------------------------- */
+/* --- the three artifacts -------------------------------------------------- */
 
-/* One strip under the header, on every tab. The active tab is the only thing
-   the accent touches here; the rest is the same quiet grey as the nav. */
-.tabs {
-  display: flex;
-  gap: 2px;
-  margin: 0 0 18px;
-  border-bottom: 1px solid var(--line);
+/* Three cards between the header and the chart, each one door to a document.
+   They are the tallest thing on the page that isn't the chart itself, and the
+   only place the accent appears until one of them is hovered. */
+.artifacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  max-width: 1240px;
+  margin: 0 0 26px;
 }
 
-.tab {
-  padding: 7px 12px;
+.artifact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  min-height: 94px;
+  padding: 12px 14px;
   font: inherit;
-  font-weight: 500;
-  color: var(--text-dim);
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--radius) var(--radius) 0 0;
+  text-align: left;
+  color: var(--text);
+  background: var(--bg1);
+  border: 1px solid var(--line-lit);
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
-.tab:hover {
-  color: var(--text);
-  background: var(--hover);
+.artifact:hover {
+  background: var(--bg2);
+  border-color: var(--accent);
 }
 
-.tab--on {
-  color: var(--text);
-  border-bottom-color: var(--accent);
+.artifact__top {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.artifact__name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* The one number the hub grades: the PRD's completeness. */
+.artifact__badge {
+  flex: none;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+  border-radius: 999px;
+}
+
+.artifact__caption {
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+/* One line of state, held to one line. */
+.artifact__hint {
+  max-width: 100%;
+  margin-top: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+/* Nothing in it yet: the card still stands, but it doesn't ask to be read. */
+.artifact--empty .artifact__name {
+  color: var(--text-dim);
+}
+
+.artifact--empty .artifact__hint {
+  color: var(--text-mute);
 }
 
 .detail__body {
@@ -799,25 +944,19 @@ button.card__open:hover {
 
 /* --- documents ------------------------------------------------------------ */
 
-/* What this tab is, and what can be done to it — the same row on all three. */
+/* What can be done to the open document; the sheet's header already names it. */
 .doc__bar {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   min-height: 28px;
   margin-bottom: 14px;
 }
 
-.doc__label {
-  font-size: 12px;
-  letter-spacing: 0.02em;
-  color: var(--text-mute);
-}
-
 /* The completeness strip: one chip per section the hub graded, score hard right.
-   Held to a measure near the document's own, so the tab reads as one column
+   Held to a measure near the document's own, so the view reads as one column
    rather than a band stretched across the window with the score stranded at the
    far end — and wide enough that the score stays on the chips' last line. */
 .chips {
@@ -921,7 +1060,7 @@ button.card__open:hover {
   margin-bottom: 4px;
 }
 
-/* A tab with nothing in it yet: what is missing, why, and the one way forward. */
+/* A document with nothing in it yet: what is missing, why, and the one way forward. */
 .blank {
   max-width: 60ch;
   padding: 28px 0;
@@ -1581,6 +1720,86 @@ button.card__open:hover {
   margin: 4px 0 8px;
   padding-left: 18px;
   color: var(--text-dim);
+}
+
+/* --- sheet: an artifact over the org chart --------------------------------- */
+
+/* PRD, Roadmap and Docs open here rather than in place, so the hierarchy is
+   never traded away for a document. Near-full-screen, one scrim, one way out. */
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.sheet__box {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  width: min(1240px, 96vw);
+  height: min(880px, 92vh);
+  background: var(--bg1);
+  border: 1px solid var(--line-lit);
+  border-radius: 8px;
+  box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.85);
+}
+
+/* "Chat to adjust" takes a column of the sheet rather than covering it, so the
+   document and the conversation about it are readable at once. */
+.sheet__box--chat {
+  grid-template-columns: minmax(0, 1fr) min(380px, 34%);
+}
+
+.sheet__head {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sheet__head h2 {
+  font-size: 15px;
+}
+
+.sheet__sub {
+  margin-top: 3px;
+  color: var(--text-mute);
+}
+
+.sheet__body {
+  min-width: 0;
+  min-height: 0;
+  padding: 18px 22px 28px;
+  overflow: auto;
+}
+
+.sheet__column {
+  max-width: 96ch;
+  margin: 0 auto;
+}
+
+.sheet__chat {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+}
+
+/* The same drawer the org chart opens, docked into the sheet's second column. */
+.sheet__chat .drawer {
+  position: static;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 16px;
+  background: none;
+  border-left: 0;
+  box-shadow: none;
 }
 
 /* --- modal: the New Project wizard ---------------------------------------- */

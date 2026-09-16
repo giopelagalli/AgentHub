@@ -1,5 +1,5 @@
 /**
- * The smallest markdown renderer the PRD, roadmap and docs tabs need — and no more.
+ * The smallest markdown renderer the PRD, roadmap and docs views need — and no more.
  *
  * The safety rule is the first line of the algorithm: every character of the source is
  * HTML-escaped *before* anything else looks at it, so the only angle brackets in the output are

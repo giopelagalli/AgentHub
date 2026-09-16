@@ -1,5 +1,5 @@
 /**
- * The roadmap tab's wire shapes and its row model. Pure — the DOM lives in `views/roadmap.ts`.
+ * The roadmap view's wire shapes and its row model. Pure — the DOM lives in `views/roadmap.ts`.
  *
  * The hub owns the order; this file only numbers it, marks the current milestone, and works out
  * which of the two move buttons have nowhere to go.
@@ -40,13 +40,13 @@ function status(value: string | undefined): MilestoneStatus {
 export interface RoadmapEmptyState {
   line: string;
   hint: string;
-  /** `generate` runs the planner; `prd` sends the owner to the tab that has to exist first. */
+  /** `generate` runs the planner; `prd` swaps the sheet to the document that has to exist first. */
   action: 'generate' | 'prd';
 }
 
 /**
- * What the empty roadmap tab says and offers. Generating reads the PRD, so offering it before a
- * PRD is drafted just invites a 400 — point at the PRD tab instead until one exists.
+ * What the empty roadmap view says and offers. Generating reads the PRD, so offering it before a
+ * PRD is drafted just invites a 400 — point at the PRD instead until one exists.
  */
 export function roadmapEmptyState(prdDrafted: boolean): RoadmapEmptyState {
   return prdDrafted
@@ -62,7 +62,7 @@ export function roadmapEmptyState(prdDrafted: boolean): RoadmapEmptyState {
     };
 }
 
-/** The rows the tab draws, in the order the hub gave them. */
+/** The rows the view draws, in the order the hub gave them. */
 export function roadmapRows(doc: RoadmapDoc | null): RoadmapRow[] {
   const milestones = doc?.milestones ?? [];
   const last = milestones.length - 1;

@@ -1,11 +1,11 @@
 import { headingId } from './markdown.js';
 
 /**
- * The PRD tab's wire shapes and its completeness strip. Pure — the DOM lives in `views/prd.ts`.
+ * The PRD view's wire shapes and its completeness strip. Pure — the DOM lives in `views/prd.ts`.
  *
  * The hub grades the PRD section by section against its own fixed section list and hands back
  * `present`/`thin` per section plus a score; this file turns that verdict into a row of chips.
- * Everything here tolerates a missing or half-filled `audit`, because the tab still has to render
+ * Everything here tolerates a missing or half-filled `audit`, because the view still has to render
  * when the hub answers with less than it promised.
  */
 
@@ -30,7 +30,7 @@ export interface PrdAudit {
 }
 
 export interface PrdDoc {
-  /** False while the PRD is still the scaffold — the tab shows its empty state instead. */
+  /** False while the PRD is still the scaffold — the view shows its empty state instead. */
   drafted: boolean;
   markdown: string;
   audit?: PrdAudit;

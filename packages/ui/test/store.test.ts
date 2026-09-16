@@ -26,6 +26,7 @@ describe('Store', () => {
     const s = new Store().getState();
     expect(s.page).toBe('projects');
     expect(s.project).toBeNull();
+    expect(s.prdSeed).toBeNull();
     expect(s.connection).toBe('down');
     expect(s.hub).toBeNull();
     expect(s.busy.size).toBe(0);
@@ -102,6 +103,14 @@ describe('Store', () => {
     expect(store.getState().project).toBe('acme');
     store.dispatch({ type: 'hub-state', state: fabricateHubState([], []) });
     expect(store.getState().project).toBeNull();
+  });
+
+  it('holds a just-drafted PRD until the project view takes it', () => {
+    const store = new Store();
+    store.dispatch({ type: 'prd-drafted', slug: 'acme', questions: ['Who is it for?'] });
+    expect(store.getState().prdSeed).toEqual({ slug: 'acme', questions: ['Who is it for?'] });
+    store.dispatch({ type: 'prd-seed-taken' });
+    expect(store.getState().prdSeed).toBeNull();
   });
 
   it('notifies subscribers until they unsubscribe', () => {

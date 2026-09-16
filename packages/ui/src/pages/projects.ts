@@ -1,14 +1,17 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type HubState, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
+import { ARTIFACT_TITLES, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
 import { avatarSvg } from '../avatars.js';
+import type { DocsIndex } from '../docs.js';
 import { button, el } from '../dom.js';
 import { modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../models.js';
 import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
 import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
-import { openProjectWizard } from '../panels/wizard.js';
+import { openSheet, type SheetHandle } from '../panels/sheet.js';
+import type { PrdDoc } from '../prd.js';
+import type { RoadmapDoc } from '../roadmap.js';
 import type { Store, UiState } from '../store.js';
-import { activeTab, stepTab, tabModel, type TabId } from '../tabs.js';
 import { toast } from '../toast.js';
 import { mountDocs } from '../views/docs.js';
 import type { ViewContext } from '../views/parts.js';
@@ -26,40 +29,22 @@ const EMPLOYEES_EMPTY: Record<'loading' | 'ready' | 'failed', string> = {
   failed: 'The hub did not answer for this team.',
 };
 
-/** Free-text filter over the project list: a case-insensitive match on title or slug. */
-export function filterProjects(projects: ProjectManifest[], query: string): ProjectManifest[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return projects;
-  return projects.filter(
-    (p) => p.title.toLowerCase().includes(needle) || p.slug.toLowerCase().includes(needle),
-  );
-}
-
 /**
- * Everything that decides what the projects page looks like, short of the roster itself: project
- * selection, which tab it is open on, who's chatting, and each project's own fields — including
- * `updatedAt`, so a hire, a removal, or a turn (each of which touches a project without necessarily
- * changing its title, status or priority) still changes the signature and triggers a fresh render
- * and roster reload.
+ * Everything that decides what the project view looks like, short of the roster itself: which
+ * project is selected, who's chatting, and each project's own fields — including `updatedAt`, so a
+ * hire, a removal, or a turn (each of which touches a project without necessarily changing its
+ * title, status or priority) still changes the signature and triggers a fresh render, a roster
+ * reload and a re-read of the three artifacts.
  */
 export function projectsSignature(state: UiState): string {
   const projects = state.hub?.projects ?? [];
   const current = projects.find((p) => p.slug === state.project);
   return [
     state.project,
-    activeTab(state.projectTabs, state.project),
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),
     projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}`).join('|'),
   ].join('~');
-}
-
-/** Where ←/→ land from `slug` in `projects`; the ends don't wrap. */
-export function stepSelection(projects: ProjectManifest[], slug: string | null, step: 1 | -1): string | null {
-  if (!projects.length) return null;
-  const at = projects.findIndex((p) => p.slug === slug);
-  if (at < 0) return projects[0].slug;
-  return projects[Math.min(projects.length - 1, Math.max(0, at + step))].slug;
 }
 
 function selectBox(options: readonly string[], value: string): HTMLSelectElement {
@@ -265,39 +250,44 @@ function hireForm(slug: string, onHired: () => void): HTMLFormElement {
   return form;
 }
 
-/** The three document tabs; Team is the org chart, which this page draws itself. */
-const VIEWS: Record<Exclude<TabId, 'team'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
+
+/** The three artifacts, each mounted into the sheet rather than into the page. */
+const VIEWS: Record<ArtifactId, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
   prd: mountPrd,
   roadmap: mountRoadmap,
   docs: mountDocs,
 };
 
+/** One artifact's document, and where its fetch got to. */
+interface Held<T> {
+  state: DocState;
+  doc: T | null;
+}
+
+/** One big button: the artifact's name, what state it is in, and its score where it has one. */
+function artifactButton(summary: ArtifactSummary, open: (id: ArtifactId) => void): HTMLButtonElement {
+  const node = button('', summary.filled ? 'artifact' : 'artifact artifact--empty');
+  const top = el('div', 'artifact__top');
+  top.appendChild(el('span', 'artifact__name', summary.label));
+  if (summary.badge) top.appendChild(el('span', 'artifact__badge', summary.badge));
+  node.append(top, el('span', 'artifact__caption', summary.caption), el('span', 'artifact__hint', summary.hint));
+  node.addEventListener('click', () => open(summary.id));
+  return node;
+}
+
 /**
- * The projects page: the list on the left, and on the right the selected project — its header, a
- * tab strip, and whichever of Team, PRD, Roadmap and Docs is open under it. A chat drawer opens
- * over the lot, from an org-chart card or from a document tab's "Chat to adjust".
+ * The project view: the header, the three artifacts, and the org chart — which is the page's
+ * permanent content, never swapped out for a document. PRD, Roadmap and Docs open over it in a
+ * sheet, and a chat drawer opens either beside that sheet or, from an org-chart card, over the
+ * page itself.
  */
 export function mountProjects(host: HTMLElement, store: Store): () => void {
-  const page = el('div', 'projects');
-
-  const listPane = el('section', 'list');
-  const create = el('button', 'btn btn--primary list__new', 'New project');
-  create.type = 'button';
-  const search = el('input', 'input list__search');
-  search.type = 'search';
-  search.placeholder = 'Search projects';
-  const rows = el('div', 'list__rows');
-  listPane.append(create, search, rows);
-
   const detail = el('section', 'detail');
   const headBox = el('header', 'detail__head');
-  const tabsBox = el('div', 'tabs');
-  tabsBox.setAttribute('role', 'tablist');
-  tabsBox.setAttribute('aria-label', 'Project views');
+  const artifactsBox = el('div', 'artifacts');
   const bodyBox = el('div', 'detail__body');
-  detail.append(headBox, tabsBox, bodyBox);
-  page.append(listPane, detail);
-  host.appendChild(page);
+  detail.append(headBox, artifactsBox, bodyBox);
+  host.appendChild(detail);
 
   /** One drawer at a time: a second would land on top of the first. */
   let closeDrawer: (() => void) | null = null;
@@ -317,10 +307,16 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   let hiring = false;
   /** Bumped per fetch so a slow roster reply for a project we've left is dropped. */
   let rosterToken = 0;
-  /** The document tab on screen, kept across re-renders so it isn't refetched on every hub tick. */
-  let tabView: { slug: string; tab: TabId; dispose: () => void } | null = null;
-  /** Questions the wizard's draft left open, handed to the PRD tab the first time it mounts. */
-  let seedQuestions: string[] = [];
+
+  let prd: Held<PrdDoc> = { state: 'loading', doc: null };
+  let roadmap: Held<RoadmapDoc> = { state: 'loading', doc: null };
+  let docs: Held<DocsIndex> = { state: 'loading', doc: null };
+  /** Bumped per artifact reload, so three slow replies for a project we've left are dropped. */
+  let artifactToken = 0;
+
+  /** The sheet, and the artifact currently mounted in it; both null while it is closed. */
+  let sheet: SheetHandle | null = null;
+  let sheetView: { id: ArtifactId; dispose: () => void } | null = null;
 
   const projectsOf = (state: UiState): ProjectManifest[] => state.hub?.projects ?? [];
   const selected = (state: UiState): ProjectManifest | null =>
@@ -343,6 +339,53 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         renderDetail(store.getState());
       });
   };
+
+  /**
+   * The three documents behind the three buttons. Each lands on its own, so one artifact the hub
+   * can't answer for leaves the other two reading normally.
+   */
+  const loadArtifacts = (slug: string): void => {
+    const token = ++artifactToken;
+    const take = <T>(url: string, put: (held: Held<T>) => void): void => {
+      void getJson<T>(url)
+        .then((doc) => { if (token === artifactToken) { put({ state: 'ready', doc }); renderArtifacts(); } })
+        .catch(() => { if (token === artifactToken) { put({ state: 'failed', doc: null }); renderArtifacts(); } });
+    };
+    take<PrdDoc>(`/api/projects/${slug}/prd`, (held) => { prd = held; });
+    take<RoadmapDoc>(`/api/projects/${slug}/roadmap`, (held) => { roadmap = held; });
+    take<DocsIndex>(`/api/projects/${slug}/docs`, (held) => { docs = held; });
+  };
+
+  const closeSheet = (): void => {
+    sheet?.close();
+  };
+
+  /** Opens `id` in the sheet, reusing the one already on screen when there is one. */
+  function openArtifact(id: ArtifactId, seed: string[] = []): void {
+    const project = selected(store.getState());
+    if (!project) return;
+    if (!sheet) {
+      sheet = openSheet(document.body, {
+        onClose: () => {
+          sheetView?.dispose();
+          sheetView = null;
+          sheet = null;
+          // The writer may have changed the document while it was open.
+          loadArtifacts(project.slug);
+        },
+      });
+    }
+    sheetView?.dispose();
+    sheet.body.replaceChildren();
+    sheet.setTitle(ARTIFACT_TITLES[id], project.title);
+    const ctx: ViewContext = {
+      slug: project.slug,
+      title: project.title,
+      openChat: (target) => sheet?.openChat(target),
+      openArtifact: (next) => openArtifact(next),
+    };
+    sheetView = { id, dispose: VIEWS[id](sheet.body, ctx, seed) };
+  }
 
   const openCard = (slug: string, card: OrgCard): void => {
     if (card.kind === 'assistant') {
@@ -385,54 +428,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       .catch((error: unknown) => toast(`Could not remove: ${String(error)}`, 'error'));
   };
 
-  const setTab = (slug: string, tab: TabId): void => {
-    store.dispatch({ type: 'set-project-tab', slug, tab });
-  };
-
-  /**
-   * A project the hub has only just been told about isn't in the pushed state yet, so pull it
-   * before selecting — otherwise the next push would find the slug unknown and move the selection
-   * back to the top of the list.
-   */
-  const openNewProject = (slug: string, questions: string[]): void => {
-    seedQuestions = questions;
-    void getJson<HubState>('/api/state')
-      .then((state) => store.dispatch({ type: 'hub-state', state }))
-      .catch(() => { /* the socket will bring it along in a moment */ })
-      .finally(() => {
-        store.dispatch({ type: 'set-project', slug });
-        setTab(slug, 'prd');
-        toast(questions.length
-          ? `PRD drafted — ${questions.length} open question${questions.length === 1 ? '' : 's'}`
-          : 'PRD drafted.');
-      });
-  };
-
-  create.addEventListener('click', () => {
-    openProjectWizard(document.body, { onDone: openNewProject });
-  });
-
-  function renderList(state: UiState): void {
-    const matches = filterProjects(projectsOf(state), search.value);
-    rows.replaceChildren();
-    if (!matches.length) {
-      rows.appendChild(el('p', 'empty', state.hub ? 'No projects match.' : 'Waiting for the hub…'));
-      return;
-    }
-    for (const project of matches) {
-      const row = button('', 'row');
-      if (project.slug === state.project) row.setAttribute('aria-current', 'true');
-      row.append(
-        el('span', 'row__title', project.title),
-        el('span', `pill pill--${project.status}`, project.status),
-        el('span', 'row__priority', project.priority),
-      );
-      row.addEventListener('click', () => store.dispatch({ type: 'set-project', slug: project.slug }));
-      rows.appendChild(row);
-    }
-  }
-
-  /** The header row: what the project is, and the levers that apply on every tab. */
+  /** The header row: what the project is, and the levers that apply to the whole of it. */
   function renderHead(project: ProjectManifest): void {
     headBox.replaceChildren();
     const line = el('div', 'detail__title');
@@ -471,6 +467,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
           turn.disabled = false;
           turn.textContent = 'Run turn';
           loadRoster(project.slug);
+          loadArtifacts(project.slug);
         });
     });
 
@@ -490,28 +487,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     }
   }
 
-  /** The tab strip: click, or ←/→ while the focus is on it. */
-  function renderTabs(project: ProjectManifest, tab: TabId): void {
-    tabsBox.replaceChildren();
-    for (const entry of tabModel(tab)) {
-      const node = button(entry.label, entry.current ? 'tab tab--on' : 'tab');
-      node.setAttribute('role', 'tab');
-      node.setAttribute('aria-selected', String(entry.current));
-      node.tabIndex = entry.current ? 0 : -1;
-      node.addEventListener('click', () => setTab(project.slug, entry.id));
-      node.addEventListener('keydown', (event) => {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-        event.preventDefault();
-        event.stopPropagation();
-        const next = stepTab(tab, event.key === 'ArrowRight' ? 1 : -1);
-        setTab(project.slug, next);
-        tabsBox.querySelector<HTMLElement>('.tab--on')?.focus();
-      });
-      tabsBox.appendChild(node);
+  /** The three big buttons, redrawn whenever one of the documents behind them lands. */
+  function renderArtifacts(): void {
+    if (!selected(store.getState())) {
+      artifactsBox.replaceChildren();
+      return;
     }
+    artifactsBox.replaceChildren(
+      artifactButton(prdSummary(prd.state, prd.doc), openArtifact),
+      artifactButton(roadmapSummary(roadmap.state, roadmap.doc), openArtifact),
+      artifactButton(docsSummary(docs.state, docs.doc), openArtifact),
+    );
   }
 
-  /** The org chart, which is what the Team tab is. */
+  /** The org chart: the permanent content of this page. */
   function orgChart(project: ProjectManifest, state: UiState): HTMLElement {
     const chatting = new Set(
       [...state.projectBusy]
@@ -528,50 +517,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     return chart;
   }
 
-  const dropTabView = (): void => {
-    tabView?.dispose();
-    tabView = null;
-  };
-
-  /**
-   * The tab body. Team is redrawn on every render because the roster and who's chatting move under
-   * it; a document tab owns its own element and is left alone until the project or the tab changes,
-   * so a hub tick doesn't throw away a half-read page or an open editor.
-   */
-  function renderBody(project: ProjectManifest, tab: TabId, state: UiState): void {
-    if (tab === 'team') {
-      dropTabView();
-      bodyBox.replaceChildren(orgChart(project, state));
-      return;
-    }
-    if (tabView && tabView.slug === project.slug && tabView.tab === tab) return;
-    dropTabView();
-    bodyBox.replaceChildren();
-    const ctx: ViewContext = {
-      slug: project.slug, title: project.title, openDrawer,
-      switchTab: (nextTab) => setTab(project.slug, nextTab),
-    };
-    const seed = tab === 'prd' ? seedQuestions : [];
-    seedQuestions = [];
-    tabView = { slug: project.slug, tab, dispose: VIEWS[tab](bodyBox, ctx, seed) };
-  }
-
   function renderDetail(state: UiState): void {
     const project = selected(state);
     if (!project) {
-      dropTabView();
       headBox.replaceChildren();
-      tabsBox.replaceChildren();
+      artifactsBox.replaceChildren();
       bodyBox.replaceChildren(el(
         'p', 'empty',
         state.hub ? (state.project ? `Opening ${state.project}…` : 'No projects yet — New project starts one.') : 'Waiting for the hub…',
       ));
       return;
     }
-    const tab = activeTab(state.projectTabs, project.slug);
     renderHead(project);
-    renderTabs(project, tab);
-    renderBody(project, tab, state);
+    renderArtifacts();
+    bodyBox.replaceChildren(orgChart(project, state));
   }
 
   let last = '';
@@ -586,10 +545,12 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     const project = selected(state);
     const projectChanged = state.project !== rosterFor;
     // A card click opened the drawer for the project we were just looking at; switching projects
-    // (arrow keys, the list, or the hub moving the selection) leaves it pointed at the wrong agent.
+    // (arrow keys, the list, or the hub moving the selection) leaves it and any open sheet pointed
+    // at the wrong project.
     if (projectChanged) {
       closeDrawer?.();
       closeDrawer = null;
+      closeSheet();
     }
     if (projectChanged || project?.updatedAt !== rosterUpdatedAt) {
       rosterFor = state.project;
@@ -598,44 +559,41 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         roster = null;
         rosterState = 'loading';
         hiring = false;
+        prd = { state: 'loading', doc: null };
+        roadmap = { state: 'loading', doc: null };
+        docs = { state: 'loading', doc: null };
       }
-      if (state.project) loadRoster(state.project);
+      if (state.project) {
+        loadRoster(state.project);
+        loadArtifacts(state.project);
+      }
     }
-    renderList(state);
     renderDetail(state);
   };
 
-  search.addEventListener('input', () => renderList(store.getState()));
-
-  const typing = (): boolean => {
-    const active = document.activeElement;
-    return active instanceof HTMLInputElement
-      || active instanceof HTMLTextAreaElement
-      || active instanceof HTMLSelectElement;
+  /**
+   * A PRD the wizard has just drafted opens straight away, carrying the drafter's open questions;
+   * taking the seed re-enters this listener with nothing left to take.
+   */
+  const takeSeed = (state: UiState): void => {
+    const seed = state.prdSeed;
+    if (!seed || seed.slug !== state.project) return;
+    store.dispatch({ type: 'prd-seed-taken' });
+    openArtifact('prd', seed.questions);
   };
-
-  const onKey = (event: KeyboardEvent): void => {
-    if (typing() || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
-    // Inside the tab strip the same two keys walk the tabs, and inside a drawer or the wizard they
-    // belong to whatever is focused there.
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest('.tabs, .drawer, .modal')) return;
-    const state = store.getState();
-    const matches = filterProjects(projectsOf(state), search.value);
-    const next = stepSelection(matches, state.project, event.key === 'ArrowRight' ? 1 : -1);
-    if (next && next !== state.project) store.dispatch({ type: 'set-project', slug: next });
-  };
-  window.addEventListener('keydown', onKey);
 
   const unsubscribe = store.subscribe(render);
+  const unseed = store.subscribe(takeSeed);
   render(store.getState());
+  takeSeed(store.getState());
 
   return () => {
     unsubscribe();
-    window.removeEventListener('keydown', onKey);
+    unseed();
     closeDrawer?.();
-    dropTabView();
+    closeSheet();
     rosterToken++;
-    page.remove();
+    artifactToken++;
+    detail.remove();
   };
 }

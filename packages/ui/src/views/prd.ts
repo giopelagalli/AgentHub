@@ -7,7 +7,7 @@ import { toast } from '../toast.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
 
 /**
- * The PRD tab: the document, how complete the hub thinks it is, and the two ways to change it —
+ * The PRD view: the document, how complete the hub thinks it is, and the two ways to change it —
  * talk to the writer, or edit the markdown by hand.
  */
 export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] = []): () => void {
@@ -18,7 +18,7 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
   let dismissed = false;
   /** The drafter's open questions, until the document starts reporting its own. */
   let seed = seeded;
-  /** Bumped per fetch, so a slow answer for a tab we have left is dropped. */
+  /** Bumped per fetch, so a slow answer for a view we have left is dropped. */
   let token = 0;
   let alive = true;
 
@@ -122,7 +122,7 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar('Product requirements');
+    const { bar, actions } = docBar();
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the PRD…')); return; }

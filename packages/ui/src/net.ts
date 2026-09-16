@@ -1,5 +1,5 @@
 import type { HubState } from '@agenthub/shared';
-import type { PageId } from './nav.js';
+import type { PageId } from './rail.js';
 import type { Store } from './store.js';
 
 const STATE_URL = '/api/state';

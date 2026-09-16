@@ -1,6 +1,5 @@
 import type { HubState } from '@agenthub/shared';
-import type { PageId } from './nav.js';
-import { rememberTab, type TabId } from './tabs.js';
+import type { PageId } from './rail.js';
 
 /** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the page. */
 export interface BrowserFrame {
@@ -22,10 +21,10 @@ export interface UiState {
   /** `slug:who` of the project agents mid-reply in a one-on-one chat. */
   projectBusy: Set<string>;
   page: PageId;
-  /** Slug selected on the projects page; null when the hub has no project to show. */
+  /** Slug selected in the rail; null when the hub has no project to show. */
   project: string | null;
-  /** Which tab each project was last left on, for this visit only. */
-  projectTabs: Record<string, TabId>;
+  /** A PRD the wizard has just drafted, waiting for the project view to open it. */
+  prdSeed: { slug: string; questions: string[] } | null;
   connection: 'live' | 'polling' | 'down';
   /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
   browserFrame: BrowserFrame | null;
@@ -38,7 +37,8 @@ export type StoreEvent =
   | { type: 'busy-reset' }
   | { type: 'set-page'; page: PageId }
   | { type: 'set-project'; slug: string }
-  | { type: 'set-project-tab'; slug: string; tab: TabId }
+  | { type: 'prd-drafted'; slug: string; questions: string[] }
+  | { type: 'prd-seed-taken' }
   | { type: 'browser-frame'; frame: BrowserFrame }
   | { type: 'connection'; status: UiState['connection'] };
 
@@ -49,7 +49,7 @@ export class Store {
     projectBusy: new Set(),
     page: 'projects',
     project: null,
-    projectTabs: {},
+    prdSeed: null,
     connection: 'down',
     browserFrame: null,
   };
@@ -103,11 +103,11 @@ export class Store {
       case 'set-project':
         this.state = { ...this.state, project: event.slug };
         break;
-      case 'set-project-tab':
-        this.state = {
-          ...this.state,
-          projectTabs: rememberTab(this.state.projectTabs, event.slug, event.tab),
-        };
+      case 'prd-drafted':
+        this.state = { ...this.state, prdSeed: { slug: event.slug, questions: event.questions } };
+        break;
+      case 'prd-seed-taken':
+        this.state = { ...this.state, prdSeed: null };
         break;
       case 'browser-frame':
         this.state = { ...this.state, browserFrame: event.frame };

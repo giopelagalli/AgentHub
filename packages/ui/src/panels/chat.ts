@@ -29,10 +29,15 @@ export interface ChatTarget {
   /** The "What they're doing" section; omitted for the assistant, which isn't on any roster. */
   activity?: ChatActivity;
   /**
-   * Called once a reply has finished streaming. The document tabs use it to re-read the PRD,
+   * Called once a reply has finished streaming. The document views use it to re-read the PRD,
    * roadmap or docs the agent has just edited; an aborted send (the drawer closed) doesn't fire.
    */
   onReply?: () => void;
+  /**
+   * The drawer has gone, whichever way it was closed. The sheet uses it to give the space back to
+   * the document; a caller that closed the drawer itself hears about it too.
+   */
+  onClose?: () => void;
 }
 
 interface PendingAction {
@@ -348,10 +353,14 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   void loadHistory();
   input.focus();
 
+  let closed = false;
   function dispose(): void {
+    if (closed) return;
+    closed = true;
     window.removeEventListener('keydown', onKey);
     for (const controller of pending) controller.abort();
     panel.remove();
+    target.onClose?.();
   }
 
   return dispose;

@@ -1,5 +1,5 @@
 /**
- * The docs tab's wire shapes and its page list. Pure — the DOM lives in `views/docs.ts`.
+ * The docs view's wire shapes and its page list. Pure — the DOM lives in `views/docs.ts`.
  *
  * `GET .../docs` answers with the index page and the decision log inline (both are short and
  * always wanted) plus a list of the other pages, which are fetched one at a time as they are

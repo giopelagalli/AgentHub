@@ -5,7 +5,7 @@ import { renderMarkdown } from '../markdown.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
 
 /**
- * The docs tab: the bundle's pages on the left, the one being read on the right. The index and the
+ * The docs view: the bundle's pages on the left, the one being read on the right. The index and the
  * decision log come down with the list; the other pages are fetched as they are opened.
  */
 export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
@@ -103,7 +103,7 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar('Docs');
+    const { bar, actions } = docBar();
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the docs…')); return; }

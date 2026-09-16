@@ -21,6 +21,13 @@ export function validateSlug(slug: string): asserts slug is string {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) throw new InvalidSlugError(slug);
 }
 
+/** A docs page's file name, which is a path segment for the same reason a project slug is. */
+export const DOC_SLUG_RE = /^[a-z0-9-]{1,60}$/;
+
+export function validateDocSlug(slug: string): asserts slug is string {
+  if (typeof slug !== 'string' || !DOC_SLUG_RE.test(slug)) throw new InvalidSlugError(slug);
+}
+
 export type TaskStatus = 'backlog' | 'in-progress' | 'done' | 'blocked';
 
 export interface TaskItem {

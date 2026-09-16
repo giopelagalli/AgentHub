@@ -1,10 +1,11 @@
 import type { ChatMessage, TeamMember } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
 import { routeFor } from '../gateway.js';
-import { workspaceTools, type Tool } from '../agents/tools.js';
+import { docTools, workspaceTools, type Tool } from '../agents/tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from '../agents/transcript.js';
 import type { ProjectBundle } from './bundle.js';
-import { orchestratorSystemPrompt, subagentSystemPrompt } from './prompts.js';
+import { planningContext } from './prd.js';
+import { docPersonaPrompt, DOC_PERSONAS, orchestratorSystemPrompt, subagentSystemPrompt, type DocPersona } from './prompts.js';
 
 const KIND: SessionKind = 'chat';
 /** Turns of the conversation replayed to the model; one chat session is one turn. */
@@ -12,14 +13,23 @@ const HISTORY_TURNS = 20;
 /** Messages the history endpoint hands the UI when it opens a chat. */
 export const CHAT_HISTORY_LIMIT = 50;
 const MAX_TOOL_CALLS = 6;
+/** A document persona reads its document, edits it and checks the result — more room than a chat. */
+const DOC_TOOL_CALLS = 8;
 /** How much of project.md an employee's context carries; the manager gets the capped context pack. */
 const PROJECT_MD_LIMIT = 4000;
 const TRUNCATION_MARKER = '\n[truncated]';
 /** The only workspace tools a chat gets: chatting is for answering, not for changing the project. */
 const READ_ONLY_TOOLS = ['read_file', 'list_dir'];
 
-/** 'manager' is the project orchestrator itself; anything else is a roster member id. */
+/** 'manager', one of the document personas, or a roster member id. */
 export type ChatWho = string;
+
+/** The document tools each persona may call; everything else in `docTools` is another persona's. */
+const PERSONA_TOOLS: Record<DocPersona, string[]> = {
+  prd: ['read_prd', 'write_prd'],
+  roadmap: ['read_roadmap', 'write_roadmap'],
+  docs: ['list_docs', 'read_doc', 'write_doc'],
+};
 
 /** One transcript subject per agent, so each chat is its own conversation. */
 const subjectFor = (slug: string, who: ChatWho): string => `${slug}:${who}`;
@@ -37,9 +47,14 @@ export interface ChatReply {
   outcome: SessionOutcome;
 }
 
-/** Who a chat is with: the manager, the roster member, or null when `who` is on neither. */
-export async function resolveWho(bundle: ProjectBundle, who: string): Promise<'manager' | TeamMember | null> {
+/**
+ * Who a chat is with: the manager, one of the document personas, the roster member, or null when
+ * `who` is none of them.
+ */
+export async function resolveWho(bundle: ProjectBundle, who: string): Promise<'manager' | DocPersona | TeamMember | null> {
   if (who === 'manager') return 'manager';
+  const persona = DOC_PERSONAS.find((p) => p === who);
+  if (persona) return persona;
   return (await bundle.team()).find((m) => m.id === who) ?? null;
 }
 
@@ -77,9 +92,38 @@ async function employeeContext(bundle: ProjectBundle): Promise<string> {
   ].join('\n');
 }
 
+/** The project plus the document this persona owns, so it can answer without spending a tool call. */
+async function docPersonaContext(bundle: ProjectBundle, persona: DocPersona): Promise<string> {
+  const manifest = await bundle.manifest();
+  const head = [`# Project`, `${manifest.title} (${manifest.slug}) — ${manifest.intent}`, ``];
+  if (persona === 'prd') {
+    return [...head, `# prd.md (as it stands)`, truncate((await bundle.prd()).trim(), PROJECT_MD_LIMIT)].join('\n');
+  }
+  if (persona === 'roadmap') {
+    const milestones = await bundle.roadmap();
+    return [
+      ...head,
+      `# The PRD you are sequencing`,
+      truncate((await bundle.prd()).trim(), PROJECT_MD_LIMIT),
+      ``,
+      `# roadmap.yaml (as it stands)`,
+      milestones.length ? JSON.stringify(milestones, null, 2) : '(no milestones yet)',
+    ].join('\n');
+  }
+  const { index, pages } = await bundle.docs();
+  return [
+    ...head,
+    `# docs/index.md`,
+    index.trim(),
+    ``,
+    `# Pages`,
+    ...(pages.length ? pages.map((p) => `- ${p.slug}: ${p.title}`) : ['(none yet)']),
+  ].join('\n');
+}
+
 /**
- * One-on-one chat with a project's agents: the manager (the orchestrator's persona) or any employee
- * on the roster.
+ * One-on-one chat with a project's agents: the manager (the orchestrator's persona), one of the
+ * document personas, or any employee on the roster.
  *
  * Each conversation is persistent the way the owner's assistant is — the last turns are read back
  * out of the transcript rather than held in memory — so a restarted hub picks a chat up where it
@@ -102,15 +146,22 @@ export class ProjectChat {
       const target = await resolveWho(bundle, who);
       if (!target) throw new Error(`unknown team member: ${who}`);
 
-      const system = target === 'manager'
-        ? `${orchestratorSystemPrompt(await bundle.contextPack(), await bundle.team())}\n\n${CHAT_FRAMING}`
-        : [
-          subagentSystemPrompt(target.role, [], target.instructions),
-          ``,
-          await employeeContext(bundle),
-          ``,
-          CHAT_FRAMING,
-        ].join('\n');
+      const readOnly = workspaceTools().filter((t: Tool) => READ_ONLY_TOOLS.includes(t.def.name));
+      let persona: DocPersona | null = null;
+      let system: string;
+      if (target === 'manager') {
+        system = `${orchestratorSystemPrompt(await bundle.contextPack(), await bundle.team(), await planningContext(bundle))}\n\n${CHAT_FRAMING}`;
+      } else if (typeof target === 'string') {
+        persona = target;
+        system = docPersonaPrompt(target, await docPersonaContext(bundle, target));
+      } else {
+        system = [subagentSystemPrompt(target.role, [], target.instructions), ``, await employeeContext(bundle), ``, CHAT_FRAMING].join('\n');
+      }
+
+      // A document persona edits its own file — that is what the owner is talking to it for — so it
+      // gets its write tools, and the writes commit under `owner:` because the owner drove them.
+      const allowed = persona ? PERSONA_TOOLS[persona] : null;
+      const tools = allowed ? [...readOnly, ...docTools('owner').filter((t) => allowed.includes(t.def.name))] : readOnly;
 
       // A chat is a turn's persona answering a question, so it runs on the same model the project's
       // policy gives the orchestrator tier.
@@ -120,11 +171,11 @@ export class ProjectChat {
         system,
         history: this.turns(slug, who, HISTORY_TURNS, HISTORY_TURNS * 2),
         user: text,
-        tools: workspaceTools().filter((t: Tool) => READ_ONLY_TOOLS.includes(t.def.name)),
+        tools,
         ctx: { bundle },
         ...(route ? { route } : {}),
-        maxToolCalls: MAX_TOOL_CALLS,
-        ...(target === 'manager' ? {} : { memberId: target.id }),
+        maxToolCalls: persona ? DOC_TOOL_CALLS : MAX_TOOL_CALLS,
+        ...(typeof target === 'string' ? {} : { memberId: target.id }),
         ...(opts.onToken ? { onToken: opts.onToken } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),
       });

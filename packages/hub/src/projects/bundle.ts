@@ -1,10 +1,11 @@
 import { existsSync, type Dirent } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { ModelPolicy, Priority, TeamMember } from '@agenthub/shared';
-import { newTeamMember, validateBriefing, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
+import type { DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, TeamMember } from '@agenthub/shared';
+import { auditPrd, prdScaffold } from './prd.js';
+import { newTeamMember, validateBriefing, validateDocSlug, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
 const CONTEXT_PACK_LIMIT = 12000;
 const CONTEXT_PACK_MARKER = '\n[truncated]';
@@ -13,8 +14,12 @@ const CONTEXT_PACK_MARKER = '\n[truncated]';
 const SCAFFOLD_DIRS = ['skills', 'briefings', 'workspace'];
 
 /** Only these paths are "knowledge" the manifest index (and the model's context pack) cares about. */
-const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'decisions.log.md', 'tasks.yaml', 'team.yaml'];
-const KNOWLEDGE_DIRS = ['skills', 'briefings'];
+const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'prd.md', 'roadmap.yaml', 'decisions.log.md', 'tasks.yaml', 'team.yaml'];
+const KNOWLEDGE_DIRS = ['skills', 'briefings', 'docs'];
+
+/** The one-line intro a fresh `docs/index.md` carries above its (still empty) page list. */
+const DOCS_INDEX_TEMPLATE = (title: string): string =>
+  [`# ${title} — Docs`, ``, `How this project works and why it was built this way. One page per topic.`, ``].join('\n');
 
 const BUNDLE_GITIGNORE = [
   '# Nested checkouts under workspace/ belong to their own repos and are not versioned by this bundle.',
@@ -80,6 +85,29 @@ function parseDecisionBlocks(content: string): string[] {
     .filter((s) => s.startsWith('## '));
 }
 
+/**
+ * Writes the plan files (PRD scaffold, empty roadmap, docs index) that a bundle must always have,
+ * skipping any that already exist. `create()` calls it to scaffold them and `open()` to backfill a
+ * bundle made before they existed — so no reader has to treat a missing plan file as a special case.
+ */
+async function scaffoldPlan(dir: string, title: string): Promise<void> {
+  await mkdir(join(dir, 'docs'), { recursive: true });
+  const files: [string, string][] = [
+    ['prd.md', prdScaffold(title)],
+    ['roadmap.yaml', dump({ milestones: [] satisfies Milestone[] })],
+    [join('docs', 'index.md'), DOCS_INDEX_TEMPLATE(title)],
+  ];
+  for (const [path, content] of files) {
+    if (!existsSync(join(dir, path))) await writeFile(join(dir, path), content, 'utf8');
+  }
+}
+
+/** A docs page's title: its first `# ` heading, or the slug when it has none. */
+function docTitle(markdown: string, slug: string): string {
+  const heading = markdown.split('\n').find((l) => l.startsWith('# '));
+  return heading ? heading.slice(2).trim() || slug : slug;
+}
+
 async function walkDir(root: string, dir: string, acc: string[]): Promise<void> {
   let entries: Dirent[];
   try {
@@ -138,7 +166,7 @@ export class ProjectBundle {
     this.workspace = join(dir, 'workspace');
   }
 
-  static async create(root: string, init: { slug: string; title: string; intent: string; priority?: Priority }): Promise<ProjectBundle> {
+  static async create(root: string, init: { slug: string; title: string; intent: string; priority?: Priority; intake?: ProjectIntake }): Promise<ProjectBundle> {
     validateSlug(init.slug);
     const dir = join(root, init.slug);
     if (existsSync(dir)) throw new Error(`project bundle already exists: ${init.slug}`);
@@ -163,9 +191,14 @@ export class ProjectBundle {
       createdAt: now,
       updatedAt: now,
       index: [],
+      ...(init.intake && (init.intake.idea || init.intake.prd) ? { intake: init.intake } : {}),
+      prdScore: 0,
     };
     await writeFile(join(dir, 'manifest.yaml'), dump(manifest), 'utf8');
     await writeFile(join(dir, 'project.md'), projectTemplate(init.title, init.intent), 'utf8');
+    // Empty but scaffolded: every project starts from a PRD, so the file the owner (or the drafter)
+    // fills in exists from the first commit rather than appearing later.
+    await scaffoldPlan(dir, init.title);
     await writeFile(join(dir, 'decisions.log.md'), '# Decisions\n', 'utf8');
     await writeFile(join(dir, 'tasks.yaml'), dump({ tasks: [] } satisfies Tasks), 'utf8');
     await writeFile(join(dir, 'team.yaml'), dump({ nextId: DEFAULT_TEAM_NEXT_ID, members: defaultTeam(now) }), 'utf8');
@@ -202,6 +235,9 @@ export class ProjectBundle {
     if (!existsSync(join(dir, 'team.yaml'))) {
       await writeFile(join(dir, 'team.yaml'), dump({ nextId: DEFAULT_TEAM_NEXT_ID, members: defaultTeam(Date.now()) }), 'utf8');
     }
+    // Same reasoning for the plan files: a bundle created before prd.md/roadmap.yaml/docs existed
+    // gets the scaffolds once, so every reader below can assume they are there.
+    await scaffoldPlan(dir, m.title);
     return new ProjectBundle(dir, simpleGit(dir));
   }
 
@@ -271,6 +307,82 @@ export class ProjectBundle {
     await this.touch();
   }
 
+  /** The PRD as it stands; a bundle always has one, scaffolded if nobody has drafted it yet. */
+  async prd(): Promise<string> {
+    return readFile(join(this.dir, 'prd.md'), 'utf8').catch(() => '');
+  }
+
+  /** When prd.md last changed on disk — what the PRD view stamps its "updated" line with. */
+  async prdUpdatedAt(): Promise<number> {
+    return stat(join(this.dir, 'prd.md')).then((s) => s.mtimeMs).catch(() => 0);
+  }
+
+  /** Replaces prd.md and refreshes the manifest's cached audit score in the same write. */
+  async writePrd(markdown: string): Promise<void> {
+    await writeFile(join(this.dir, 'prd.md'), markdown, 'utf8');
+    const m = await this.manifest();
+    m.prdScore = auditPrd(markdown).score;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  async roadmap(): Promise<Milestone[]> {
+    const raw = await readFile(join(this.dir, 'roadmap.yaml'), 'utf8').catch(() => 'milestones: []\n');
+    const data = load(raw) as { milestones?: Milestone[] } | undefined;
+    return data?.milestones ?? [];
+  }
+
+  async writeRoadmap(milestones: Milestone[]): Promise<void> {
+    await writeFile(join(this.dir, 'roadmap.yaml'), dump({ milestones }), 'utf8');
+    await this.touch();
+  }
+
+  /** The docs index plus one entry per page, newest-written first is not assumed — pages sort by slug. */
+  async docs(): Promise<{ index: string; pages: DocPage[] }> {
+    const dir = join(this.dir, 'docs');
+    const index = await readFile(join(dir, 'index.md'), 'utf8').catch(() => '');
+    let entries: string[] = [];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return { index, pages: [] };
+    }
+    const slugs = entries.filter((f) => f.endsWith('.md') && f !== 'index.md').map((f) => f.slice(0, -3)).sort();
+    const pages = await Promise.all(slugs.map(async (slug): Promise<DocPage> => {
+      const markdown = await readFile(join(dir, `${slug}.md`), 'utf8');
+      const updatedAt = await stat(join(dir, `${slug}.md`)).then((s) => s.mtimeMs).catch(() => 0);
+      return { slug, title: docTitle(markdown, slug), updatedAt };
+    }));
+    return { index, pages };
+  }
+
+  /** One docs page's markdown, or null when there is no such page. */
+  async doc(slug: string): Promise<string | null> {
+    validateDocSlug(slug);
+    return readFile(join(this.dir, 'docs', `${slug}.md`), 'utf8').catch(() => null);
+  }
+
+  /**
+   * Writes a docs page and links it from docs/index.md when it isn't linked yet. The index is the
+   * table of contents a reader (and the next turn's model) navigates by, so a page that never
+   * reaches it is a page nobody finds.
+   */
+  async writeDoc(slug: string, markdown: string): Promise<void> {
+    validateDocSlug(slug);
+    const dir = join(this.dir, 'docs');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${slug}.md`), markdown, 'utf8');
+    if (slug !== 'index') {
+      const indexPath = join(dir, 'index.md');
+      const index = await readFile(indexPath, 'utf8').catch(async () => DOCS_INDEX_TEMPLATE((await this.manifest()).title));
+      if (!index.includes(`(${slug}.md)`)) {
+        const body = `${index.trimEnd()}\n- [${docTitle(markdown, slug)}](${slug}.md)\n`;
+        await writeFile(indexPath, body, 'utf8');
+      }
+    }
+    await this.touch();
+  }
+
   async appendDecision(entry: { title: string; rationale: string; by: string }): Promise<void> {
     const filePath = join(this.dir, 'decisions.log.md');
     const existing = await readFile(filePath, 'utf8').catch(() => '');
@@ -279,6 +391,11 @@ export class ProjectBundle {
     const body = existing.trim().length ? `${existing.trim()}\n\n${block}` : block;
     await writeFile(filePath, body.endsWith('\n') ? body : `${body}\n`, 'utf8');
     await this.touch();
+  }
+
+  /** The whole decision log as markdown; empty when nothing has been decided yet. */
+  async decisions(): Promise<string> {
+    return readFile(join(this.dir, 'decisions.log.md'), 'utf8').catch(() => '');
   }
 
   async tasks(): Promise<Tasks> {

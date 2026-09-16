@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
+import { PRD_SECTIONS } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
 import { JobQueue } from '../src/queue.js';
@@ -264,5 +265,73 @@ describe('project team', () => {
     const orchestratorSession = transcript.sessions({ kind: 'orchestrator' })[0];
     const results = transcript.messages(orchestratorSession.id).filter((m) => m.role === 'tool');
     expect(results[0].content).toBe('error: unknown team member: ghost-9');
+  });
+});
+
+describe('the product plan in a turn', () => {
+  const PRD = [
+    '# Demo — PRD',
+    '',
+    ...PRD_SECTIONS.flatMap((s) => [`## ${s.title}`, '', `${s.title}: `.padEnd(240, 'a real decision, a named technology, a limit. '), '']),
+  ].join('\n');
+
+  it('carries the PRD and marks the current milestone', async () => {
+    await bundle.writePrd(PRD);
+    await bundle.writeRoadmap([
+      { id: 'm1', title: 'Skeleton', summary: 'It boots.', status: 'done' },
+      { id: 'm2', title: 'Auth', summary: 'Owners can log in.', status: 'planned' },
+      { id: 'm3', title: 'Board', summary: 'Cards move.', status: 'planned' },
+    ]);
+    const { orchestrator, brain } = await setup([publishStep(), { content: 'published' }]);
+
+    await orchestrator.turn();
+
+    const system = (brain.requests[0].messages as { role: string; content: string }[])[0].content;
+    expect(system).toContain('# Product plan');
+    expect(system).toContain('## Functional requirements');
+    expect(system).toContain('m2 [planned] Auth **← current milestone**');
+    expect(system).not.toContain('m3 [planned] Board **←');
+    expect(system).toContain('Work the current milestone only.');
+    expect(system).toContain('set_milestone_status');
+  });
+
+  it('reports an undrafted PRD and does no work at all', async () => {
+    const { orchestrator, brain } = await setup([
+      publishStep({ summary: 'prd.md is still the empty scaffold — the PRD needs drafting before work can start.' }),
+      { content: 'reported' },
+    ]);
+
+    const briefing = await orchestrator.turn();
+
+    const system = (brain.requests[0].messages as { role: string; content: string }[])[0].content;
+    expect(system).toContain('prd.md is still the empty scaffold');
+    expect(system).toContain('Do not invent requirements');
+    // The plan section replaces the PRD and roadmap listings entirely: there is nothing to show.
+    expect(system).not.toContain('## Roadmap');
+    expect(briefing.summary).toContain('still the empty scaffold');
+    expect((await bundle.tasks()).tasks).toEqual([]);
+  });
+
+  it('moves a milestone along and writes a docs page from a turn', async () => {
+    await bundle.writePrd(PRD);
+    await bundle.writeRoadmap([{ id: 'm1', title: 'Skeleton', summary: 'It boots.', status: 'planned' }]);
+    const { orchestrator } = await setup([
+      {
+        toolCalls: [
+          { name: 'set_milestone_status', arguments: { id: 'm1', status: 'in-progress' } },
+          { name: 'write_doc', arguments: { page: 'skeleton', markdown: '# Skeleton\n\nWhy: a boot path first.\n' } },
+        ],
+      },
+      publishStep(),
+      { content: 'published' },
+    ]);
+
+    await orchestrator.turn();
+
+    expect((await bundle.roadmap())[0].status).toBe('in-progress');
+    expect(await bundle.doc('skeleton')).toContain('Why: a boot path first.');
+    expect((await bundle.docs()).index).toContain('(skeleton.md)');
+    expect(await commits(bundle.dir)).toContain('agent: write doc skeleton');
+    expect(await commits(bundle.dir)).toContain('agent: milestone m1 in-progress');
   });
 });

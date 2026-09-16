@@ -1,12 +1,15 @@
 import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { JobResult, JobType, Priority, Tier, ToolCall, ToolDef } from '@agenthub/shared';
+import type { JobResult, JobType, MilestoneStatus, Priority, Tier, ToolCall, ToolDef } from '@agenthub/shared';
+import { MILESTONE_STATUSES, PRD_SECTIONS } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
+import { auditPrd } from '../projects/prd.js';
 import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
-import { validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
+import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
+import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import type { AgentLoop } from './loop.js';
 import type { Route } from '../gateway.js';
@@ -223,8 +226,12 @@ function parseTasks(args: unknown): TaskItem[] {
   });
 }
 
+/** The two document tools a turn gets: it keeps the docs true and moves the roadmap along. */
+const TURN_DOC_TOOLS = ['write_doc', 'set_milestone_status'];
+
 export function bundleTools(): Tool[] {
   return [
+    ...docTools('agent').filter((t) => TURN_DOC_TOOLS.includes(t.def.name)),
     {
       def: {
         type: 'tool', name: 'update_project_md', description: 'Replace project.md with new content.',
@@ -344,6 +351,167 @@ export function bundleTools(): Tool[] {
       },
     },
   ];
+}
+
+// --- document tools ---------------------------------------------------------
+
+/** Who is writing, which is the commit-message prefix the bundle's history is read by. */
+export type DocActor = 'agent' | 'owner';
+
+/** One-line summary of a PRD's audit, which is what a write_prd call hands back to the model. */
+const auditSummary = (markdown: string): string => {
+  const audit = auditPrd(markdown);
+  return audit.missing.length
+    ? `prd.md written — score ${audit.score}/100; still missing or thin: ${audit.missing.join(', ')}`
+    : `prd.md written — score ${audit.score}/100; every section is filled in`;
+};
+
+/**
+ * The tools that write a project's three documents: the PRD, the roadmap and the docs pages.
+ *
+ * `actor` only picks the commit prefix — `owner:` when the owner drove the edit through a document
+ * persona's chat, `agent:` when a turn made it — so the bundle's git log says who changed what.
+ * Callers hand out the subset a given persona is allowed (see `ProjectChat`), and `bundleTools`
+ * takes the two an orchestrator turn needs.
+ */
+export function docTools(actor: DocActor = 'agent'): Tool[] {
+  const prefix = `${actor}: `;
+  return [
+    {
+      def: {
+        type: 'tool', name: 'read_prd', description: 'Read the project PRD (prd.md).',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+      run: async (_args, ctx) => (await needBundle(ctx).prd()) || '(empty)',
+    },
+    {
+      def: {
+        type: 'tool', name: 'write_prd',
+        description: `Replace prd.md with the full document. It must contain every section heading: ${PRD_SECTIONS.map((s) => s.title).join(', ')}.`,
+        parameters: { type: 'object', properties: { markdown: strProp('The whole PRD as markdown.') }, required: ['markdown'] },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const markdown = str(args, 'markdown');
+        // A write that dropped sections would quietly lower the score the owner is watching, so it
+        // is refused with the list rather than accepted and audited as thin.
+        const audit = auditPrd(markdown);
+        const absent = audit.sections.filter((s) => !s.present).map((s) => s.title);
+        if (absent.length) throw new Error(`prd.md must keep every section heading; missing: ${absent.join(', ')}`);
+        await bundle.writePrd(markdown.endsWith('\n') ? markdown : `${markdown}\n`);
+        await bundle.commit(`${prefix}update prd`);
+        return auditSummary(markdown);
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'read_roadmap', description: 'Read the ordered milestones from roadmap.yaml.',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+      run: async (_args, ctx) => {
+        const milestones = await needBundle(ctx).roadmap();
+        return milestones.length ? JSON.stringify(milestones, null, 2) : '(no milestones yet)';
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'write_roadmap',
+        description: 'Replace roadmap.yaml with the full ordered milestone list; ids are assigned from the order.',
+        parameters: {
+          type: 'object',
+          properties: {
+            milestones: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: strProp('Milestone title.'), summary: strProp('What is built, and what is demonstrable at the end.'),
+                  status: { type: 'string', enum: [...MILESTONE_STATUSES], description: 'Defaults to planned.' },
+                  estimate: strProp('Coarse and optional, e.g. "2 days".'),
+                  dependsOn: { type: 'array', items: { type: 'string' }, description: 'Ids of earlier milestones.' },
+                },
+                required: ['title', 'summary'],
+              },
+            },
+          },
+          required: ['milestones'],
+        },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const milestones = normalizeMilestones(fields(args).milestones);
+        await bundle.writeRoadmap(milestones);
+        await bundle.commit(`${prefix}update roadmap`);
+        return `roadmap updated (${milestones.length} milestones)`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'set_milestone_status', description: 'Set one roadmap milestone\'s status.',
+        parameters: {
+          type: 'object',
+          properties: { id: strProp('Milestone id, e.g. "m2".'), status: { type: 'string', enum: [...MILESTONE_STATUSES] } },
+          required: ['id', 'status'],
+        },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const id = str(args, 'id');
+        const status = oneOf(args, 'status', MILESTONE_STATUSES) as MilestoneStatus;
+        const milestones = await bundle.roadmap();
+        if (!milestones.some((m) => m.id === id)) throw new Error(`unknown milestone: ${id}`);
+        await bundle.writeRoadmap(patchMilestone(milestones, id, { status }));
+        await bundle.commit(`${prefix}milestone ${id} ${status}`);
+        return `milestone ${id} is now ${status}`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'list_docs', description: 'List the documentation pages and the index that links them.',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+      run: async (_args, ctx) => {
+        const { index, pages } = await needBundle(ctx).docs();
+        const list = pages.length ? pages.map((p) => `- ${p.slug}: ${p.title}`) : ['(no pages yet)'];
+        return [`# index.md`, index.trim(), ``, `# pages`, ...list].join('\n');
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'read_doc', description: 'Read one documentation page.',
+        parameters: { type: 'object', properties: { page: strProp('Page slug, without the .md.') }, required: ['page'] },
+      },
+      run: async (args, ctx) => {
+        const page = docSlug(args);
+        return (await needBundle(ctx).doc(page)) ?? `error: no such page: ${page}`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'write_doc',
+        description: 'Write a documentation page (creating it, and linking it from docs/index.md).',
+        parameters: {
+          type: 'object',
+          properties: { page: strProp('Page slug, kebab-case, without the .md.'), markdown: strProp('Full page markdown.') },
+          required: ['page', 'markdown'],
+        },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const page = docSlug(args);
+        await bundle.writeDoc(page, str(args, 'markdown'));
+        await bundle.commit(`${prefix}write doc ${page}`);
+        return `docs/${page}.md written`;
+      },
+    },
+  ];
+}
+
+/** The page slug off a doc tool call, checked here so a bad one reads as a tool error. */
+function docSlug(args: unknown): string {
+  const page = str(args, 'page');
+  if (!DOC_SLUG_RE.test(page)) throw new Error('page must be kebab-case [a-z0-9-]{1,60}');
+  return page;
 }
 
 // --- hub tools --------------------------------------------------------------

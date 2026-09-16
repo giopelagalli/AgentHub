@@ -39,7 +39,8 @@ describe('ProjectBundle.create', () => {
       priority: 'project', intent: 'ship a demo', links: [],
     });
     expect(manifest.index.sort()).toEqual([
-      'briefings/.gitkeep', 'decisions.log.md', 'manifest.yaml', 'project.md', 'skills/.gitkeep', 'tasks.yaml', 'team.yaml',
+      'briefings/.gitkeep', 'decisions.log.md', 'docs/index.md', 'manifest.yaml', 'prd.md', 'project.md',
+      'roadmap.yaml', 'skills/.gitkeep', 'tasks.yaml', 'team.yaml',
     ]);
 
     expect(await bundle.readProject()).toContain('ship a demo');

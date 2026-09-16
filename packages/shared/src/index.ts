@@ -138,6 +138,14 @@ export function comparePriority(a: Pick<JobSpec, 'priority'>, b: Pick<JobSpec, '
 
 export type ProjectStatus = 'active' | 'paused' | 'blocked' | 'done';
 
+/** What the owner handed in at creation time, before anything was drafted from it. */
+export interface ProjectIntake {
+  /** A few sentences of "what I want", the seed a first-draft PRD is written from. */
+  idea?: string;
+  /** A PRD the owner already wrote and pasted in; the drafter fills its gaps rather than replacing it. */
+  prd?: string;
+}
+
 /** A project bundle's `manifest.yaml`. Lives here because `HubState` puts it on the wire. */
 export interface ProjectManifest {
   schema: 1;
@@ -152,6 +160,63 @@ export interface ProjectManifest {
   index: string[]; // relative paths of bundle files
   /** Absent means `auto` — the hub-wide default of local first, cloud as overflow. */
   modelPolicy?: ModelPolicy;
+  /** The owner's raw idea/PRD from `POST /api/projects`; kept so the drafter can be run later. */
+  intake?: ProjectIntake;
+  /** `auditPrd(prd.md).score`, refreshed on every PRD write, so the UI can badge an unfinished PRD. */
+  prdScore?: number;
+}
+
+// --- product plan: PRD, roadmap, docs ------------------------------------------
+
+export type MilestoneStatus = 'planned' | 'in-progress' | 'done' | 'blocked';
+
+/** One ordered step of a project's roadmap, stored in the bundle's `roadmap.yaml`. */
+export interface Milestone {
+  id: string;
+  title: string;
+  summary: string;
+  status: MilestoneStatus;
+  /** Coarse and optional — "half a day", "2 days" — omitted when nobody is sure. */
+  estimate?: string;
+  /** Ids of earlier milestones this one needs finished first. */
+  dependsOn?: string[];
+}
+
+export const MILESTONE_STATUSES = ['planned', 'in-progress', 'done', 'blocked'] as const satisfies readonly MilestoneStatus[];
+
+/**
+ * The sections every project's PRD is expected to have, in order. They are the contract between the
+ * PRD persona (which fills them), `auditPrd` (which scores them) and the UI (which lists them).
+ */
+export const PRD_SECTIONS: { key: string; title: string; hint: string }[] = [
+  { key: 'overview', title: 'Overview & problem', hint: 'What this is, who it is for, and the problem it removes.' },
+  { key: 'goals', title: 'Goals & non-goals', hint: 'What success means, and what this deliberately will not do.' },
+  { key: 'users', title: 'Users & use cases', hint: 'Who uses it and the concrete jobs they use it for.' },
+  { key: 'requirements', title: 'Functional requirements', hint: 'The behaviour, numbered and specific enough to build from.' },
+  { key: 'ux', title: 'UX & UI', hint: 'The screens and flows, and what each one shows.' },
+  { key: 'data', title: 'Data model', hint: 'The entities, their fields and how they relate.' },
+  { key: 'architecture', title: 'Architecture', hint: 'The components, the named technologies and how they talk.' },
+  { key: 'security', title: 'Security & privacy', hint: 'Authn/authz, the data held, and the threat cases handled.' },
+  { key: 'scale', title: 'Scalability & performance', hint: 'Expected load, the limits, and the latency budget.' },
+  { key: 'ops', title: 'Reliability & operations', hint: 'Deploys, backups, monitoring and what happens when it breaks.' },
+  { key: 'testing', title: 'Testing & acceptance', hint: 'How it is tested and the acceptance criteria for done.' },
+  { key: 'risks', title: 'Risks & open questions', hint: 'What could sink this, and what is still undecided.' },
+];
+
+/** `auditPrd`'s verdict: per-section coverage plus the 0..100 score the UI badges. */
+export interface PrdAudit {
+  sections: { key: string; title: string; present: boolean; thin: boolean }[];
+  /** Percentage of sections that are present and not thin, rounded. */
+  score: number;
+  /** Titles of the sections that are missing or thin. */
+  missing: string[];
+}
+
+/** One page of the project's living documentation, as `GET /api/projects/:slug/docs` lists it. */
+export interface DocPage {
+  slug: string;
+  title: string;
+  updatedAt: number;
 }
 
 /**

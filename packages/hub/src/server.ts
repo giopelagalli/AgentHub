@@ -3,8 +3,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
-import { PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
+import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
@@ -26,7 +26,9 @@ import { ProjectService, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import type { ProjectBundle } from './projects/bundle.js';
-import { InvalidSlugError, SLUG_RE } from './projects/schema.js';
+import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
+import { currentMilestoneId, moveMilestone, patchMilestone } from './projects/roadmap.js';
+import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
 import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
@@ -240,6 +242,8 @@ export function createHub(opts: HubOptions = {}): Hub {
   const master = new MasterOrchestrator({ service: projects, loop });
   // One chat per hub; the bundle is resolved per message through the service's cache.
   const chat = new ProjectChat({ loop, transcript, bundleFor: (slug) => projects.get(slug) });
+  // The PRD/roadmap drafter runs the same way: one per hub, bundles resolved per call.
+  const drafter = new PrdDrafter({ loop, gateway, transcript, bundleFor: (slug) => projects.get(slug) });
   const resources = new ResourceManager({
     registry, gateway, store: sqliteSlotStore(db),
     ...(opts.auth?.daemonToken ? { daemonToken: opts.auth.daemonToken } : {}),
@@ -822,18 +826,24 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/projects', async () => projects.list());
 
   app.post('/api/projects', async (req, reply) => {
-    const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority }> | undefined;
+    const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority; idea: string; prd: string }> | undefined;
     if (!body || typeof body.slug !== 'string' || !SLUG_RE.test(body.slug)
       || typeof body.title !== 'string' || !body.title
       || typeof body.intent !== 'string' || !body.intent
-      || (body.priority !== undefined && !PRIORITIES.includes(body.priority))) {
+      || (body.priority !== undefined && !PRIORITIES.includes(body.priority))
+      || (body.idea !== undefined && typeof body.idea !== 'string')
+      || (body.prd !== undefined && typeof body.prd !== 'string')) {
       return reply.code(400).send({ error: 'invalid project' });
     }
     const duplicate = await projects.get(body.slug).then(() => true, () => false);
     if (duplicate) return reply.code(409).send({ error: 'project already exists' });
+    // The idea (or a pasted PRD) is kept on the manifest and drafted from afterwards, by an explicit
+    // call to the draft route: creating a project must not wait on a model.
+    const intake = { ...(body.idea ? { idea: body.idea } : {}), ...(body.prd ? { prd: body.prd } : {}) };
     const manifest = await projects.create({
       slug: body.slug, title: body.title, intent: body.intent,
       ...(body.priority ? { priority: body.priority } : {}),
+      ...(Object.keys(intake).length ? { intake } : {}),
     });
     await refreshProjects();
     return reply.code(201).send(manifest);
@@ -1068,6 +1078,157 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     reply.raw.end();
     return reply;
+  });
+
+  // --- project PRD, roadmap and docs ---------------------------------------------
+
+  /**
+   * The chat route's SSE framing, reused by the two long-running plan calls: streamed `token` frames
+   * and one `done` frame carrying the finished artefact. A client that closes the stream aborts the
+   * model run rather than leaving it to finish for nobody.
+   */
+  const streamPlan = async (
+    reply: FastifyReply, slug: string, who: 'prd' | 'roadmap',
+    run: (opts: { onToken: (t: string) => void; signal: AbortSignal }) => Promise<Record<string, unknown>>,
+  ): Promise<FastifyReply> => {
+    reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    const ac = new AbortController();
+    reply.raw.on('close', () => ac.abort());
+    broadcast({ type: 'project-busy', slug, who, busy: true });
+    let full = '';
+    try {
+      const done = await run({
+        onToken: (token) => { full += token; reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`); },
+        signal: ac.signal,
+      });
+      reply.raw.write(`data: ${JSON.stringify({ done: true, full, ...done })}\n\n`);
+      await refreshProjects();
+    } catch (err) {
+      reply.raw.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+    } finally {
+      broadcast({ type: 'project-busy', slug, who, busy: false });
+    }
+    reply.raw.end();
+    return reply;
+  };
+
+  app.get('/api/projects/:slug/prd', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const markdown = await bundle.prd();
+    return { markdown, audit: auditPrd(markdown), drafted: !isPrdScaffold(markdown), updatedAt: await bundle.prdUpdatedAt() };
+  });
+
+  app.put('/api/projects/:slug/prd', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = req.body as Partial<{ markdown: string }> | undefined;
+    if (!body || typeof body.markdown !== 'string') return reply.code(400).send({ error: 'invalid prd' });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    await bundle.writePrd(body.markdown);
+    await bundle.commit('owner: edit prd');
+    await refreshProjects();
+    return { audit: auditPrd(body.markdown) };
+  });
+
+  app.post('/api/projects/:slug/prd/draft', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = (req.body ?? {}) as Partial<{ idea: string; prd: string }>;
+    for (const field of ['idea', 'prd'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') {
+        return reply.code(400).send({ error: `invalid ${field}` });
+      }
+    }
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    // Nothing in the request means "draft from what the owner already gave us at creation time".
+    const intake = (await bundle.manifest()).intake ?? {};
+    const input = {
+      ...(body.idea ?? intake.idea ? { idea: body.idea ?? intake.idea } : {}),
+      ...(body.prd ?? intake.prd ? { prd: body.prd ?? intake.prd } : {}),
+    };
+    return streamPlan(reply, slug, 'prd', async (opts) => {
+      const result = await drafter.draft(slug, input, opts);
+      return { full: result.markdown, questions: result.questions, audit: result.audit };
+    });
+  });
+
+  app.get('/api/projects/:slug/roadmap', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const milestones = await bundle.roadmap();
+    return { milestones, currentId: currentMilestoneId(milestones) };
+  });
+
+  app.post('/api/projects/:slug/roadmap/generate', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    // Checked before the stream opens: once the SSE headers are out, a 400 has nowhere to go.
+    if (isPrdScaffold(await bundle.prd())) return reply.code(400).send({ error: 'the PRD has not been drafted yet' });
+    return streamPlan(reply, slug, 'roadmap', async (opts) => ({ milestones: await drafter.generateRoadmap(slug, opts) }));
+  });
+
+  app.post('/api/projects/:slug/roadmap/move', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = (req.body ?? {}) as Partial<{ id: string; direction: 'up' | 'down' }>;
+    if (typeof body.id !== 'string' || (body.direction !== 'up' && body.direction !== 'down')) {
+      return reply.code(400).send({ error: 'invalid move' });
+    }
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const milestones = await bundle.roadmap();
+    if (!milestones.some((m) => m.id === body.id)) return reply.code(400).send({ error: 'unknown milestone' });
+    // A move at either edge is a no-op, not an error: the owner asked for an order it already has.
+    const moved = moveMilestone(milestones, body.id, body.direction);
+    if (moved !== milestones) {
+      await bundle.writeRoadmap(moved);
+      await bundle.commit(`owner: move milestone ${body.id} ${body.direction}`);
+    }
+    return { milestones: moved };
+  });
+
+  app.patch('/api/projects/:slug/roadmap/:id', async (req, reply) => {
+    const { slug, id } = req.params as { slug: string; id: string };
+    const body = (req.body ?? {}) as Partial<{ title: string; summary: string; status: MilestoneStatus; estimate: string }>;
+    for (const field of ['title', 'summary', 'estimate'] as const) {
+      if (body[field] !== undefined && typeof body[field] !== 'string') {
+        return reply.code(400).send({ error: `invalid ${field}` });
+      }
+    }
+    if (body.status !== undefined && !MILESTONE_STATUSES.includes(body.status)) {
+      return reply.code(400).send({ error: 'invalid status' });
+    }
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const milestones = await bundle.roadmap();
+    if (!milestones.some((m) => m.id === id)) return reply.code(404).send({ error: 'unknown milestone' });
+    const patched = patchMilestone(milestones, id, body);
+    await bundle.writeRoadmap(patched);
+    await bundle.commit(`owner: edit milestone ${id}`);
+    return { milestones: patched };
+  });
+
+  app.get('/api/projects/:slug/docs', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    // The decision log rides along: it is the other half of "why is it like this", and the docs view
+    // shows both.
+    return { ...(await bundle.docs()), decisions: await bundle.decisions() };
+  });
+
+  app.get('/api/projects/:slug/docs/:page', async (req, reply) => {
+    const { slug, page } = req.params as { slug: string; page: string };
+    if (!DOC_SLUG_RE.test(page)) return reply.code(400).send({ error: 'invalid page' });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const markdown = await bundle.doc(page);
+    if (markdown === null) return reply.code(404).send({ error: 'unknown page' });
+    const { pages } = await bundle.docs();
+    return { slug: page, title: pages.find((p) => p.slug === page)?.title ?? page, markdown };
   });
 
   app.get('/api/briefings', async () => projects.briefings());

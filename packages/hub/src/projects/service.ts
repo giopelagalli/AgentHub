@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type ModelPolicy, type Priority } from '@agenthub/shared';
+import { PRIORITY_RANK, type ModelPolicy, type Priority, type ProjectIntake } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -46,6 +46,8 @@ export interface ProjectInit {
   title: string;
   intent: string;
   priority?: Priority;
+  /** The owner's idea or pasted PRD, kept on the manifest for the drafter to work from later. */
+  intake?: ProjectIntake;
 }
 
 /** A project's latest briefing together with the prose the master is allowed to read. */

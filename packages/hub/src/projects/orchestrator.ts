@@ -8,6 +8,7 @@ import { browserTools } from '../agents/browser-tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import type { ProjectBundle } from './bundle.js';
+import { planningContext } from './prd.js';
 import { orchestratorSystemPrompt } from './prompts.js';
 import type { Briefing, Manifest, TaskItem } from './schema.js';
 
@@ -66,7 +67,7 @@ export class ProjectOrchestrator {
       kind: 'orchestrator',
       subject: manifest.slug,
       tier: 'orchestrator',
-      system: orchestratorSystemPrompt(await bundle.contextPack(), await bundle.team()),
+      system: orchestratorSystemPrompt(await bundle.contextPack(), await bundle.team(), await planningContext(bundle)),
       user: opts.instruction ?? DEFAULT_INSTRUCTION,
       tools: [
         ...workspaceTools(),

@@ -11,7 +11,7 @@ import { ModelGateway } from '../src/gateway.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
-import { auditPrd, isPrdScaffold, prdScaffold, PrdDrafter, PrdNotDraftedError } from '../src/projects/prd.js';
+import { auditPrd, isPrdScaffold, planningContext, prdScaffold, PrdDrafter, PrdNotDraftedError } from '../src/projects/prd.js';
 import { createHub, type Hub } from '../src/server.js';
 
 let root: string;
@@ -124,6 +124,30 @@ describe('the PRD scaffold', () => {
     expect((await bundle.manifest()).prdScore).toBe(0);
     expect(await bundle.roadmap()).toEqual([]);
     expect((await bundle.docs()).pages).toEqual([]);
+  });
+});
+
+describe('planningContext', () => {
+  it('summarizes a genuinely huge PRD instead of carrying it whole, and says so', async () => {
+    const huge = fullPrd({ risks: body('Risks & open questions').padEnd(40000, 'more risk detail and open questions. ') });
+    expect(huge.length).toBeGreaterThan(30000);
+    await bundle.writePrd(huge);
+
+    const ctx = await planningContext(bundle);
+
+    expect(ctx.prdComplete).toBe(false);
+    expect(ctx.prd.length).toBeLessThan(huge.length);
+    expect(ctx.prd).toContain('## Risks & open questions');
+  });
+
+  it('carries a normal-sized PRD whole', async () => {
+    const normal = fullPrd();
+    await bundle.writePrd(normal);
+
+    const ctx = await planningContext(bundle);
+
+    expect(ctx.prdComplete).toBe(true);
+    expect(ctx.prd).toBe(normal.trim());
   });
 });
 

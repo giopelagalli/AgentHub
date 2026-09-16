@@ -1,6 +1,6 @@
 import { existsSync, type Dirent } from 'node:fs';
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
 import type { DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, TeamMember } from '@agenthub/shared';
@@ -16,6 +16,24 @@ const SCAFFOLD_DIRS = ['skills', 'briefings', 'workspace'];
 /** Only these paths are "knowledge" the manifest index (and the model's context pack) cares about. */
 const KNOWLEDGE_FILES = ['manifest.yaml', 'project.md', 'prd.md', 'roadmap.yaml', 'decisions.log.md', 'tasks.yaml', 'team.yaml'];
 const KNOWLEDGE_DIRS = ['skills', 'briefings', 'docs'];
+
+/** The bundle sub-directories read_bundle may open a file in; `workspace/` is read_file's job. */
+const READABLE_DIRS = ['docs', 'skills'];
+
+/**
+ * The bundle-relative path a read_bundle call is allowed to open: one of the knowledge files, or a
+ * file under docs/ or skills/. Lexical, like the workspace tools' own check — `workspace/` is
+ * refused because read_file already covers it, and everything else because it is not the bundle.
+ */
+export function bundleReadPath(path: string): string {
+  const rel = path.trim().replace(/^\.\//, '');
+  const segments = rel.split('/');
+  if (!rel || isAbsolute(path) || segments.includes('..')) throw new Error(`not a bundle path: ${path}`);
+  if (!KNOWLEDGE_FILES.includes(rel) && !READABLE_DIRS.includes(segments[0])) {
+    throw new Error(`read_bundle reads the bundle's own files only: ${[...KNOWLEDGE_FILES, ...READABLE_DIRS.map((d) => `${d}/`)].join(', ')}`);
+  }
+  return rel;
+}
 
 /** The one-line intro a fresh `docs/index.md` carries above its (still empty) page list. */
 const DOCS_INDEX_TEMPLATE = (title: string): string =>
@@ -484,6 +502,26 @@ export class ProjectBundle {
     await writeFile(join(dir, 'latest.json'), json, 'utf8');
     await writeFile(join(dir, 'latest.md'), md, 'utf8');
     await this.touch();
+  }
+
+  /**
+   * The bundle's own knowledge files as bundle-relative paths — what a turn's prompt talks about.
+   * `workspace/` is deliberately absent: it is arbitrary project code, and read_file covers it.
+   */
+  async bundleFiles(): Promise<string[]> {
+    const acc: string[] = [];
+    for (const f of KNOWLEDGE_FILES) {
+      if (existsSync(join(this.dir, f))) acc.push(f);
+    }
+    for (const d of READABLE_DIRS) await walkDir(this.dir, join(this.dir, d), acc);
+    return acc.map((p) => p.split(sep).join('/')).sort();
+  }
+
+  /** Reads one of `bundleFiles()`; anything else is refused rather than read. */
+  async readBundleFile(path: string): Promise<string> {
+    const rel = bundleReadPath(path);
+    return readFile(join(this.dir, ...rel.split('/')), 'utf8')
+      .catch(() => { throw new Error(`no such bundle file: ${rel}`); });
   }
 
   async latestBriefing(): Promise<Briefing | null> {

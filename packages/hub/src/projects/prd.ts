@@ -12,8 +12,12 @@ export const PRD_PLACEHOLDER = '_Not drafted yet._';
 /** A section body shorter than this reads as a heading with a sentence under it, not a section. */
 const THIN_SECTION_CHARS = 200;
 
-/** Above this, the orchestrator's prompt carries the PRD's shape instead of the whole document. */
-const PRD_BRIEF_LIMIT = 6000;
+/**
+ * Above this, the orchestrator's prompt carries the PRD's shape instead of the whole document. The
+ * orchestrator models have 256K–1M context, so a normal PRD belongs in the prompt whole; this is the
+ * fallback for a genuinely huge document.
+ */
+const PRD_BRIEF_LIMIT = 30000;
 
 /** Where the drafter puts the questions it wants the owner to answer; stripped out of prd.md. */
 export const QUESTIONS_HEADING = '## Questions for the owner';
@@ -110,6 +114,7 @@ export async function planningContext(bundle: ProjectBundle): Promise<PlanningCo
   const milestones = await bundle.roadmap();
   return {
     prd: prdBrief(prd),
+    prdComplete: prd.length <= PRD_BRIEF_LIMIT,
     scaffoldOnly: isPrdScaffold(prd),
     milestones,
     currentId: currentMilestoneId(milestones),

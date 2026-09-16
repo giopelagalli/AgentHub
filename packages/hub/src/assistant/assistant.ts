@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@agenthub/shared';
+import { ASSISTANT_TOOL_CALLS } from '../agents/budgets.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Tool } from '../agents/tools.js';
 import type { SessionOutcome, Transcript } from '../agents/transcript.js';
@@ -10,7 +11,6 @@ const KIND = 'assistant';
 const SUBJECT = 'owner';
 const HISTORY_TURNS = 20;
 const HISTORY_SESSION_LIMIT = 40;
-const MAX_TOOL_CALLS = 8;
 const MEMORY_INDEX_LIMIT = 4000;
 const INDEX_TRUNCATED_MARKER = '\n[index truncated]';
 
@@ -83,7 +83,7 @@ export class Assistant {
       user: text,
       tools: this.deps.tools,
       ctx: {},
-      maxToolCalls: MAX_TOOL_CALLS,
+      maxToolCalls: ASSISTANT_TOOL_CALLS,
       ...(opts.onToken ? { onToken: opts.onToken } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
     });

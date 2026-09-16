@@ -4,7 +4,9 @@ import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { bundleTools, hubTools, spawnSubagentTool, workspaceTools, type Tool } from '../agents/tools.js';
+import { ORCHESTRATOR_TOOL_CALLS } from '../agents/budgets.js';
 import { browserTools } from '../agents/browser-tools.js';
+import type { AgentRunResult } from '../agents/loop.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import type { ProjectBundle } from './bundle.js';
@@ -12,7 +14,6 @@ import { planningContext } from './prd.js';
 import { orchestratorSystemPrompt } from './prompts.js';
 import type { Briefing, Manifest, TaskItem } from './schema.js';
 
-const ORCHESTRATOR_TOOL_CALLS = 12;
 const SUMMARY_LIMIT = 600;
 const SYNTHESIZED_NEXT_STEPS = 5;
 const COMMIT_LABEL_LIMIT = 60;
@@ -95,16 +96,17 @@ export class ProjectOrchestrator {
     if (endedEarly && before) return before;
 
     // Otherwise the master still needs a report: synthesize one from the board and what was said.
-    const briefing = await this.synthesize(manifest, result.text);
+    const briefing = await this.synthesize(manifest, result);
     await bundle.publishBriefing(briefing);
     await bundle.commit(`agent: turn ${n} — ${label(briefing.summary)}`);
     return briefing;
   }
 
-  private async synthesize(manifest: Manifest, lastText: string): Promise<Briefing> {
+  private async synthesize(manifest: Manifest, result: AgentRunResult): Promise<Briefing> {
     const { tasks } = await this.deps.bundle.tasks();
     const open = tasks.filter((t: TaskItem) => t.status !== 'done');
-    const summary = lastText.trim() || 'The turn ended without a report from the model.';
+    const note = incompleteNote(result);
+    const summary = note ?? (result.text.trim() || 'The turn ended without a report from the model.');
     return {
       slug: manifest.slug,
       title: manifest.title,
@@ -112,9 +114,24 @@ export class ProjectOrchestrator {
       priority: manifest.priority,
       summary: summary.slice(0, SUMMARY_LIMIT),
       progress: { done: tasks.length - open.length, total: tasks.length },
-      blockers: open.filter((t) => t.status === 'blocked').map((t) => t.title),
+      blockers: [...(note ? [note] : []), ...open.filter((t) => t.status === 'blocked').map((t) => t.title)],
       nextSteps: open.filter((t) => t.status !== 'blocked').slice(0, SYNTHESIZED_NEXT_STEPS).map((t) => t.title),
       updatedAt: Date.now(),
     };
   }
+}
+
+/**
+ * What a turn that ran out of room (or failed) says instead of its own last words. The model's final
+ * assistant text there is mid-thought — "let me try a smaller range" — and publishing it as the
+ * project's summary tells the master something that was never reported.
+ */
+function incompleteNote(result: AgentRunResult): string | null {
+  if (result.outcome === 'budget-exhausted') {
+    return `The turn hit its tool-call budget (${ORCHESTRATOR_TOOL_CALLS}) before reporting; ${result.toolCalls} tool calls were made, last action: ${result.lastTool ?? 'none'}.`;
+  }
+  if (result.outcome === 'error') {
+    return `The turn ended with an error before reporting; ${result.toolCalls} tool calls were made, last action: ${result.lastTool ?? 'none'}.`;
+  }
+  return null;
 }

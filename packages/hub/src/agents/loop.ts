@@ -39,6 +39,8 @@ export interface AgentRunResult {
   outcome: SessionOutcome;
   /** The model hit its output limit on the final turn, so `text` is cut short. */
   truncated: boolean;
+  /** The last tool the run actually executed; what "it got this far" means for a turn that ended early. */
+  lastTool?: string;
 }
 
 /**
@@ -64,11 +66,12 @@ export class AgentLoop {
     let toolCalls = 0;
     let text = '';
     let truncated = false;
+    let lastTool: string | undefined;
 
     const finish = (outcome: SessionOutcome): AgentRunResult => {
       transcript.endSession(sessionId, outcome);
       if (opts.memberId) opts.onBusy?.(false);
-      return { sessionId, text, toolCalls, outcome, truncated };
+      return { sessionId, text, toolCalls, outcome, truncated, ...(lastTool ? { lastTool } : {}) };
     };
 
     // Every tool_call in an assistant message must be answered by a tool message, or the transcript
@@ -120,6 +123,7 @@ export class AgentLoop {
           return finish('aborted');
         }
         toolCalls++;
+        lastTool = call.name;
         answer(call, this.checkOutward(opts.tools, call, sessionId, await runToolCall(opts.tools, call, ctx)));
       }
     }

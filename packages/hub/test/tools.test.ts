@@ -112,6 +112,11 @@ describe('workspaceTools', () => {
     expect(out).toBe('error: cwd escapes workspace');
   });
 
+  it('refuses a path argument that escapes the workspace', async () => {
+    const out = await call(workspaceTools(), 'run_shell', { cmd: ['cat', '../prd.md'] });
+    expect(out).toBe('error: path argument escapes workspace: ../prd.md');
+  });
+
   it('errors when the session has no bundle', async () => {
     ctx = { hub: ctx.hub, sessionId: 1, log: () => {} };
     const out = await call(workspaceTools(), 'read_file', { path: 'x' });
@@ -159,6 +164,20 @@ describe('bundleTools', () => {
     expect(out.startsWith('error:')).toBe(true);
     expect(await bundle.latestBriefing()).toBeNull();
   });
+
+  it('reads a bundle file with read_bundle and refuses paths outside it', async () => {
+    const out = await call(bundleTools(), 'read_bundle', { path: 'prd.md' });
+    expect(out).toBe(await bundle.prd());
+
+    expect(await call(bundleTools(), 'read_bundle', { path: '../../etc/passwd' })).toMatch(/^error:/);
+    expect(await call(bundleTools(), 'read_bundle', { path: 'workspace/x' })).toMatch(/^error:/);
+  });
+
+  it('lists the bundle files read_bundle can open, and never workspace/', async () => {
+    const out = await call(bundleTools(), 'list_bundle', {});
+    expect(out).toContain('prd.md');
+    expect(out).not.toContain('workspace');
+  });
 });
 
 describe('hubTools', () => {
@@ -186,10 +205,12 @@ describe('runToolCall', () => {
     expect(await runToolCall(tools, { id: 'c', name: 'read_file', arguments: '{oops' }, ctx)).toMatch(/^error:/);
   });
 
-  it('truncates long results to 8k chars', async () => {
-    await writeFile(join(bundle.workspace, 'big.txt'), 'x'.repeat(20000), 'utf8');
+  it('head-keeps a long result and names what it cut', async () => {
+    const content = `${'x'.repeat(9000)}TAIL`;
+    await writeFile(join(bundle.workspace, 'big.txt'), content, 'utf8');
     const out = await call(workspaceTools(), 'read_file', { path: 'big.txt' });
-    expect(out.length).toBe(8000);
-    expect(out.endsWith('[truncated]')).toBe(true);
+    expect(out.startsWith('x'.repeat(100))).toBe(true);
+    expect(out).not.toContain('TAIL');
+    expect(out.endsWith('[truncated: showing first 8000 of 9004 characters]')).toBe(true);
   });
 });

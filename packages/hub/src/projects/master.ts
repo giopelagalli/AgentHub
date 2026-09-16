@@ -1,4 +1,5 @@
 import { PRIORITY_RANK, type Priority } from '@agenthub/shared';
+import { MASTER_COMMAND_TOOL_CALLS } from '../agents/budgets.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Tool } from '../agents/tools.js';
 import type { ProjectService, BriefingDoc } from './service.js';
@@ -6,7 +7,6 @@ import { SLUG_RE, type Briefing, type Manifest } from './schema.js';
 
 const SUBJECT = 'master';
 const BRIEF_LIMIT = 1500;
-const COMMAND_TOOL_CALLS = 8;
 const PRIORITIES = Object.keys(PRIORITY_RANK) as Priority[];
 
 const NEVER_RAW_CONTEXT = [
@@ -199,7 +199,7 @@ export class MasterOrchestrator {
       user: text,
       tools: masterTools(this.deps.service, actions),
       ctx: {},
-      maxToolCalls: COMMAND_TOOL_CALLS,
+      maxToolCalls: MASTER_COMMAND_TOOL_CALLS,
     });
     return { text: result.text.trim(), actions };
   }

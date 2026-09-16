@@ -1,8 +1,8 @@
-import { readdir, readFile, mkdir, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readdir, readFile, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { JobResult, JobType, MilestoneStatus, Priority, Tier, ToolCall, ToolDef } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRD_SECTIONS } from '@agenthub/shared';
-import { resolveWorkspace, runShellTask } from '@agenthub/shared/shell';
+import { resolveWorkspace, runShellTask, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
@@ -11,11 +11,11 @@ import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
+import { SUBAGENT_TOOL_CALLS } from './budgets.js';
 import type { AgentLoop } from './loop.js';
 import type { Route } from '../gateway.js';
 
 const TOOL_RESULT_LIMIT = 8000;
-const TRUNCATION_MARKER = '\n[truncated]';
 const SHELL_TIMEOUT_MS = 60_000;
 
 export interface HubDeps {
@@ -56,15 +56,20 @@ export async function runToolCall(tools: Tool[], call: ToolCall, ctx: ToolContex
     return `error: invalid arguments JSON: ${(e as Error).message}`;
   }
   try {
-    return truncate(await tool.run(args, ctx));
+    return truncateResult(await tool.run(args, ctx), TOOL_RESULT_LIMIT);
   } catch (e) {
     return `error: ${(e as Error).message}`;
   }
 }
 
-function truncate(text: string): string {
-  if (text.length <= TOOL_RESULT_LIMIT) return text;
-  return text.slice(0, TOOL_RESULT_LIMIT - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+/**
+ * Head-keeps an oversized result and names what it cut. Keeping the tail — as this used to — is a
+ * trap: a model narrowing its read range sees the same end of the file every time, with nothing
+ * saying why, and loops until its budget is gone.
+ */
+export function truncateResult(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}\n[truncated: showing first ${limit} of ${text.length} characters]`;
 }
 
 // --- argument helpers -------------------------------------------------------
@@ -118,15 +123,65 @@ function inWorkspace(ctx: ToolContext, path: string | undefined): string {
 
 const strProp = (description: string) => ({ type: 'string', description });
 
+/**
+ * `realpath` of `p`, or of its deepest existing ancestor with the missing tail re-appended. The
+ * containment check below compares real paths on both sides — on macOS the workspace root itself
+ * usually sits under a symlinked /var — and the path being checked often does not exist yet.
+ */
+async function realPathish(p: string): Promise<string> {
+  try {
+    return await realpath(p);
+  } catch {
+    const parent = dirname(p);
+    if (parent === p) return p;
+    return join(await realPathish(parent), basename(p));
+  }
+}
+
+/** Refuses `target` when it is not `root` or below it. */
+function assertInside(root: string, target: string, message: string): void {
+  const rel = relative(root, target);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error(message);
+}
+
+/**
+ * argv entries that name a path. cmd[0] is the executable — an absolute /usr/bin/… is normal and
+ * reads nothing — so only the arguments are checked.
+ */
+function pathArgs(cmd: string[]): string[] {
+  return cmd.slice(1).filter((a) => a.startsWith('/') || a.startsWith('.') || a.includes('/'));
+}
+
+/**
+ * The cwd/containment check `read_file` and `list_dir` already enforce, applied to the shell too:
+ * `resolveWorkspace` scopes the cwd, realpath keeps a symlinked cwd from pointing out of the tree,
+ * and every path-shaped argument is resolved against that cwd the same way.
+ *
+ * This is cwd-scoping over the workspace, not a sandbox: a command that builds a path at runtime
+ * (`sh -c 'cat /etc/passwd'`) is still whatever the hub's OS user can reach. Real isolation needs a
+ * sandboxed user or a container.
+ */
+async function assertShellInWorkspace(workspace: string, cmd: string[], cwd: string | undefined): Promise<void> {
+  const root = await realPathish(workspace);
+  const target = resolveWorkspace(workspace, '.', cwd);
+  assertInside(root, await realPathish(target), 'cwd escapes workspace');
+  for (const arg of pathArgs(cmd)) {
+    const p = isAbsolute(arg) ? arg : resolve(target, arg);
+    assertInside(root, await realPathish(p), `path argument escapes workspace: ${arg}`);
+  }
+}
+
 // --- workspace tools --------------------------------------------------------
 
 /**
  * File and shell tools scoped to `<bundle>/workspace`.
  *
  * The scoping is *cwd-scoping, not containment*: `resolveWorkspace` is a lexical check on the
- * requested path (no realpath, so a symlink inside the workspace still points out of it), and a
- * command the model runs — `sh -c ...` above all — can read and write anything the hub's OS user
- * can. Real isolation has to come from running these tools under a sandboxed user or container.
+ * requested path, and `run_shell` additionally realpath-checks its cwd and any path-shaped argv
+ * entries (`assertShellInWorkspace`) so a symlink inside the workspace can't point out of it. A
+ * command the model runs can still build a path at runtime (`sh -c 'cat /etc/passwd'`), which reads
+ * whatever the hub's OS user can reach. Real isolation has to come from running these tools under a
+ * sandboxed user or container.
  */
 export function workspaceTools(): Tool[] {
   return [
@@ -169,7 +224,9 @@ export function workspaceTools(): Tool[] {
     {
       def: {
         type: 'tool', name: 'run_shell',
-        description: 'Run a command (argv form, no shell) in the project workspace and return its exit code and output tail.',
+        description: 'Run a command (argv form, no shell) in the project workspace and return its exit code and output tail. ' +
+          'The cwd and any path-shaped arguments must stay inside the workspace. This is cwd-scoping over the workspace, ' +
+          'not a sandbox: a command that builds a path at runtime can still reach whatever the OS user can.',
         parameters: {
           type: 'object',
           properties: {
@@ -181,10 +238,13 @@ export function workspaceTools(): Tool[] {
         },
       },
       run: async (args, ctx) => {
+        const cmd = strArray(args, 'cmd');
+        const cwd = optStr(args, 'cwd');
+        await assertShellInWorkspace(needBundle(ctx).workspace, cmd, cwd);
         const timeoutRaw = fields(args).timeoutMs;
         const timeoutMs = typeof timeoutRaw === 'number' && timeoutRaw > 0 ? timeoutRaw : SHELL_TIMEOUT_MS;
         const result = await runShellTask(
-          { cmd: strArray(args, 'cmd'), cwd: optStr(args, 'cwd'), timeoutMs },
+          { cmd, cwd, timeoutMs },
           // `'.'` as the project segment: the bundle workspace is already project-scoped, so the
           // sandbox root is the workspace itself.
           { workspaceRoot: needBundle(ctx).workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
@@ -195,6 +255,8 @@ export function workspaceTools(): Tool[] {
   ];
 }
 
+// The shell keeps the *tail*, unlike `truncateResult` above: its output streams to an unbounded
+// length (a build log), and for that the end is the useful part rather than the start.
 function renderShellResult(result: JobResult, timeoutMs: number): string {
   const head = result.timedOut
     ? `error: timed out after ${timeoutMs}ms`
@@ -202,8 +264,13 @@ function renderShellResult(result: JobResult, timeoutMs: number): string {
       ? 'error: aborted'
       : `exit: ${result.exitCode ?? `killed (${result.signal})`}`;
   const lines = [head];
-  if (result.stdoutTail?.trim()) lines.push(`stdout:\n${result.stdoutTail.trimEnd()}`);
-  if (result.stderrTail?.trim()) lines.push(`stderr:\n${result.stderrTail.trimEnd()}`);
+  for (const [name, tail] of [['stdout', result.stdoutTail], ['stderr', result.stderrTail]] as const) {
+    if (!tail?.trim()) continue;
+    const note = tail.length >= SHELL_TAIL_LENGTH
+      ? ` [truncated: showing the last ${tail.length} characters; earlier output was dropped]`
+      : '';
+    lines.push(`${name}${note}:\n${tail.trimEnd()}`);
+  }
   return lines.join('\n');
 }
 
@@ -232,6 +299,22 @@ const TURN_DOC_TOOLS = ['write_doc', 'set_milestone_status'];
 export function bundleTools(): Tool[] {
   return [
     ...docTools('agent').filter((t) => TURN_DOC_TOOLS.includes(t.def.name)),
+    {
+      def: {
+        type: 'tool', name: 'read_bundle',
+        description: 'Read one of the project bundle\'s own files: prd.md, roadmap.yaml, tasks.yaml, manifest.yaml, project.md, ' +
+          'decisions.log.md, team.yaml, or a page under docs/ or skills/. The workspace is not reachable from here — read_file covers that.',
+        parameters: { type: 'object', properties: { path: strProp('Bundle-relative path, e.g. "prd.md" or "docs/index.md".') }, required: ['path'] },
+      },
+      run: async (args, ctx) => needBundle(ctx).readBundleFile(str(args, 'path')),
+    },
+    {
+      def: {
+        type: 'tool', name: 'list_bundle', description: 'List the bundle files read_bundle can open.',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+      run: async (_args, ctx) => (await needBundle(ctx).bundleFiles()).join('\n'),
+    },
     {
       def: {
         type: 'tool', name: 'update_project_md', description: 'Replace project.md with new content.',
@@ -565,7 +648,6 @@ export function hubTools(): Tool[] {
 
 // --- delegation -------------------------------------------------------------
 
-const SUBAGENT_TOOL_CALLS = 25;
 const SUBAGENT_RESULT_LIMIT = 4000;
 
 /**
@@ -628,9 +710,7 @@ export function spawnSubagentTool(deps: {
       });
       const text = res.text.trim();
       if (!text) return `subagent ${role} ended (${res.outcome}) without a report`;
-      return text.length <= SUBAGENT_RESULT_LIMIT
-        ? text
-        : text.slice(0, SUBAGENT_RESULT_LIMIT - TRUNCATION_MARKER.length) + TRUNCATION_MARKER;
+      return truncateResult(text, SUBAGENT_RESULT_LIMIT);
     },
   };
 }

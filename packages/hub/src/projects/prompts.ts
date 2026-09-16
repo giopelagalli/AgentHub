@@ -29,6 +29,8 @@ const BRIEFING_SCHEMA = `{
 export interface PlanningContext {
   /** The PRD as the prompt carries it — whole, or its headings and first paragraphs. */
   prd: string;
+  /** True when `prd` above is the whole document, false when it is the heading summary of a huge one. */
+  prdComplete: boolean;
   /** True while prd.md is still the untouched scaffold: there is no product to build yet. */
   scaffoldOnly: boolean;
   milestones: Milestone[];
@@ -63,6 +65,9 @@ function planningSection(planning: PlanningContext): string[] {
   return [
     `# Product plan`,
     `## PRD`,
+    planning.prdComplete
+      ? `(This is the complete PRD.)`
+      : `(This is a summary: each section's heading and first paragraph. Read the whole document with read_bundle("prd.md").)`,
     planning.prd,
     ``,
     `## Roadmap`,
@@ -102,7 +107,10 @@ export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[]
     `- tasks.yaml — the task board (backlog / in-progress / done / blocked). Tool: update_tasks.`,
     `- skills/ — playbooks you accumulate for this project. Tool: write_skill.`,
     `- briefings/ — the structured briefings you publish. Tool: publish_briefing.`,
-    `- workspace/ — the actual working files; the file and shell tools are scoped to it.`,
+    `- workspace/ — the actual working files; read_file, list_dir and run_shell are scoped to it.`,
+    `Read any of these with read_bundle ("prd.md", "docs/index.md", "skills/<name>.md") and list them`,
+    `with list_bundle. read_file, list_dir and run_shell reach workspace/ only — they cannot see the`,
+    `files above, and nothing reaches outside the bundle.`,
     ``,
     ...(team.length ? [
       `# Your team`,

@@ -15,6 +15,7 @@ import { ProjectOrchestrator } from '../src/projects/orchestrator.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { workspaceTools } from '../src/agents/tools.js';
+import { ORCHESTRATOR_TOOL_CALLS, SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 
 let root: string;
 let bundle: ProjectBundle;
@@ -333,5 +334,52 @@ describe('the product plan in a turn', () => {
     expect((await bundle.docs()).index).toContain('(skeleton.md)');
     expect(await commits(bundle.dir)).toContain('agent: write doc skeleton');
     expect(await commits(bundle.dir)).toContain('agent: milestone m1 in-progress');
+  });
+});
+
+describe('tool-call budgets', () => {
+  it('are one place, with the orchestrator wide enough to read its bundle and still delegate', () => {
+    expect(ORCHESTRATOR_TOOL_CALLS).toBe(40);
+    expect(SUBAGENT_TOOL_CALLS).toBe(25);
+  });
+});
+
+describe('the whole PRD in the prompt', () => {
+  const MARKER = 'MARKER_LAST_SECTION_9f3c1a';
+
+  const bigPrd = PRD_SECTIONS.map((s, i) => {
+    const body = i === PRD_SECTIONS.length - 1
+      ? `${MARKER} `.padEnd(1300, 'a real decision, a named technology, a limit. ')
+      : `${s.title}: `.padEnd(1300, 'a real decision, a named technology, a limit. ');
+    return [`## ${s.title}`, '', body, ''].join('\n');
+  });
+  const PRD = ['# Demo — PRD', '', ...bigPrd].join('\n');
+
+  it('carries a normal-sized PRD whole, not just its heading summary', async () => {
+    expect(PRD.length).toBeGreaterThan(10000);
+    await bundle.writePrd(PRD);
+    const { orchestrator, brain } = await setup([publishStep(), { content: 'published' }]);
+
+    await orchestrator.turn();
+
+    const system = (brain.requests[0].messages as { role: string; content: string }[])[0].content;
+    expect(system).toContain(MARKER);
+    expect(system).toContain('(This is the complete PRD.)');
+  });
+});
+
+describe('a turn that never reported', () => {
+  it('publishes what the budget spent instead of the model\'s mid-thought text', async () => {
+    const toolCalls = Array.from({ length: ORCHESTRATOR_TOOL_CALLS + 1 }, () => ({ name: 'list_dir', arguments: {} }));
+    const { orchestrator } = await setup([
+      { toolCalls, content: 'The output is tail-truncated. Let me request smaller ranges to capture FR 1-8 exactly.' },
+    ]);
+
+    const briefing = await orchestrator.turn();
+
+    expect(briefing.summary).toContain(`tool-call budget (${ORCHESTRATOR_TOOL_CALLS})`);
+    expect(briefing.summary).toContain('last action: list_dir');
+    expect(briefing.summary).not.toContain('tail-truncated');
+    expect(briefing.blockers.some((b) => b.includes('last action: list_dir'))).toBe(true);
   });
 });

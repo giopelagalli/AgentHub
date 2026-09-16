@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 
 export interface ScriptToolCall { name: string; arguments: object; }
-export type ScriptStep = { toolCalls: ScriptToolCall[] } | { content: string };
+export type ScriptStep = { toolCalls: ScriptToolCall[]; content?: string } | { content: string };
 
 export interface MockOptions {
   tokenDelayMs?: number;
@@ -85,12 +85,16 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
           id: 'mock-1', object: 'chat.completion', model: body.model,
           choices: [{
             index: 0,
-            message: { role: 'assistant', content: null, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })) },
+            message: { role: 'assistant', content: step.content ?? null, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } })) },
             finish_reason: 'tool_calls',
           }],
         };
       }
       reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      if (step.content) {
+        const contentChunk = { id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: { content: step.content }, finish_reason: null }] };
+        reply.raw.write(`data: ${JSON.stringify(contentChunk)}\n\n`);
+      }
       for (let i = 0; i < toolCalls.length; i++) {
         const tc = toolCalls[i];
         const fragments = splitArguments(tc.arguments);

@@ -31,7 +31,7 @@ export function resolveWorkspace(root: string, project: string | undefined, cwd:
 }
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-const TAIL_LENGTH = 2000;
+export const SHELL_TAIL_LENGTH = 2000;
 const KILL_ESCALATION_MS = 5000;
 const DRAIN_MS = 200;
 
@@ -121,12 +121,12 @@ export async function runShellTask(
 
     const onStdoutData = (chunk: Buffer) => {
       if (resolved) return;
-      stdout = (stdout + chunk.toString()).slice(-TAIL_LENGTH);
+      stdout = (stdout + chunk.toString()).slice(-SHELL_TAIL_LENGTH);
       stdoutSplitter.push(chunk);
     };
     const onStderrData = (chunk: Buffer) => {
       if (resolved) return;
-      stderr = (stderr + chunk.toString()).slice(-TAIL_LENGTH);
+      stderr = (stderr + chunk.toString()).slice(-SHELL_TAIL_LENGTH);
       stderrSplitter.push(chunk);
     };
     child.stdout.on('data', onStdoutData);

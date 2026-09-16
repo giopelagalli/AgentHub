@@ -1,6 +1,7 @@
 import type { ChatMessage, TeamMember } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
 import { routeFor } from '../gateway.js';
+import { CHAT_TOOL_CALLS, DOC_PERSONA_TOOL_CALLS } from '../agents/budgets.js';
 import { docTools, workspaceTools, type Tool } from '../agents/tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from '../agents/transcript.js';
 import type { ProjectBundle } from './bundle.js';
@@ -12,9 +13,6 @@ const KIND: SessionKind = 'chat';
 const HISTORY_TURNS = 20;
 /** Messages the history endpoint hands the UI when it opens a chat. */
 export const CHAT_HISTORY_LIMIT = 50;
-const MAX_TOOL_CALLS = 6;
-/** A document persona reads its document, edits it and checks the result — more room than a chat. */
-const DOC_TOOL_CALLS = 8;
 /** How much of project.md an employee's context carries; the manager gets the capped context pack. */
 const PROJECT_MD_LIMIT = 4000;
 const TRUNCATION_MARKER = '\n[truncated]';
@@ -174,7 +172,7 @@ export class ProjectChat {
         tools,
         ctx: { bundle },
         ...(route ? { route } : {}),
-        maxToolCalls: persona ? DOC_TOOL_CALLS : MAX_TOOL_CALLS,
+        maxToolCalls: persona ? DOC_PERSONA_TOOL_CALLS : CHAT_TOOL_CALLS,
         ...(typeof target === 'string' ? {} : { memberId: target.id }),
         ...(opts.onToken ? { onToken: opts.onToken } : {}),
         ...(opts.signal ? { signal: opts.signal } : {}),

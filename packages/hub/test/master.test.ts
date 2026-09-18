@@ -61,12 +61,17 @@ async function seed(h: Hub, slug: string, title: string, priority: Priority = 'p
 }
 
 describe('project scheduler', () => {
-  it('runs turns for active projects only, highest priority first', async () => {
+  it('runs turns for opted-in active projects only, highest priority first', async () => {
     const h = await setup([], 50);
     await h.projects.create({ slug: 'urgent', title: 'Urgent', intent: 'x', priority: 'interactive' });
     await h.projects.create({ slug: 'demo', title: 'Demo', intent: 'x', priority: 'project' });
     await h.projects.create({ slug: 'sleepy', title: 'Sleepy', intent: 'x', priority: 'project' });
     await h.projects.pause('sleepy');
+    // The scheduler only takes projects that opted in and have a drafted PRD.
+    for (const slug of ['urgent', 'demo', 'sleepy']) {
+      await (await h.projects.get(slug)).writePrd('# PRD\n\nA real product with a real goal.\n');
+      await h.projects.setAutoRun(slug, { enabled: true, everyMinutes: 5, maxTurnsPerDay: 10 });
+    }
 
     const seen: string[] = [];
     h.projects.onBriefing((b) => seen.push(b.slug));

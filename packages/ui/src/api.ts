@@ -12,7 +12,21 @@ async function request(url: string, init?: RequestInit): Promise<Response> {
     window.location.reload();
     return new Promise<Response>(() => {});
   }
-  if (!response.ok) throw new Error(`hub replied ${response.status}`);
+  if (!response.ok) {
+    // A JSON body's `error` (e.g. a 409's refusal reason) reads better than the bare status; fall
+    // back to it when the body isn't JSON or carries no `error` field.
+    const text = await response.text().catch(() => '');
+    let message = `hub replied ${response.status}`;
+    try {
+      const body = text ? JSON.parse(text) : null;
+      if (body && typeof body === 'object' && typeof (body as { error?: unknown }).error === 'string') {
+        message = (body as { error: string }).error;
+      }
+    } catch {
+      // not JSON — keep the status message
+    }
+    throw new Error(message);
+  }
   return response;
 }
 

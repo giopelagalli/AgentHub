@@ -79,4 +79,20 @@ describe('optionsFromEnv', () => {
     expect(optionsFromEnv({ SEARCH_API_KEY: 'k', SEARCH_PROVIDER: 'nope' }, quiet).options.external?.search).toBeUndefined();
     expect(optionsFromEnv({}, quiet).options.external).toEqual({});
   });
+
+  it('turns the scheduler off only on AUTO_TURNS=0', () => {
+    expect(optionsFromEnv({}, quiet).options.autoTurns).toBeUndefined();
+    expect(optionsFromEnv({ AUTO_TURNS: '1' }, quiet).options.autoTurns).toBeUndefined();
+    expect(optionsFromEnv({ AUTO_TURNS: '0' }, quiet).options.autoTurns).toBe(false);
+  });
+
+  it('reads MAX_TURNS_PER_DAY as a whole number of at least 1, and drops anything else with a log line', () => {
+    expect(optionsFromEnv({}, quiet).options.maxTurnsPerDay).toBeUndefined();
+    expect(optionsFromEnv({ MAX_TURNS_PER_DAY: '12' }, quiet).options.maxTurnsPerDay).toBe(12);
+    for (const bad of ['0', '-3', '2.5', 'lots']) {
+      const lines: string[] = [];
+      expect(optionsFromEnv({ MAX_TURNS_PER_DAY: bad }, (l) => lines.push(l)).options.maxTurnsPerDay).toBeUndefined();
+      expect(lines.filter((l) => l.includes('MAX_TURNS_PER_DAY'))).toHaveLength(1);
+    }
+  });
 });

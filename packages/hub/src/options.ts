@@ -135,6 +135,16 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
       }
     : undefined;
 
+  // A turn is the hub's most expensive unit, so the scheduler has a kill switch and a hub-wide cap.
+  // `AUTO_TURNS=0` is the only value that disables it; a bad cap is dropped with one log line.
+  const autoTurns = env.AUTO_TURNS === '0' ? false : undefined;
+  let maxTurnsPerDay: number | undefined;
+  if (env.MAX_TURNS_PER_DAY !== undefined) {
+    const n = Number(env.MAX_TURNS_PER_DAY);
+    if (Number.isInteger(n) && n >= 1) maxTurnsPerDay = n;
+    else log(`[hub] MAX_TURNS_PER_DAY=${env.MAX_TURNS_PER_DAY} is not a whole number of at least 1; ignored`);
+  }
+
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
     projectsRoot: env.PROJECTS_ROOT ?? (dataRoot ? join(dataRoot, 'projects') : 'data/projects'),
@@ -144,6 +154,8 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(auth ? { auth } : {}),
     ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
     ...(cloud ? { cloud } : {}),
+    ...(autoTurns !== undefined ? { autoTurns } : {}),
+    ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
   };
 
   return {

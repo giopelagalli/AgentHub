@@ -1,4 +1,4 @@
-import type { TeamRoster } from '@agenthub/shared';
+import type { TeamRoster, TurnBudget } from '@agenthub/shared';
 
 /**
  * A turn as the owner watches it: the wire shapes the hub sends over the socket and answers on
@@ -44,6 +44,7 @@ export interface TurnRecord {
 export interface TurnsResponse {
   running: { sessionId: number; startedAt: number } | null;
   turns: TurnRecord[];
+  budget?: TurnBudget;
 }
 
 /** How many turns the hub keeps, and so how many the list shows. */

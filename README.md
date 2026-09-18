@@ -82,8 +82,9 @@ their raw context — only the `briefings/latest.json` each one publishes — an
 answers owner commands (pause, resume, reprioritize, run a turn now) by
 calling into the relevant project.
 
-By default a scheduler runs one turn per active project every 15 minutes
-(highest priority first); `POST .../turn` runs one immediately.
+A scheduler ticks every 15 minutes and runs a turn for each active project
+that has opted in to auto-run (highest priority first, see *Costs and
+auto-run* below); `POST .../turn` runs one immediately.
 
 API cheatsheet:
 
@@ -307,6 +308,30 @@ applies to a cloud endpoint of the named provider: a local node serves whatever
 model it has loaded, so asking it for another one is never attempted. The API
 validates ids against `GET /api/models` and answers 400 for one the account
 cannot serve.
+
+## Costs and auto-run
+
+A *turn* is the expensive unit: a ~20-minute orchestrator session that spawns
+subagents, on whatever model the project's policy picks. Auto-run is **off by
+default** — the scheduler only ticks projects whose `manifest.yaml` carries
+`autoRun.enabled: true`, set from the **Auto-run** toggle in the project header
+or `POST /api/projects/<slug>/autorun`:
+
+    { "enabled": true, "everyMinutes": 60, "maxTurnsPerDay": 6 }
+    # everyMinutes 5–1440, maxTurnsPerDay 1–100; omitted fields keep their value
+
+`maxTurnsPerDay` counts every turn — manual ones included — in the trailing 24
+hours, and `POST .../turn` answers 409 once it is reached. A project whose PRD
+is still the scaffold is never auto-run. Hub-wide, `AUTO_TURNS=0` disables the
+scheduler entirely, and `MAX_TURNS_PER_DAY` (default 24) caps turns across all
+projects, including the ones the master or Telegram triggers.
+
+A project whose last three turns all ended `error` on the same gateway error
+class (`endpoint error 412`, say — a wrong model id or a spent key that no
+retry will fix) has its auto-run suspended: `autoRun.enabled` flips to false,
+a `decisions.log.md` entry says why, and the owner gets a Telegram alert when
+Telegram is configured. Manual turns still work; flip the toggle back on once
+the cause is fixed.
 
 ## Security
 

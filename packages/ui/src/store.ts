@@ -1,4 +1,4 @@
-import type { HubState } from '@agenthub/shared';
+import type { HubState, TurnBudget } from '@agenthub/shared';
 import type { PageId } from './rail.js';
 import { applyTurnEvent, mergeTurns, type TurnFrame, type TurnRecord, type TurnsResponse, type TurnsState } from './turns.js';
 
@@ -6,6 +6,8 @@ import { applyTurnEvent, mergeTurns, type TurnFrame, type TurnRecord, type Turns
 export interface ProjectTurns {
   state: TurnsState;
   turns: TurnRecord[];
+  /** The turn cap as of the last `/turns` fetch; absent until one has landed. */
+  budget?: TurnBudget;
 }
 
 const NO_TURNS: ProjectTurns = { state: 'loading', turns: [] };
@@ -141,7 +143,10 @@ export class Store {
       case 'turns-loaded': {
         const held = turnsOf(this.state, event.slug);
         const turns = mergeTurns(held.turns, event.response);
-        this.state = { ...this.state, turns: { ...this.state.turns, [event.slug]: { state: 'ready', turns } } };
+        this.state = {
+          ...this.state,
+          turns: { ...this.state.turns, [event.slug]: { state: 'ready', turns, budget: event.response.budget } },
+        };
         break;
       }
       // A failed fetch keeps whatever the socket delivered: the list can still show those.

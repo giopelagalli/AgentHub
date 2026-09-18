@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -22,13 +22,13 @@ import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resource
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript, type SessionRecord } from './agents/transcript.js';
-import { ProjectService, type StopOptions } from './projects/service.js';
+import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
 import { currentMilestoneId, moveMilestone, patchMilestone } from './projects/roadmap.js';
-import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE } from './projects/schema.js';
+import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE, type Briefing } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
 import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
@@ -92,6 +92,8 @@ const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
 const TEAM_LAST_MESSAGE_LIMIT = 200;
 /** How many past orchestrator turns `/turns` replays. */
 const TURNS_LIMIT = 20;
+/** What a project's auto-run starts as when the owner enables it without saying more. */
+const DEFAULT_AUTO_RUN = { everyMinutes: 60, maxTurnsPerDay: 6 };
 /** Cap on the messages `/team/:id/activity` returns — the tail, which is what "doing now" means. */
 const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
 
@@ -123,6 +125,10 @@ export interface HubOptions {
   uiDist?: string;
   projectsRoot?: string;
   tickIntervalMs?: number;
+  /** `false` never starts the turn scheduler (`AUTO_TURNS=0`); manual turns still run. */
+  autoTurns?: boolean;
+  /** The hub-wide cap on turns per trailing 24h (`MAX_TURNS_PER_DAY`); defaults to 24. */
+  maxTurnsPerDay?: number;
   assistant?: AssistantOptions;
   browser?: BrowserOptions;
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
@@ -243,7 +249,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),
     onEvent: (slug, sessionId, event, at) => broadcast({ type: 'turn-event', slug, sessionId, at, event }),
+    onTurnRefused: (slug, reason) => broadcast({ type: 'turn-refused', slug, reason }),
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
+    ...(opts.autoTurns !== undefined ? { autoTurns: opts.autoTurns } : {}),
+    ...(opts.maxTurnsPerDay !== undefined ? { maxTurnsPerDay: opts.maxTurnsPerDay } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
   // One chat per hub; the bundle is resolved per message through the service's cache.
@@ -458,6 +467,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     onNodeOffline: (cb) => { nodeOfflineListeners.push(cb); },
     onBriefing: (cb) => { projects.onBriefing(cb); },
     onJobSettled: (cb) => { jobSettledListeners.push(cb); },
+    onAutoRunSuspended: (cb) => { projects.onAutoRunSuspended(cb); },
   };
 
   /**
@@ -944,9 +954,41 @@ export function createHub(opts: HubOptions = {}): Hub {
       return reply.code(400).send({ error: 'invalid instruction' });
     }
     if (!(await resolveProject(slug, reply))) return reply;
-    const briefing = await projects.runTurn(slug, body?.instruction);
+    let briefing: Briefing;
+    try {
+      briefing = await projects.runTurn(slug, body?.instruction);
+    } catch (err) {
+      if (err instanceof TurnRefusedError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
     await refreshProjects();
     return briefing;
+  });
+
+  /**
+   * The owner's opt-in to scheduled turns. Fields left out keep their current value, or take the
+   * defaults (hourly, six a day) on a project that had no auto-run yet.
+   */
+  app.post('/api/projects/:slug/autorun', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const body = (req.body ?? {}) as Partial<AutoRun>;
+    if (typeof body.enabled !== 'boolean') return reply.code(400).send({ error: 'invalid enabled' });
+    if (body.everyMinutes !== undefined && !(Number.isInteger(body.everyMinutes) && body.everyMinutes >= 5 && body.everyMinutes <= 1440)) {
+      return reply.code(400).send({ error: 'invalid everyMinutes' });
+    }
+    if (body.maxTurnsPerDay !== undefined && !(Number.isInteger(body.maxTurnsPerDay) && body.maxTurnsPerDay >= 1 && body.maxTurnsPerDay <= 100)) {
+      return reply.code(400).send({ error: 'invalid maxTurnsPerDay' });
+    }
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const current = (await bundle.manifest()).autoRun;
+    const manifest = await projects.setAutoRun(slug, {
+      enabled: body.enabled,
+      everyMinutes: body.everyMinutes ?? current?.everyMinutes ?? DEFAULT_AUTO_RUN.everyMinutes,
+      maxTurnsPerDay: body.maxTurnsPerDay ?? current?.maxTurnsPerDay ?? DEFAULT_AUTO_RUN.maxTurnsPerDay,
+    });
+    await refreshProjects();
+    return manifest;
   });
 
   /** The last orchestrator turns with their events replayed from the transcript, newest first. */
@@ -969,7 +1011,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { slug } = req.params as { slug: string };
     if (!(await resolveProject(slug, reply))) return reply;
     const sessions = transcript.sessions({ kind: 'orchestrator', subject: slug, limit: TURNS_LIMIT }).reverse();
-    return { running: projects.runningTurn(slug), turns: sessions.map(turnRecord) };
+    return { running: projects.runningTurn(slug), turns: sessions.map(turnRecord), budget: await projects.budget(slug) };
   });
 
   app.get('/api/projects/:slug/transcript', async (req, reply) => {

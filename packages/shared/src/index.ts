@@ -146,6 +146,24 @@ export interface ProjectIntake {
   prd?: string;
 }
 
+/**
+ * The per-project opt-in for scheduled turns (`ProjectManifest.autoRun`). `maxTurnsPerDay` counts
+ * every turn — automatic or manual — in the trailing 24 hours, and `POST /turn` answers 409 at it.
+ */
+export interface AutoRun {
+  enabled: boolean;
+  everyMinutes: number;
+  maxTurnsPerDay: number;
+}
+
+/** Turns spent in the trailing 24h against the project's cap (null when unset) and the hub's. */
+export interface TurnBudget {
+  usedToday: number;
+  maxPerDay: number | null;
+  hubUsedToday: number;
+  hubMaxPerDay: number;
+}
+
 /** A project bundle's `manifest.yaml`. Lives here because `HubState` puts it on the wire. */
 export interface ProjectManifest {
   schema: 1;
@@ -162,6 +180,10 @@ export interface ProjectManifest {
   modelPolicy?: ModelPolicy;
   /** The owner's raw idea/PRD from `POST /api/projects`; kept so the drafter can be run later. */
   intake?: ProjectIntake;
+  /** Unattended turns for this project. Absent means off: a turn is the hub's most expensive unit. */
+  autoRun?: AutoRun;
+  /** When the scheduler last started an automatic turn; persisted so a restart doesn't re-fire early. */
+  lastAutoTurnAt?: number;
   /** `auditPrd(prd.md).score`, refreshed on every PRD write, so the UI can badge an unfinished PRD. */
   prdScore?: number;
   /**
@@ -290,6 +312,8 @@ export type WsMessage =
   | { type: 'agent-busy'; agentId: number; busy: boolean }
   // A project agent (the manager, or a roster member id) is mid-reply in a one-on-one chat.
   | { type: 'project-busy'; slug: string; who: string; busy: boolean }
+  // A turn the hub declined to run (daily cap, hub cap) — the UI toasts it.
+  | { type: 'turn-refused'; slug: string; reason: string }
   // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
   // clients are not looking at the screening room.
   | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number }

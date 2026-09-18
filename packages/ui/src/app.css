@@ -490,6 +490,12 @@ p {
   align-items: center;
 }
 
+/* Turns left today, beside the auto-run toggle in the action row. */
+.detail__budget {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
 .dot {
   flex: none;
   width: 7px;

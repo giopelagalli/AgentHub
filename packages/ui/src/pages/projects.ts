@@ -1,6 +1,7 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster, type TeamStatus } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster, type TeamStatus } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
+import { AUTO_RUN_INTERVALS, autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../autorun.js';
 import { avatarSvg } from '../avatars.js';
 import type { DocsIndex } from '../docs.js';
 import { button, el } from '../dom.js';
@@ -47,9 +48,11 @@ export function projectsSignature(state: UiState): string {
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),
     // A turn starting or ending redraws the header and the org chart; the events in between
-    // only touch the captions, which `followTurn` updates in place.
-    `${held.state}:${runningTurn(held.turns)?.sessionId ?? ''}:${held.turns[0]?.sessionId ?? ''}`,
-    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}`).join('|'),
+    // only touch the captions, which `followTurn` updates in place. The budget fields change
+    // the header's turns-left line without any turn starting or ending, so they're in here too.
+    `${held.state}:${runningTurn(held.turns)?.sessionId ?? ''}:${held.turns[0]?.sessionId ?? ''}`
+      + `:${held.budget?.usedToday ?? ''}:${held.budget?.hubUsedToday ?? ''}`,
+    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}:${autoRunLabel(p.autoRun)}`).join('|'),
   ].join('~');
 }
 
@@ -275,6 +278,61 @@ function hireForm(slug: string, onHired: () => void): HTMLFormElement {
   return form;
 }
 
+/** The auto-run form: `POST /api/projects/:slug/autorun`'s body, and nothing else. */
+function autoRunForm(
+  slug: string, title: string, current: AutoRun | undefined, onSaved: () => void, onCancel: () => void,
+): HTMLFormElement {
+  const form = el('form', 'hire');
+
+  const enabledLabel = el('label', 'hire__row');
+  const enabled = el('input') as HTMLInputElement;
+  enabled.type = 'checkbox';
+  enabled.checked = current?.enabled ?? false;
+  enabledLabel.append(enabled, document.createTextNode('Enabled'));
+
+  const interval = el('select', 'select');
+  for (const minutes of AUTO_RUN_INTERVALS) {
+    const item = document.createElement('option');
+    item.value = String(minutes);
+    item.textContent = formatInterval(minutes);
+    interval.appendChild(item);
+  }
+  interval.value = String(current?.everyMinutes ?? 60);
+
+  const maxPerDay = el('input', 'input') as HTMLInputElement;
+  maxPerDay.type = 'number';
+  maxPerDay.min = '1';
+  maxPerDay.max = '100';
+  maxPerDay.value = String(current?.maxTurnsPerDay ?? 6);
+
+  const submit = el('button', 'btn btn--primary', 'Save');
+  submit.type = 'submit';
+  const cancel = button('Cancel');
+  cancel.addEventListener('click', onCancel);
+
+  const row = el('div', 'hire__row');
+  row.append(interval, maxPerDay, submit, cancel);
+
+  form.append(enabledLabel, row);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const autoRun = autoRunFromForm({ enabled: enabled.checked, everyMinutes: interval.value, maxTurnsPerDay: maxPerDay.value });
+    if (!autoRun) {
+      toast('Pick an interval and a 1–100 daily cap.', 'error');
+      return;
+    }
+    submit.disabled = true;
+    void sendJson(`/api/projects/${slug}/autorun`, autoRun)
+      .then(() => {
+        toast(`${title}: ${autoRunLabel(autoRun)}`);
+        onSaved();
+      })
+      .catch((error: unknown) => toast(`Could not set auto-run: ${String(error)}`, 'error'))
+      .finally(() => { submit.disabled = false; });
+  });
+
+  return form;
+}
 
 /** The three documents, each mounted into the sheet rather than into the page. */
 const DOC_VIEWS: Record<Exclude<ArtifactId, 'activity'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
@@ -335,6 +393,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** Why the employees tier is empty, when it is. */
   let rosterState: 'loading' | 'ready' | 'failed' = 'loading';
   let hiring = false;
+  let autoRunEditing = false;
   /** Bumped per fetch so a slow roster reply for a project we've left is dropped. */
   let rosterToken = 0;
 
@@ -495,6 +554,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       () => selected(store.getState())?.modelPolicy,
     ));
 
+    const autoRunToggle = button(autoRunLabel(project.autoRun));
+    autoRunToggle.addEventListener('click', () => {
+      autoRunEditing = !autoRunEditing;
+      renderDetail(store.getState());
+    });
+    controls.appendChild(autoRunToggle);
+    controls.appendChild(el('span', 'detail__budget', budgetText(turnsOf(store.getState(), project.slug).budget)));
+
     const paused = project.status === 'paused';
     const toggle = button(paused ? 'Resume' : 'Pause');
     toggle.addEventListener('click', () => {
@@ -546,6 +613,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         hiring = false;
         loadRoster(project.slug);
       }));
+    }
+    if (autoRunEditing) {
+      headBox.appendChild(autoRunForm(
+        project.slug, project.title, project.autoRun,
+        () => {
+          autoRunEditing = false;
+          loadTurns(project.slug);
+          renderDetail(store.getState());
+        },
+        () => {
+          autoRunEditing = false;
+          renderDetail(store.getState());
+        },
+      ));
     }
   }
 
@@ -689,6 +770,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         roster = null;
         rosterState = 'loading';
         hiring = false;
+        autoRunEditing = false;
         followedEvents = null;
         toastedEnd = null;
         prd = { state: 'loading', doc: null };

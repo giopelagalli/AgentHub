@@ -1,6 +1,7 @@
 import type { HubState } from '@agenthub/shared';
 import type { PageId } from './rail.js';
 import type { Store } from './store.js';
+import { toast } from './toast.js';
 import type { TurnEvent } from './turns.js';
 
 const TURN_EVENT_KINDS = new Set<TurnEvent['kind']>([
@@ -99,6 +100,10 @@ export function handleWsMessage(store: Store, raw: string): void {
       type: 'turn-event',
       frame: { slug: frame.slug, sessionId: frame.sessionId, at: frame.at, event: frame.event },
     });
+    return;
+  }
+  if (frame.type === 'turn-refused' && typeof frame.slug === 'string' && typeof frame.reason === 'string') {
+    toast(`${frame.slug}: turn refused — ${frame.reason}`, 'error');
     return;
   }
   if (

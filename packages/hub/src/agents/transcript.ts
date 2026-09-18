@@ -133,11 +133,12 @@ export class Transcript {
    * cheaper than scanning the whole table) and hands them back oldest-first — same order as the
    * unlimited call — so every caller can keep reading this as a plain chronological list.
    */
-  sessions(filter: { kind?: SessionKind; subject?: string; memberId?: string | null; limit?: number } = {}): SessionRecord[] {
+  sessions(filter: { kind?: SessionKind; subject?: string; memberId?: string | null; since?: number; limit?: number } = {}): SessionRecord[] {
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (filter.kind) { where.push('kind=?'); params.push(filter.kind); }
     if (filter.subject) { where.push('subject=?'); params.push(filter.subject); }
+    if (filter.since !== undefined) { where.push('started_at >= ?'); params.push(filter.since); }
     // `null` asks for the sessions no member ran (the manager's own), which `member_id=?` can't express.
     if (filter.memberId === null) where.push('member_id IS NULL');
     else if (filter.memberId !== undefined) { where.push('member_id=?'); params.push(filter.memberId); }

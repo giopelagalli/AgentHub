@@ -135,11 +135,16 @@ describe('Store', () => {
 
     store.dispatch({
       type: 'turns-loaded', slug: 'acme',
-      response: { running: null, turns: [{ sessionId: 3, startedAt: 1, endedAt: 5, outcome: 'done', summary: 'x', toolCalls: 0, events: [] }] },
+      response: {
+        running: null,
+        turns: [{ sessionId: 3, startedAt: 1, endedAt: 5, outcome: 'done', summary: 'x', toolCalls: 0, events: [] }],
+        budget: { usedToday: 1, maxPerDay: 6, hubUsedToday: 3, hubMaxPerDay: 40 },
+      },
     });
     const acme = turnsOf(store.getState(), 'acme');
     expect(acme.state).toBe('ready');
     expect(acme.turns.map((t) => t.sessionId)).toEqual([1, 3]);
+    expect(acme.budget).toEqual({ usedToday: 1, maxPerDay: 6, hubUsedToday: 3, hubMaxPerDay: 40 });
     expect(turnsOf(store.getState(), 'beta').state).toBe('loading');
   });
 

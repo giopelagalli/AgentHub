@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, TeamMember } from '@agenthub/shared';
+import type { AutoRun, DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, TeamMember } from '@agenthub/shared';
 import { auditPrd, prdScaffold } from './prd.js';
 import { newTeamMember, validateBriefing, validateDocSlug, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
@@ -313,6 +313,22 @@ export class ProjectBundle {
     if (policy) m.modelPolicy = policy;
     else delete m.modelPolicy;
     m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /** The project's scheduled-turn opt-in; `undefined` clears it back to off. */
+  async setAutoRun(autoRun: AutoRun | undefined): Promise<void> {
+    const m = await this.manifest();
+    if (autoRun) m.autoRun = autoRun;
+    else delete m.autoRun;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /** Scheduler bookkeeping, not an owner edit: `updatedAt` is deliberately left alone. */
+  async setLastAutoTurnAt(at: number): Promise<void> {
+    const m = await this.manifest();
+    m.lastAutoTurnAt = at;
     await this.writeManifest(m);
   }
 

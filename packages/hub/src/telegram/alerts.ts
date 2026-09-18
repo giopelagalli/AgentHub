@@ -26,6 +26,8 @@ export interface AlertEvents {
   onBriefing(cb: (briefing: Briefing) => void): void;
   /** Every job that reached `done` or `failed`; only the owner's own video jobs are reported on. */
   onJobSettled(cb: (job: Job) => void): void;
+  /** A project whose auto-run the hub switched off after repeated failures, with the reason. */
+  onAutoRunSuspended(cb: (slug: string, reason: string) => void): void;
 }
 
 /** A stored clip: where it is, how big, and how to read it — the size decides whether it is sent. */
@@ -72,6 +74,10 @@ export class Alerts {
       if (briefing.status !== 'blocked') return;
       const blockers = briefing.blockers.length ? briefing.blockers.join('; ') : 'no reason given';
       this.send(`blocked:${briefing.slug}`, `⛔ ${briefing.title} is blocked: ${blockers}`)
+        .catch((err) => console.error('[alerts] send failed', err));
+    });
+    events.onAutoRunSuspended((slug, reason) => {
+      this.send(`autorun:${slug}`, `⏸ ${slug}: ${reason} — manual turns still run`)
         .catch((err) => console.error('[alerts] send failed', err));
     });
   }

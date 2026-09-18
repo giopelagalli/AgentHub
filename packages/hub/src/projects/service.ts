@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type ModelPolicy, type Priority, type ProjectIntake, type TurnEvent } from '@agenthub/shared';
+import { PRIORITY_RANK, type AutoRun, type ModelPolicy, type Priority, type ProjectIntake, type TurnBudget, type TurnEvent } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -11,11 +11,20 @@ import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import { ProjectBundle } from './bundle.js';
 import { ProjectOrchestrator } from './orchestrator.js';
+import { isPrdScaffold } from './prd.js';
 import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
 
 const DEFAULT_TICK_MS = 15 * 60_000;
 const DEFAULT_TURN_TIMEOUT_MS = 20 * 60_000;
 const DEFAULT_STOP_GRACE_MS = 5000;
+/** The hub-wide turn cap, across every project and whoever triggers the turn. */
+export const DEFAULT_MAX_TURNS_PER_DAY = 24;
+/** The trailing window `maxTurnsPerDay` counts turns in. */
+export const TURN_BUDGET_WINDOW_MS = 24 * 60 * 60_000;
+/** How many consecutive failed turns with the same gateway error suspend a project's auto-run. */
+const SUSPEND_AFTER_ERRORS = 3;
+const ERROR_CLASS_LIMIT = 80;
+const GATEWAY_ERROR_PREFIX = 'gateway error: ';
 
 export interface ProjectServiceDeps {
   root: string;
@@ -36,6 +45,14 @@ export interface ProjectServiceDeps {
   tickIntervalMs?: number;
   /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
   turnTimeoutMs?: number;
+  /** The scheduler's kill switch: `false` and `start()` never sets its timer. Defaults to true. */
+  autoTurns?: boolean;
+  /** The hub-wide cap on turns in the trailing 24h, manual ones included. Defaults to 24. */
+  maxTurnsPerDay?: number;
+  /** The clock every interval and budget check reads; tests inject one. Defaults to `Date.now`. */
+  now?: () => number;
+  /** Notified whenever a turn is refused for budget reasons, after the warning is logged. */
+  onTurnRefused?: (slug: string, reason: string) => void;
 }
 
 export interface StopOptions {
@@ -59,10 +76,35 @@ export interface BriefingDoc {
 }
 
 export type BriefingListener = (briefing: Briefing) => void;
+export type AutoRunSuspendedListener = (slug: string, reason: string) => void;
+
+/** Thrown by `runTurn` when a cap is reached; the route answers 409 with the reason. */
+export class TurnRefusedError extends Error {
+  constructor(public slug: string, public reason: string) {
+    super(reason);
+    this.name = 'TurnRefusedError';
+  }
+}
+
+/**
+ * The class of the gateway error a session ended on — `endpoint error 412` out of
+ * `gateway error: endpoint error 412 from https://api…: {detail}` — so consecutive failures can be
+ * compared without the endpoint URL or the response body getting in the way. Null when the session
+ * recorded no gateway error.
+ */
+export function gatewayErrorClass(events: { content: string }[]): string | null {
+  const event = events.find((e) => e.content.startsWith(GATEWAY_ERROR_PREFIX));
+  if (!event) return null;
+  const message = event.content.slice(GATEWAY_ERROR_PREFIX.length);
+  // The body is cut first: the URL runs straight into the `: ` that introduces it.
+  const detailAt = message.indexOf(': ');
+  const head = detailAt === -1 ? message : message.slice(0, detailAt);
+  return head.replace(/\s+from\s+\S+/, '').trim().slice(0, ERROR_CLASS_LIMIT);
+}
 
 /**
  * Owns the live set of projects: one open bundle and one orchestrator per slug, the per-slug turn
- * queue, and the tick that gives every active project a turn.
+ * queue, and the tick that gives every opted-in (`autoRun.enabled`) active project a turn.
  *
  * Orchestrators are cached because the turn counter is per-process state; bundles are cached because
  * a bundle handle is just a directory plus a git client. Everything else is read from disk per call,
@@ -78,6 +120,9 @@ export class ProjectService {
   /** The orchestrator session each in-flight turn is running as, once its `turn-start` has fired. */
   private runningTurns = new Map<string, { sessionId: number; startedAt: number }>();
   private listeners: BriefingListener[] = [];
+  private suspendedListeners: AutoRunSuspendedListener[] = [];
+  /** Slugs already told their PRD is still the scaffold, so the tick doesn't say so every 15 minutes. */
+  private scaffoldSkipped = new Set<string>();
   private timer: NodeJS.Timeout | undefined;
   private tickInFlight: Promise<void> = Promise.resolve();
   private ticking = false;
@@ -91,15 +136,26 @@ export class ProjectService {
   private forceAborting = false;
   private readonly tickIntervalMs: number;
   private readonly turnTimeoutMs: number;
+  private readonly autoTurns: boolean;
+  private readonly maxTurnsPerDay: number;
+  private readonly now: () => number;
 
   constructor(private deps: ProjectServiceDeps) {
     this.tickIntervalMs = deps.tickIntervalMs ?? DEFAULT_TICK_MS;
     this.turnTimeoutMs = deps.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
+    this.autoTurns = deps.autoTurns ?? true;
+    this.maxTurnsPerDay = deps.maxTurnsPerDay ?? DEFAULT_MAX_TURNS_PER_DAY;
+    this.now = deps.now ?? Date.now;
   }
 
   /** Notified whenever a turn lands a briefing. Phase 4 hangs owner alerts off this. */
   onBriefing(listener: BriefingListener): void {
     this.listeners.push(listener);
+  }
+
+  /** Notified with (slug, reason) whenever repeated failures switch a project's auto-run off. */
+  onAutoRunSuspended(listener: AutoRunSuspendedListener): void {
+    this.suspendedListeners.push(listener);
   }
 
   async create(init: ProjectInit): Promise<Manifest> {
@@ -153,6 +209,28 @@ export class ProjectService {
     return bundle.manifest();
   }
 
+  async setAutoRun(slug: string, autoRun: AutoRun | undefined): Promise<Manifest> {
+    const bundle = await this.get(slug);
+    await bundle.setAutoRun(autoRun);
+    await bundle.commit('owner: set auto-run');
+    return bundle.manifest();
+  }
+
+  /**
+   * Turns spent in the trailing 24h, by this project and by the whole hub. The project cap holds
+   * whenever the owner has set one — enabled or not — because it is a number they chose.
+   */
+  async budget(slug: string): Promise<TurnBudget> {
+    const manifest = await (await this.get(slug)).manifest();
+    const since = this.now() - TURN_BUDGET_WINDOW_MS;
+    return {
+      usedToday: this.deps.transcript.sessions({ kind: 'orchestrator', subject: slug, since }).length,
+      maxPerDay: manifest.autoRun?.maxTurnsPerDay ?? null,
+      hubUsedToday: this.deps.transcript.sessions({ kind: 'orchestrator', since }).length,
+      hubMaxPerDay: this.maxTurnsPerDay,
+    };
+  }
+
   private async setStatus(slug: string, status: ProjectStatus, summary: string): Promise<Manifest> {
     const bundle = await this.get(slug);
     await bundle.setStatus(status);
@@ -177,9 +255,15 @@ export class ProjectService {
    * The turn owns an AbortController for its whole lifetime: `stop()` can abort it on shutdown, and
    * it self-aborts if it outruns `turnTimeoutMs`. A caller-supplied `signal` is merged in — aborting
    * either one aborts the turn.
+   *
+   * The budget is checked inside the serialized section, so a turn queued behind another counts it.
+   * A manual turn is never blocked by the interval or the enabled flag — only by the caps.
    */
   runTurn(slug: string, instruction?: string, signal?: AbortSignal): Promise<Briefing> {
     return this.serialize(slug, async () => {
+      const { usedToday, maxPerDay, hubUsedToday, hubMaxPerDay } = await this.budget(slug);
+      if (hubUsedToday >= hubMaxPerDay) this.refuse(slug, `hub-wide cap of ${hubMaxPerDay} turns per day reached`);
+      if (maxPerDay !== null && usedToday >= maxPerDay) this.refuse(slug, `project cap of ${maxPerDay} turns per day reached`);
       const controller = new AbortController();
       // A turn queued behind an aborted one (same slug, serialized chain) can start running after
       // stop() has already given up waiting and started aborting — abort it immediately too, so it
@@ -200,6 +284,7 @@ export class ProjectService {
           signal: controller.signal,
         });
         for (const listener of this.listeners) listener(briefing);
+        await this.suspendIfFailing(slug);
         return briefing;
       } finally {
         clearTimeout(deadline);
@@ -208,6 +293,34 @@ export class ProjectService {
         this.runningTurns.delete(slug);
       }
     });
+  }
+
+  private refuse(slug: string, reason: string): never {
+    console.warn(`[projects] turn refused for ${slug}: ${reason}`);
+    this.deps.onTurnRefused?.(slug, reason);
+    throw new TurnRefusedError(slug, reason);
+  }
+
+  /**
+   * Switches auto-run off once the last `SUSPEND_AFTER_ERRORS` turns all died on the same gateway
+   * error class: a wrong model id or a spent key will not fix itself, and every retry costs a turn.
+   * Manual turns keep working, and the decision log says what happened.
+   */
+  private async suspendIfFailing(slug: string): Promise<void> {
+    const bundle = await this.get(slug);
+    const autoRun = (await bundle.manifest()).autoRun;
+    if (!autoRun?.enabled) return;
+    const recent = this.deps.transcript.sessions({ kind: 'orchestrator', subject: slug, limit: SUSPEND_AFTER_ERRORS });
+    if (recent.length < SUSPEND_AFTER_ERRORS || !recent.every((s) => s.outcome === 'error')) return;
+    const classes = recent.map((s) => gatewayErrorClass(this.deps.transcript.events(s.id)));
+    const cls = classes[0];
+    if (cls === null || !classes.every((c) => c === cls)) return;
+    const reason = `auto-run suspended: ${SUSPEND_AFTER_ERRORS} consecutive turns failed with "${cls}"`;
+    await bundle.setAutoRun({ ...autoRun, enabled: false });
+    await bundle.appendDecision({ title: 'auto-run suspended', rationale: reason, by: 'hub' });
+    await bundle.commit('hub: suspend auto-run');
+    console.warn(`[projects] ${slug}: ${reason}`);
+    for (const listener of this.suspendedListeners) listener(slug, reason);
   }
 
   async briefingDocs(): Promise<BriefingDoc[]> {
@@ -227,7 +340,7 @@ export class ProjectService {
   }
 
   start(): void {
-    if (this.timer) return;
+    if (this.timer || !this.autoTurns) return;
     this.stopped = false;
     this.forceAborting = false;
     this.timer = setInterval(() => { void this.tick(); }, this.tickIntervalMs);
@@ -260,23 +373,42 @@ export class ProjectService {
     }
   }
 
+  /** One scheduler pass, on demand: what the timer fires, without waiting on it. */
+  tickNow(): Promise<void> {
+    return this.tick();
+  }
+
   private async tick(): Promise<void> {
     // Ticks never overlap: a tick still running when the next one fires simply skips it.
     if (this.ticking) return;
     this.ticking = true;
     this.tickInFlight = (async () => {
       try {
-        const active = (await this.list())
-          .filter((m) => m.status === 'active')
+        const candidates = (await this.list())
+          .filter((m) => m.status === 'active' && m.autoRun?.enabled)
           .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]);
-        for (const manifest of active) {
+        for (const manifest of candidates) {
           if (this.stopped) break;
+          const { slug, autoRun, lastAutoTurnAt } = manifest;
+          const now = this.now();
+          if (lastAutoTurnAt !== undefined && now - lastAutoTurnAt < autoRun!.everyMinutes * 60_000) continue;
+          const bundle = await this.get(slug);
+          if (isPrdScaffold(await bundle.prd())) {
+            if (!this.scaffoldSkipped.has(slug)) console.log(`[projects] auto-run skipped for ${slug}: PRD not drafted`);
+            this.scaffoldSkipped.add(slug);
+            continue;
+          }
+          this.scaffoldSkipped.delete(slug);
           try {
-            await this.runTurn(manifest.slug);
+            // Stamped before the turn, so a hub restarted mid-turn doesn't fire it again early.
+            await bundle.setLastAutoTurnAt(now);
+            await this.runTurn(slug);
           } catch (err) {
-            // Model and tool failures are already recorded in the session transcript; what reaches
-            // here is a bundle or git failure, and one bad project must not stall the others.
-            console.error(`[projects] scheduled turn failed for ${manifest.slug}:`, err);
+            // A refused turn has already been logged; model and tool failures are recorded in the
+            // session transcript. What else reaches here is a bundle or git failure, and one bad
+            // project must not stall the others.
+            if (err instanceof TurnRefusedError) continue;
+            console.error(`[projects] scheduled turn failed for ${slug}:`, err);
           }
         }
       } finally {

@@ -1,6 +1,18 @@
 import type { HubState } from '@agenthub/shared';
 import type { PageId } from './rail.js';
 import type { Store } from './store.js';
+import type { TurnEvent } from './turns.js';
+
+const TURN_EVENT_KINDS = new Set<TurnEvent['kind']>([
+  'turn-start', 'text', 'tool-call', 'tool-result', 'subagent-start', 'subagent-end', 'verify', 'turn-end',
+]);
+
+/** True for anything shaped like one of the turn events — the panel tolerates loose fields. */
+function isTurnEvent(value: unknown): value is TurnEvent {
+  if (typeof value !== 'object' || value === null) return false;
+  const kind = (value as Record<string, unknown>).kind;
+  return typeof kind === 'string' && TURN_EVENT_KINDS.has(kind as TurnEvent['kind']);
+}
 
 const STATE_URL = '/api/state';
 const POLL_MS = 5000;
@@ -74,6 +86,19 @@ export function handleWsMessage(store: Store, raw: string): void {
     && typeof frame.busy === 'boolean'
   ) {
     store.dispatch({ type: 'project-busy', slug: frame.slug, who: frame.who, busy: frame.busy });
+    return;
+  }
+  if (
+    frame.type === 'turn-event'
+    && typeof frame.slug === 'string'
+    && typeof frame.sessionId === 'string'
+    && typeof frame.at === 'number'
+    && isTurnEvent(frame.event)
+  ) {
+    store.dispatch({
+      type: 'turn-event',
+      frame: { slug: frame.slug, sessionId: frame.sessionId, at: frame.at, event: frame.event },
+    });
     return;
   }
   if (

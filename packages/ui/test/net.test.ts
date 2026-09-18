@@ -8,7 +8,7 @@ import {
   shouldUsePoll,
   topicTransition,
 } from '../src/net.js';
-import { Store } from '../src/store.js';
+import { Store, turnsOf } from '../src/store.js';
 
 const hubState: HubState = {
   nodes: [
@@ -151,5 +151,17 @@ describe('handleWsMessage', () => {
     expect(store.getState().hub).toBeNull();
     expect(store.getState().browserFrame).toBeNull();
     expect(store.getState().projectBusy.size).toBe(0);
+  });
+
+  it('dispatches a well-formed turn-event frame and drops a malformed one', () => {
+    const store = new Store();
+    handleWsMessage(store, JSON.stringify({
+      type: 'turn-event', slug: 'acme', sessionId: 's1', at: 10,
+      event: { kind: 'tool-call', who: 'coder-1', tool: 'bash', args: 'npm test' },
+    }));
+    expect(turnsOf(store.getState(), 'acme').turns[0]).toMatchObject({ sessionId: 's1', toolCalls: 1 });
+    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 's1', at: 11, event: { kind: 'nope' } }));
+    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 's1', event: { kind: 'text', who: 'manager', text: 'x' } }));
+    expect(turnsOf(store.getState(), 'acme').turns[0].events).toHaveLength(1);
   });
 });

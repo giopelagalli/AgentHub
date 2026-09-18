@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { HubState, ProjectManifest } from '@agenthub/shared';
-import { Store, chatKey, type BrowserFrame } from '../src/store.js';
+import { Store, chatKey, turnsOf, type BrowserFrame } from '../src/store.js';
 
 function project(slug: string): ProjectManifest {
   return {
@@ -123,5 +123,35 @@ describe('Store', () => {
     stop();
     store.dispatch({ type: 'connection', status: 'down' });
     expect(seen).toBe(1);
+  });
+
+  it('folds turn-event frames per project, and merges the fetched history under them', () => {
+    const store = new Store();
+    expect(turnsOf(store.getState(), 'acme')).toEqual({ state: 'loading', turns: [] });
+    store.dispatch({ type: 'turn-event', frame: { slug: 'acme', sessionId: 's1', at: 10, event: { kind: 'turn-start', who: 'manager' } } });
+    store.dispatch({ type: 'turn-event', frame: { slug: 'beta', sessionId: 'b1', at: 11, event: { kind: 'turn-start', who: 'manager' } } });
+    expect(turnsOf(store.getState(), 'acme').turns.map((t) => t.sessionId)).toEqual(['s1']);
+    expect(turnsOf(store.getState(), 'beta').turns.map((t) => t.sessionId)).toEqual(['b1']);
+
+    store.dispatch({
+      type: 'turns-loaded', slug: 'acme',
+      response: { running: null, turns: [{ sessionId: 's0', startedAt: 1, endedAt: 5, outcome: 'done', summary: 'x', toolCalls: 0, events: [] }] },
+    });
+    const acme = turnsOf(store.getState(), 'acme');
+    expect(acme.state).toBe('ready');
+    expect(acme.turns.map((t) => t.sessionId)).toEqual(['s1', 's0']);
+    expect(turnsOf(store.getState(), 'beta').state).toBe('loading');
+  });
+
+  it('marks a failed turns fetch without dropping what the socket delivered, and never downgrades ready', () => {
+    const store = new Store();
+    store.dispatch({ type: 'turn-event', frame: { slug: 'acme', sessionId: 's1', at: 10, event: { kind: 'turn-start', who: 'manager' } } });
+    store.dispatch({ type: 'turns-failed', slug: 'acme' });
+    expect(turnsOf(store.getState(), 'acme')).toMatchObject({ state: 'failed' });
+    expect(turnsOf(store.getState(), 'acme').turns).toHaveLength(1);
+    store.dispatch({ type: 'turns-loaded', slug: 'acme', response: { running: null, turns: [] } });
+    store.dispatch({ type: 'turns-failed', slug: 'acme' });
+    expect(turnsOf(store.getState(), 'acme').state).toBe('ready');
+    expect(turnsOf(store.getState(), null).state).toBe('loading');
   });
 });

@@ -1,5 +1,19 @@
 import type { HubState } from '@agenthub/shared';
 import type { PageId } from './rail.js';
+import { applyTurnEvent, mergeTurns, type TurnFrame, type TurnRecord, type TurnsResponse, type TurnsState } from './turns.js';
+
+/** One project's turns: what `/turns` said plus everything the socket has appended since. */
+export interface ProjectTurns {
+  state: TurnsState;
+  turns: TurnRecord[];
+}
+
+const NO_TURNS: ProjectTurns = { state: 'loading', turns: [] };
+
+/** The turns held for `slug`, or an empty loading set for a project nothing has arrived for yet. */
+export function turnsOf(state: UiState, slug: string | null): ProjectTurns {
+  return (slug ? state.turns[slug] : undefined) ?? NO_TURNS;
+}
 
 /** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the page. */
 export interface BrowserFrame {
@@ -28,6 +42,8 @@ export interface UiState {
   connection: 'live' | 'polling' | 'down';
   /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
   browserFrame: BrowserFrame | null;
+  /** Per project slug: its recent turns, the running one included. */
+  turns: Record<string, ProjectTurns>;
 }
 
 export type StoreEvent =
@@ -40,6 +56,9 @@ export type StoreEvent =
   | { type: 'prd-drafted'; slug: string; questions: string[] }
   | { type: 'prd-seed-taken' }
   | { type: 'browser-frame'; frame: BrowserFrame }
+  | { type: 'turn-event'; frame: TurnFrame }
+  | { type: 'turns-loaded'; slug: string; response: TurnsResponse }
+  | { type: 'turns-failed'; slug: string }
   | { type: 'connection'; status: UiState['connection'] };
 
 export class Store {
@@ -52,6 +71,7 @@ export class Store {
     prdSeed: null,
     connection: 'down',
     browserFrame: null,
+    turns: {},
   };
   private listeners = new Set<(s: UiState) => void>();
 
@@ -112,6 +132,25 @@ export class Store {
       case 'browser-frame':
         this.state = { ...this.state, browserFrame: event.frame };
         break;
+      case 'turn-event': {
+        const held = turnsOf(this.state, event.frame.slug);
+        const turns = applyTurnEvent(held.turns, event.frame);
+        this.state = { ...this.state, turns: { ...this.state.turns, [event.frame.slug]: { ...held, turns } } };
+        break;
+      }
+      case 'turns-loaded': {
+        const held = turnsOf(this.state, event.slug);
+        const turns = mergeTurns(held.turns, event.response);
+        this.state = { ...this.state, turns: { ...this.state.turns, [event.slug]: { state: 'ready', turns } } };
+        break;
+      }
+      // A failed fetch keeps whatever the socket delivered: the list can still show those.
+      case 'turns-failed': {
+        const held = turnsOf(this.state, event.slug);
+        if (held.state === 'ready') break;
+        this.state = { ...this.state, turns: { ...this.state.turns, [event.slug]: { ...held, state: 'failed' } } };
+        break;
+      }
       case 'connection':
         this.state = { ...this.state, connection: event.status };
         break;

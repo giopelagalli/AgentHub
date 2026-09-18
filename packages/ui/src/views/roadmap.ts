@@ -1,7 +1,7 @@
 import { getJson, sendJson } from '../api.js';
 import { button, el } from '../dom.js';
 import type { PrdDoc } from '../prd.js';
-import { MILESTONE_STATUSES, roadmapEmptyState, roadmapRows, type MilestoneStatus, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
+import { MILESTONE_STATUSES, roadmapEmptyState, roadmapRows, verificationChips, type MilestoneStatus, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
 import { streamPost } from '../stream.js';
 import { toast } from '../toast.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
@@ -63,6 +63,11 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
 
     const meta = el('div', 'milestone__meta');
     meta.appendChild(el('span', `pill pill--${row.status}`, row.status));
+    for (const chip of verificationChips(row.verification)) {
+      const mark = el('span', `verify verify--${chip.tone}`, chip.label);
+      if (row.verification?.notes) mark.title = row.verification.notes;
+      meta.appendChild(mark);
+    }
     if (row.estimate) meta.appendChild(el('span', 'milestone__estimate', row.estimate));
     item.appendChild(meta);
 

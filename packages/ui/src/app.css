@@ -395,7 +395,8 @@ p {
 .chip:focus-visible,
 .docs__row:focus-visible,
 .seg__option:focus-visible,
-.callout__close:focus-visible {
+.callout__close:focus-visible,
+.turn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-color: var(--accent);
@@ -832,6 +833,17 @@ button.card__open:hover {
   color: var(--text-mute);
 }
 
+/* What the member is on right now, from the running turn. */
+.card__doing {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-mute);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .card__remove {
   position: absolute;
   top: -7px;
@@ -855,14 +867,15 @@ button.card__open:hover {
   border-color: #b91c1c;
 }
 
-/* --- the three artifacts -------------------------------------------------- */
+/* --- the four artifacts --------------------------------------------------- */
 
-/* Three cards between the header and the chart, each one door to a document.
-   They are the tallest thing on the page that isn't the chart itself, and the
-   only place the accent appears until one of them is hovered. */
+/* Four cards between the header and the chart: three doors to a document, and
+   one to the turn in progress. They are the tallest thing on the page that
+   isn't the chart itself, and the only place the accent appears until one of
+   them is hovered. */
 .artifacts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   max-width: 1240px;
   margin: 0 0 26px;
@@ -936,6 +949,48 @@ button.card__open:hover {
 
 .artifact--empty .artifact__hint {
   color: var(--text-mute);
+}
+
+/* A turn is running: the hint is live, and the card says so with the working green. */
+.artifact--live .artifact__hint {
+  color: var(--text);
+}
+
+.artifact__live {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--green);
+}
+
+.artifact__live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* The thin line under the header while a turn runs. It sits at a whisper of the
+   accent and lights up for a beat on each event — one transition per event, no
+   loop — so the owner can see the team is moving without reading anything. */
+.progress {
+  height: 2px;
+  margin: -8px 0 18px;
+  background: color-mix(in srgb, var(--accent) 38%, var(--line));
+  transition: background-color 320ms ease-out;
+}
+
+.progress--lit {
+  background: var(--accent-hi);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress {
+    transition: none;
+  }
 }
 
 .detail__body {
@@ -1163,6 +1218,39 @@ button.card__open:hover {
   font-size: 11px;
   color: var(--text-mute);
   white-space: nowrap;
+}
+
+/* What the last turn found when it checked a milestone: tests, then review. Two
+   small chips beside the status pill, and again on the panel's verify rows. */
+.verify {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 17px;
+  white-space: nowrap;
+  color: var(--text-mute);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.verify--pass {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
+}
+
+.verify--fail {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 34%, var(--line));
+}
+
+.verify--changes {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
+}
+
+.verify--skipped {
+  border-style: dashed;
 }
 
 .milestone__controls {
@@ -1791,6 +1879,23 @@ button.card__open:hover {
   border-left: 1px solid var(--line);
 }
 
+/* A view that manages its own columns (the Activity panel) takes the whole body,
+   unscrolled and unpadded. */
+.sheet__box--wide .sheet__body {
+  display: flex;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sheet__box--wide .sheet__column {
+  display: flex;
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+}
+
 /* The same drawer the org chart opens, docked into the sheet's second column. */
 .sheet__chat .drawer {
   position: static;
@@ -1800,6 +1905,485 @@ button.card__open:hover {
   background: none;
   border-left: 0;
   box-shadow: none;
+}
+
+/* --- activity: the turn panel --------------------------------------------- */
+
+/* Turns on the left, the selected turn's feed on the right. Each column scrolls
+   on its own, so the list stays put while a running feed grows under it. The
+   register is a log, not a chat: small type, one rule per row, nothing filled
+   in but the verify rows and the closing row. */
+.activity {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 272px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  outline: none;
+}
+
+.activity__list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px 8px 18px;
+  overflow: auto;
+  background: var(--bg0);
+  border-right: 1px solid var(--line);
+}
+
+.activity__listhead {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 8px 8px;
+}
+
+.activity__listhead h3 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+}
+
+.activity__count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.activity__empty {
+  padding: 8px 8px;
+  font-size: 12px;
+}
+
+/* One turn in the list. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: stretch;
+  width: 100%;
+  padding: 8px 10px 8px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.turn:hover {
+  background: var(--bg1);
+}
+
+.turn[aria-current='true'] {
+  background: var(--bg2);
+  border-color: var(--line);
+  border-left-color: var(--accent);
+}
+
+.turn__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.turn__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+
+.turn__dot--running {
+  background: var(--green);
+}
+
+.turn__dot--failed {
+  background: var(--red);
+}
+
+.turn__time {
+  color: var(--text);
+}
+
+.turn__dur {
+  margin-left: auto;
+  color: var(--text-mute);
+}
+
+.turn--running .turn__dur {
+  color: var(--green);
+}
+
+.turn__line {
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn__meta {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+/* The feed. */
+.activity__feed {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.activity__feedhead {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity__feedhead h3 {
+  font-size: 13px;
+}
+
+.activity__elapsed,
+.activity__calls {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.activity__calls {
+  margin-left: auto;
+}
+
+.activity__scroll {
+  min-height: 0;
+  padding: 14px 20px 28px;
+  overflow: auto;
+}
+
+/* The timeline: groups of rows, each named once by who did them. */
+.tl {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 120ch;
+}
+
+.who {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.who__face {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+
+.who__name {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.who__role {
+  color: var(--text-mute);
+}
+
+.tl__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Rows hang from a hairline under the name, so a long run still reads as one speaker. */
+.tl__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-left: 8px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+.tl__group > .who + .tl__rows {
+  margin-top: 2px;
+}
+
+.tl__start,
+.tl__live {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.tl__live {
+  padding-left: 22px;
+}
+
+.tl__text {
+  max-width: 88ch;
+  padding: 3px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+}
+
+/* A tool call and its result on one line: name, args, what came back, how long. */
+.tl__tool {
+  border-radius: 4px;
+}
+
+.tl__toolline {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 3px 6px 3px 4px;
+  margin: 0 -6px 0 -4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  list-style: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.tl__toolline::-webkit-details-marker {
+  display: none;
+}
+
+.tl__toolline:hover {
+  background: var(--bg2);
+}
+
+.tl__tool[open] > .tl__toolline {
+  background: var(--bg2);
+}
+
+.tl__toolline:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* A mark that says ok, failed, or still running: green, red, or an empty ring. */
+.tl__mark {
+  flex: none;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-mute);
+}
+
+.tl__tool--failed .tl__mark {
+  background: var(--red);
+}
+
+.tl__tool--pending .tl__mark {
+  background: none;
+  border: 1px solid var(--green);
+}
+
+/* A minimum width so a run of calls lines up its names in one column. */
+.tl__toolname {
+  flex: none;
+  min-width: 9ch;
+  color: var(--text);
+}
+
+.tl__args {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl__result {
+  flex: 1 1 40%;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl__tool--failed .tl__result {
+  color: var(--red);
+}
+
+.tl__ms {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.tl__toolbody {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  padding: 6px 8px 8px 12px;
+  margin: 0 0 4px;
+  font-size: 12px;
+  border-left: 2px solid var(--line-lit);
+}
+
+.tl__label {
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.tl__pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A subagent's block: its task at the top, its rows indented under, the outcome at the foot. */
+.tl__sub {
+  margin: 2px 0 2px 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg1) 70%, var(--bg0));
+}
+
+.tl__sub--open {
+  border-color: color-mix(in srgb, var(--green) 26%, var(--line));
+}
+
+.tl__subhead {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tl__subhead .who {
+  flex: none;
+}
+
+.tl__subtask {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tl__subitems {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.tl__subitems .tl__rows {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.tl__subitems .tl__sub {
+  margin-left: 0;
+}
+
+.tl__subfoot {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.tl__subworking {
+  color: var(--green);
+}
+
+.tl__suboutcome {
+  color: var(--text);
+}
+
+/* The verify row and the closing row are the two the eye should land on. */
+.tl__verify,
+.tl__end {
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: var(--radius);
+}
+
+.tl__verify {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+}
+
+.tl__end {
+  background: var(--bg2);
+  border: 1px solid var(--line-lit);
+}
+
+.tl__verifyhead,
+.tl__endhead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.tl__verifytitle,
+.tl__endtitle {
+  font-weight: 600;
+}
+
+.tl__verifyid {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.tl__verifysummary,
+.tl__endsummary {
+  max-width: 88ch;
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--text-dim);
 }
 
 /* --- modal: the New Project wizard ---------------------------------------- */
@@ -1968,7 +2552,8 @@ button.card__open:hover {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 30;
+  /* Over the sheet: a turn ends, or a roadmap lands, while the owner is reading one. */
+  z-index: 50;
   display: flex;
   gap: 12px;
   align-items: flex-start;

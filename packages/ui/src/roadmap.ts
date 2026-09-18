@@ -8,6 +8,14 @@
 export const MILESTONE_STATUSES = ['planned', 'in-progress', 'done', 'blocked'] as const;
 export type MilestoneStatus = (typeof MILESTONE_STATUSES)[number];
 
+/** What the last turn that touched a milestone found when it checked the work. */
+export interface MilestoneVerification {
+  tests: 'pass' | 'fail' | 'skipped';
+  review: 'approved' | 'changes' | 'skipped';
+  at: number;
+  notes?: string;
+}
+
 export interface Milestone {
   id: string;
   title: string;
@@ -15,6 +23,28 @@ export interface Milestone {
   status: MilestoneStatus;
   /** Free text ("2 days", "~1 week"); absent where nobody estimated it. */
   estimate?: string;
+  /** Absent until a turn has verified the milestone. */
+  verification?: MilestoneVerification;
+}
+
+export interface VerifyChip {
+  label: string;
+  /** Green for a pass, red for a failure, amber for changes requested, mute for skipped. */
+  tone: 'pass' | 'fail' | 'changes' | 'skipped';
+}
+
+/** The two small chips a verified milestone wears beside its status: tests, then review. */
+export function verificationChips(verification: MilestoneVerification | undefined): VerifyChip[] {
+  if (!verification) return [];
+  const tests: VerifyChip = {
+    label: `tests ${verification.tests}`,
+    tone: verification.tests === 'pass' ? 'pass' : verification.tests === 'fail' ? 'fail' : 'skipped',
+  };
+  const review: VerifyChip = {
+    label: `review ${verification.review}`,
+    tone: verification.review === 'approved' ? 'pass' : verification.review === 'changes' ? 'changes' : 'skipped',
+  };
+  return [tests, review];
 }
 
 export interface RoadmapDoc {

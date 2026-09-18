@@ -1,14 +1,16 @@
 import { docsEntries, type DocsIndex } from './docs.js';
 import { auditStrip, type PrdDoc } from './prd.js';
+import type { TeamRoster } from '@agenthub/shared';
 import { roadmapRows, type RoadmapDoc } from './roadmap.js';
+import { activityHint, type TurnRecord, type TurnsState } from './turns.js';
 
 /**
- * The three big buttons above the org chart. Pure — each one turns a document the hub sent into
- * the one line the button shows, so the owner can tell what state the PRD, the roadmap and the
- * docs are in without opening any of them.
+ * The four big buttons above the org chart. Pure — each one turns a document the hub sent into
+ * the one line the button shows, so the owner can tell what state the PRD, the roadmap, the docs
+ * and the team's current turn are in without opening any of them.
  */
 
-export type ArtifactId = 'prd' | 'roadmap' | 'docs';
+export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity';
 
 /** Where each button's document is in its own fetch. */
 export type DocState = 'loading' | 'ready' | 'failed';
@@ -25,18 +27,22 @@ export interface ArtifactSummary {
   badge?: string;
   /** False while there is nothing in the artifact yet, so the button can read quieter. */
   filled: boolean;
+  /** True on the Activity button while a turn is running: the hint is live and the card says so. */
+  live?: boolean;
 }
 
 const CAPTIONS: Record<ArtifactId, string> = {
   prd: 'What we are building',
   roadmap: 'The order it gets built',
   docs: 'What the team wrote down',
+  activity: 'What the team is doing',
 };
 
 export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
   prd: 'PRD',
   roadmap: 'Roadmap',
   docs: 'Docs',
+  activity: 'Activity',
 };
 
 /** The heading the artifact wears once it is open in the sheet. */
@@ -44,6 +50,7 @@ export const ARTIFACT_TITLES: Record<ArtifactId, string> = {
   prd: 'Product requirements',
   roadmap: 'Roadmap',
   docs: 'Docs',
+  activity: 'Activity',
 };
 
 function plural(count: number, noun: string): string {
@@ -99,4 +106,15 @@ export function docsSummary(state: DocState, doc: DocsIndex | null): ArtifactSum
   );
   if (!written.length) return shell('docs', 'No pages yet', false);
   return shell('docs', plural(written.length, 'page'), true);
+}
+
+/** The activity button: the turn in progress and who is on it, or how the last one went. */
+export function activitySummary(
+  state: TurnsState,
+  turns: TurnRecord[],
+  roster: TeamRoster | null,
+  now: number,
+): ArtifactSummary {
+  const { hint, filled, running } = activityHint(state, turns, roster, now);
+  return { ...shell('activity', hint, filled), live: running };
 }

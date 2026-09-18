@@ -17,6 +17,11 @@ export interface SheetHandle {
   body: HTMLElement;
   /** Re-labels the header when the sheet swaps to another artifact. */
   setTitle(title: string, subtitle: string): void;
+  /**
+   * `document` centres one reading column and scrolls it; `wide` hands the view the whole body,
+   * unscrolled, for a layout that manages its own columns.
+   */
+  setLayout(layout: 'document' | 'wide'): void;
   /** Opens the chat drawer beside the view, closing whichever one is already open. */
   openChat(target: ChatTarget): void;
   close(): void;
@@ -116,6 +121,9 @@ export function openSheet(host: HTMLElement, options: SheetOptions): SheetHandle
       heading.textContent = title;
       subtitle.textContent = sub;
       scrim.setAttribute('aria-label', `${title} — ${sub}`);
+    },
+    setLayout: (layout) => {
+      box.classList.toggle('sheet__box--wide', layout === 'wide');
     },
     openChat: (target) => {
       closeChat?.();

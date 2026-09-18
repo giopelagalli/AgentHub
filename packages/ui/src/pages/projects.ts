@@ -1,6 +1,6 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster, type TeamStatus } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
-import { ARTIFACT_TITLES, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
+import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
 import { avatarSvg } from '../avatars.js';
 import type { DocsIndex } from '../docs.js';
 import { button, el } from '../dom.js';
@@ -11,8 +11,10 @@ import { openMasterPanel } from '../panels/master.js';
 import { openSheet, type SheetHandle } from '../panels/sheet.js';
 import type { PrdDoc } from '../prd.js';
 import type { RoadmapDoc } from '../roadmap.js';
-import type { Store, UiState } from '../store.js';
+import { turnsOf, type Store, type UiState } from '../store.js';
 import { toast } from '../toast.js';
+import { doingCaption, formatClock, openSubagents, runningTurn, type TurnRecord, type TurnsResponse } from '../turns.js';
+import { mountActivity } from '../views/activity.js';
 import { mountDocs } from '../views/docs.js';
 import type { ViewContext } from '../views/parts.js';
 import { mountPrd } from '../views/prd.js';
@@ -39,10 +41,14 @@ const EMPLOYEES_EMPTY: Record<'loading' | 'ready' | 'failed', string> = {
 export function projectsSignature(state: UiState): string {
   const projects = state.hub?.projects ?? [];
   const current = projects.find((p) => p.slug === state.project);
+  const held = turnsOf(state, state.project);
   return [
     state.project,
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),
+    // A turn starting or ending redraws the header and the org chart; the events in between
+    // only touch the captions, which `followTurn` updates in place.
+    `${held.state}:${runningTurn(held.turns)?.sessionId ?? ''}:${held.turns[0]?.sessionId ?? ''}`,
     projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}:${policyPillText(p.modelPolicy)}`).join('|'),
   ].join('~');
 }
@@ -153,8 +159,15 @@ export function modelPicker(
 }
 
 /** One org-chart card. Employees carry a remove button; the owner card isn't clickable. */
-function orgCardNode(card: OrgCard, onOpen: (card: OrgCard) => void, onRemove: (card: OrgCard) => void): HTMLElement {
+function orgCardNode(
+  card: OrgCard, doing: string | null, rosterStatus: TeamStatus | null,
+  onOpen: (card: OrgCard) => void, onRemove: (card: OrgCard) => void,
+): HTMLElement {
   const wrap = el('div', `card card--${card.kind}`);
+  wrap.dataset.who = card.id;
+  // What the roster itself said, kept on the card so a subagent starting mid-turn can light the
+  // dot in place and a subagent ending can hand it back to the roster's word.
+  if (rosterStatus) wrap.dataset.status = rosterStatus;
   const face: HTMLElement = card.kind === 'owner' ? el('div', 'card__open') : button('', 'card__open');
 
   const portrait = el('span', 'card__avatar');
@@ -165,6 +178,13 @@ function orgCardNode(card: OrgCard, onOpen: (card: OrgCard) => void, onRemove: (
   const text = el('span', 'card__text');
   text.append(el('span', 'card__name', card.name), el('span', 'card__role', card.role));
   if (card.reportsTo) text.appendChild(el('span', 'card__reports', `reports to: ${card.reportsTo}`));
+  // What the member is on right now, from the running turn; the line stays in the DOM (empty)
+  // so an event can fill it in place without a re-render.
+  if (card.kind === 'manager' || card.kind === 'employee') {
+    const line = el('span', 'card__doing', doing ? `doing: ${doing}` : '');
+    line.hidden = !doing;
+    text.appendChild(line);
+  }
   face.appendChild(text);
 
   if (card.status) {
@@ -185,10 +205,15 @@ function orgCardNode(card: OrgCard, onOpen: (card: OrgCard) => void, onRemove: (
   return wrap;
 }
 
-function orgTierNode(tier: OrgTier, onOpen: (card: OrgCard) => void, onRemove: (card: OrgCard) => void): HTMLElement {
+function orgTierNode(
+  tier: OrgTier, running: TurnRecord | null, statusOf: (id: string) => TeamStatus | null,
+  onOpen: (card: OrgCard) => void, onRemove: (card: OrgCard) => void,
+): HTMLElement {
   const group = el('div', tier.cards.length > 1 ? 'org__group org__group--rail' : 'org__group');
   const row = el('div', 'org__tier');
-  for (const card of tier.cards) row.appendChild(orgCardNode(card, onOpen, onRemove));
+  for (const card of tier.cards) {
+    row.appendChild(orgCardNode(card, doingCaption(running, card.id), statusOf(card.id), onOpen, onRemove));
+  }
   group.appendChild(row);
   return group;
 }
@@ -251,8 +276,8 @@ function hireForm(slug: string, onHired: () => void): HTMLFormElement {
 }
 
 
-/** The three artifacts, each mounted into the sheet rather than into the page. */
-const VIEWS: Record<ArtifactId, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
+/** The three documents, each mounted into the sheet rather than into the page. */
+const DOC_VIEWS: Record<Exclude<ArtifactId, 'activity'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
   prd: mountPrd,
   roadmap: mountRoadmap,
   docs: mountDocs,
@@ -266,10 +291,12 @@ interface Held<T> {
 
 /** One big button: the artifact's name, what state it is in, and its score where it has one. */
 function artifactButton(summary: ArtifactSummary, open: (id: ArtifactId) => void): HTMLButtonElement {
-  const node = button('', summary.filled ? 'artifact' : 'artifact artifact--empty');
+  const node = button('', `artifact${summary.filled ? '' : ' artifact--empty'}${summary.live ? ' artifact--live' : ''}`);
+  node.dataset.artifact = summary.id;
   const top = el('div', 'artifact__top');
   top.appendChild(el('span', 'artifact__name', summary.label));
   if (summary.badge) top.appendChild(el('span', 'artifact__badge', summary.badge));
+  if (summary.live) top.appendChild(el('span', 'artifact__live', 'live'));
   node.append(top, el('span', 'artifact__caption', summary.caption), el('span', 'artifact__hint', summary.hint));
   node.addEventListener('click', () => open(summary.id));
   return node;
@@ -284,9 +311,12 @@ function artifactButton(summary: ArtifactSummary, open: (id: ArtifactId) => void
 export function mountProjects(host: HTMLElement, store: Store): () => void {
   const detail = el('section', 'detail');
   const headBox = el('header', 'detail__head');
+  /** The thin line under the header that lights with each event while a turn runs. */
+  const progress = el('div', 'progress');
+  progress.hidden = true;
   const artifactsBox = el('div', 'artifacts');
   const bodyBox = el('div', 'detail__body');
-  detail.append(headBox, artifactsBox, bodyBox);
+  detail.append(headBox, progress, artifactsBox, bodyBox);
   host.appendChild(detail);
 
   /** One drawer at a time: a second would land on top of the first. */
@@ -313,6 +343,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   let docs: Held<DocsIndex> = { state: 'loading', doc: null };
   /** Bumped per artifact reload, so three slow replies for a project we've left are dropped. */
   let artifactToken = 0;
+
+  /** The Run turn button on screen, so the clock can tick on it without a re-render. */
+  let turnButton: HTMLButtonElement | null = null;
+  /** How many events of the running turn the captions have seen; null while none runs. */
+  let followedEvents: number | null = null;
+  /** The last turn whose end was toasted, so the POST reply and the socket don't both say it. */
+  let toastedEnd: string | null = null;
+  let progressTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The sheet, and the artifact currently mounted in it; both null while it is closed. */
   let sheet: SheetHandle | null = null;
@@ -356,6 +394,13 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     take<DocsIndex>(`/api/projects/${slug}/docs`, (held) => { docs = held; });
   };
 
+  /** The recent turns, and with them whether one is running right now. Lands in the store. */
+  const loadTurns = (slug: string): void => {
+    void getJson<TurnsResponse>(`/api/projects/${slug}/turns`)
+      .then((response) => store.dispatch({ type: 'turns-loaded', slug, response }))
+      .catch(() => store.dispatch({ type: 'turns-failed', slug }));
+  };
+
   const closeSheet = (): void => {
     sheet?.close();
   };
@@ -378,13 +423,17 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     sheetView?.dispose();
     sheet.body.replaceChildren();
     sheet.setTitle(ARTIFACT_TITLES[id], project.title);
+    sheet.setLayout(id === 'activity' ? 'wide' : 'document');
     const ctx: ViewContext = {
       slug: project.slug,
       title: project.title,
       openChat: (target) => sheet?.openChat(target),
       openArtifact: (next) => openArtifact(next),
     };
-    sheetView = { id, dispose: VIEWS[id](sheet.body, ctx, seed) };
+    const dispose = id === 'activity'
+      ? mountActivity(sheet.body, ctx, { store, roster: () => roster })
+      : DOC_VIEWS[id](sheet.body, ctx, seed);
+    sheetView = { id, dispose };
   }
 
   const openCard = (slug: string, card: OrgCard): void => {
@@ -457,19 +506,31 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     });
 
     const turn = button('Run turn', 'btn btn--primary');
+    const running = runningTurn(turnsOf(store.getState(), project.slug).turns);
+    if (running) {
+      turn.disabled = true;
+      turn.textContent = `Running · ${formatClock(Date.now() - running.startedAt)}`;
+    }
     turn.addEventListener('click', () => {
       turn.disabled = true;
       turn.textContent = 'Running…';
       void sendJson<{ summary?: string }>(`/api/projects/${project.slug}/turn`)
-        .then((briefing) => toast(briefing?.summary ?? 'Turn complete.'))
+        .then((briefing) => {
+          // The socket's turn-end usually said it first; a hub without turn events still gets a toast.
+          const ended = turnsOf(store.getState(), project.slug).turns[0];
+          if (!ended || toastedEnd !== ended.sessionId) toast(briefing?.summary ?? 'Turn complete.');
+        })
         .catch((error: unknown) => toast(`Turn failed: ${String(error)}`, 'error'))
         .finally(() => {
-          turn.disabled = false;
-          turn.textContent = 'Run turn';
+          if (!runningTurn(turnsOf(store.getState(), project.slug).turns)) {
+            turn.disabled = false;
+            turn.textContent = 'Run turn';
+          }
           loadRoster(project.slug);
           loadArtifacts(project.slug);
         });
     });
+    turnButton = turn;
 
     const hire = button(hiring ? 'Cancel' : 'Add employee');
     hire.addEventListener('click', () => {
@@ -493,11 +554,69 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       artifactsBox.replaceChildren();
       return;
     }
+    const state = store.getState();
+    const held = turnsOf(state, state.project);
     artifactsBox.replaceChildren(
       artifactButton(prdSummary(prd.state, prd.doc), openArtifact),
       artifactButton(roadmapSummary(roadmap.state, roadmap.doc), openArtifact),
       artifactButton(docsSummary(docs.state, docs.doc), openArtifact),
+      artifactButton(activitySummary(held.state, held.turns, roster, Date.now()), openArtifact),
     );
+  }
+
+  /**
+   * The parts of the page that move while a turn runs, changed in place rather than redrawn: the
+   * clock on the Run turn button, the Activity hint, the "doing:" line on each card, and the
+   * progress line, which lights for a moment on each event. A redraw here would also rebuild the
+   * hire form under the owner's typing.
+   */
+  function followTurn(state: UiState): void {
+    const slug = state.project;
+    if (!slug) return;
+    const held = turnsOf(state, slug);
+    const running = runningTurn(held.turns);
+    progress.hidden = !running;
+
+    if (turnButton && running) {
+      turnButton.disabled = true;
+      turnButton.textContent = `Running · ${formatClock(Date.now() - running.startedAt)}`;
+    }
+    const hint = artifactsBox.querySelector<HTMLElement>('[data-artifact="activity"] .artifact__hint');
+    if (hint) hint.textContent = activitySummary(held.state, held.turns, roster, Date.now()).hint;
+
+    const seen = running ? running.events.length : null;
+    if (seen === followedEvents) return;
+    followedEvents = seen;
+    if (!running) return;
+
+    const open = new Set(openSubagents(running));
+    for (const card of bodyBox.querySelectorAll<HTMLElement>('.card[data-who]')) {
+      const who = card.dataset.who ?? '';
+      const line = card.querySelector<HTMLElement>('.card__doing');
+      if (!line) continue;
+      const doing = doingCaption(running, who);
+      line.textContent = doing ? `doing: ${doing}` : '';
+      line.hidden = !doing;
+      const working = card.dataset.status === 'working' || open.has(who) || who === 'manager';
+      card.querySelector('.dot')?.classList.toggle('dot--working', working);
+    }
+    progress.classList.add('progress--lit');
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => progress.classList.remove('progress--lit'), 350);
+  }
+
+  /** A turn that ended under the socket: the toast, and the documents it may have changed. */
+  function onTurnEnded(state: UiState): void {
+    const slug = state.project;
+    if (!slug) return;
+    const newest = turnsOf(state, slug).turns[0];
+    if (!newest || newest.endedAt === null || toastedEnd === newest.sessionId) return;
+    // Only a turn that ended while we were watching gets announced; history is not news.
+    if (followedEvents === null) return;
+    toastedEnd = newest.sessionId;
+    toast(newest.summary || `Turn ${newest.outcome ?? 'ended'}.`);
+    loadRoster(slug);
+    loadArtifacts(slug);
   }
 
   /** The org chart: the permanent content of this page. */
@@ -508,10 +627,15 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         .map((key) => key.slice(project.slug.length + 1)),
     );
     const chart = el('div', 'org');
+    const running = runningTurn(turnsOf(state, project.slug).turns);
+    // A subagent the turn has open is working whatever the roster last said; so is the manager.
+    if (running) for (const who of ['manager', ...openSubagents(running)]) chatting.add(who);
+    const statusOf = (id: string): TeamStatus | null =>
+      id === 'manager' ? (roster?.manager.status ?? null) : (roster?.members.find((m) => m.id === id)?.status ?? null);
     for (const [index, tier] of orgChartModel(roster, chatting).entries()) {
       if (index > 0) chart.appendChild(el('div', 'org__link'));
       chart.appendChild(tier.cards.length
-        ? orgTierNode(tier, (card) => openCard(project.slug, card), (card) => removeCard(project.slug, card))
+        ? orgTierNode(tier, running, statusOf, (card) => openCard(project.slug, card), (card) => removeCard(project.slug, card))
         : el('p', 'empty', EMPLOYEES_EMPTY[rosterState]));
     }
     return chart;
@@ -531,6 +655,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     renderHead(project);
     renderArtifacts();
     bodyBox.replaceChildren(orgChart(project, state));
+    progress.hidden = !runningTurn(turnsOf(state, project.slug).turns);
   }
 
   let last = '';
@@ -539,8 +664,12 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   const render = (state: UiState): void => {
     const next = projectsSignature(state);
-    if (next === last) return;
+    if (next === last) {
+      followTurn(state);
+      return;
+    }
     last = next;
+    onTurnEnded(state);
 
     const project = selected(state);
     const projectChanged = state.project !== rosterFor;
@@ -559,6 +688,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         roster = null;
         rosterState = 'loading';
         hiring = false;
+        followedEvents = null;
+        toastedEnd = null;
         prd = { state: 'loading', doc: null };
         roadmap = { state: 'loading', doc: null };
         docs = { state: 'loading', doc: null };
@@ -566,9 +697,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       if (state.project) {
         loadRoster(state.project);
         loadArtifacts(state.project);
+        if (projectChanged) loadTurns(state.project);
       }
     }
     renderDetail(state);
+    followTurn(state);
   };
 
   /**
@@ -586,10 +719,16 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   const unseed = store.subscribe(takeSeed);
   render(store.getState());
   takeSeed(store.getState());
+  /** The Run turn clock and the Activity hint's elapsed time, once a second while a turn runs. */
+  const clock = setInterval(() => {
+    if (runningTurn(turnsOf(store.getState(), store.getState().project).turns)) followTurn(store.getState());
+  }, 1000);
 
   return () => {
     unsubscribe();
     unseed();
+    clearInterval(clock);
+    clearTimeout(progressTimer);
     closeDrawer?.();
     closeSheet();
     rosterToken++;

@@ -63,6 +63,12 @@ async function boot(): Promise<void> {
     return;
   }
   connect(store);
+  // Dev harness: `?fake-turns` (or `=idle`, `=long`) plays scripted turn frames into the store.
+  // The import is behind `DEV`, so a production build carries none of it.
+  if (import.meta.env.DEV) {
+    const fake = new URLSearchParams(window.location.search).get('fake-turns');
+    if (fake !== null) void import('./fixtures/turns.js').then((m) => m.injectFakeTurns(store, fake));
+  }
 }
 
 void boot();

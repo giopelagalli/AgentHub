@@ -1,4 +1,5 @@
 import { PRD_SECTIONS, TEAM_ROLES, type Milestone, type TeamMember, type TeamRole } from '@agenthub/shared';
+import type { Briefing } from './schema.js';
 
 // A subagent's role and a roster member's role are the same thing: the roster is who the
 // orchestrator delegates to, and delegating is spawning a subagent.
@@ -36,6 +37,20 @@ export interface PlanningContext {
   milestones: Milestone[];
   /** The first milestone that isn't done; null when the roadmap is empty or finished. */
   currentId: string | null;
+  /** What the previous turn reported; null before the first briefing. */
+  lastTurn: Briefing | null;
+  /** `workspaceDigest` of workspace/: what exists, so the turn need not list it. */
+  digest: string;
+}
+
+/** The previous turn's report as the next one reads it: where it left off, what it meant to do next. */
+function lastTurnLines(briefing: Briefing | null): string[] {
+  if (!briefing) return ['(no previous turn)'];
+  return [
+    briefing.summary,
+    `Next steps it planned: ${briefing.nextSteps.length ? briefing.nextSteps.join('; ') : 'none'}`,
+    `Blockers it reported: ${briefing.blockers.length ? briefing.blockers.join('; ') : 'none'}`,
+  ];
 }
 
 /** The roadmap as the orchestrator reads it, with the milestone it is supposed to be on marked. */
@@ -73,14 +88,27 @@ function planningSection(planning: PlanningContext): string[] {
     `## Roadmap`,
     ...roadmapLines(planning),
     ``,
+    `## Last turn`,
+    ...lastTurnLines(planning.lastTurn),
+    ``,
+    `## Workspace digest`,
+    `Every file in workspace/ (node_modules and nested checkouts left out), with its size and opening line:`,
+    planning.digest,
+    ``,
     `## Planning rules`,
     `- Work the current milestone only. Later milestones are not this turn's business.`,
+    `- Pick up where the last turn left off: its next steps and the open tasks are your starting`,
+    `  point, not a fresh survey of the project.`,
+    `- The digest tells you what exists; do not list or read files just to orient — read a file only`,
+    `  when you need its contents to decide something.`,
     `- Break the current milestone into concrete tasks.yaml items and delegate those.`,
     `- When you make a choice a future reader would ask "why?" about, call add_decision.`,
     `- When behaviour or architecture changes, update the relevant docs page with write_doc — the`,
     `  docs say how the app works and why; keep them true.`,
-    `- Call set_milestone_status(id, "in-progress") when you start a milestone and`,
-    `  set_milestone_status(id, "done") when it is finished and verified.`,
+    `- Start a milestone with set_milestone_status(id, "in-progress") and finish it with`,
+    `  complete_milestone(id): that runs the project's tests and has the reviewer read what changed,`,
+    `  and marks the milestone done only when both pass. When it comes back with findings, fix them`,
+    `  (delegate the fixes) and call it again. set_milestone_status cannot mark a milestone done.`,
     ``,
   ];
 }
@@ -100,7 +128,7 @@ export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[]
     `The bundle is a git repository and is your durable memory across turns. Its files:`,
     `- manifest.yaml — identity, status, priority and owner intent (managed for you).`,
     `- prd.md — the product requirements document the owner owns; you build what it says.`,
-    `- roadmap.yaml — the ordered milestones. Tool: set_milestone_status.`,
+    `- roadmap.yaml — the ordered milestones. Tools: set_milestone_status, complete_milestone.`,
     `- docs/ — the living documentation: how the app works and why. Tool: write_doc.`,
     `- project.md — the living charter: goal, current state, constraints. Tool: update_project_md.`,
     `- decisions.log.md — append-only, dated decisions with rationale. Tool: add_decision.`,
@@ -128,8 +156,9 @@ export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[]
     `- Delegate concrete work with spawn_subagent (roles: ${SUBAGENT_ROLES.join(', ')}). Give the`,
     `  subagent a self-contained task: what to do, which files, and how you will judge it done.`,
     `  Do the work yourself only when it is smaller than the cost of briefing someone else.`,
-    `- Verify a subagent's report against the workspace with read_file / list_dir before you trust`,
-    `  it. A report is a claim; the files are the evidence. Never mark a task done on a claim alone.`,
+    `- A subagent's report ends with a "Files written:" line — that is what it changed; you do not`,
+    `  need to inspect the workspace to learn it. A report is still a claim: spot-check with read_file`,
+    `  what matters before marking a task done, and let complete_milestone judge the milestone.`,
     `- Keep tasks.yaml current: every turn, reflect what actually happened in task statuses.`,
     `- Record every non-obvious choice with add_decision, including the rationale. A future turn`,
     `  will only see the bundle, not this conversation.`,

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -12,6 +12,8 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { auditPrd, isPrdScaffold, planningContext, prdScaffold, PrdDrafter, PrdNotDraftedError } from '../src/projects/prd.js';
+import { DIGEST_MAX_CHARS, DIGEST_MAX_ENTRIES } from '../src/projects/digest.js';
+import { orchestratorSystemPrompt } from '../src/projects/prompts.js';
 import { createHub, type Hub } from '../src/server.js';
 
 let root: string;
@@ -148,6 +150,49 @@ describe('planningContext', () => {
 
     expect(ctx.prdComplete).toBe(true);
     expect(ctx.prd).toBe(normal.trim());
+  });
+
+  it('carries the last turn\'s briefing, and says when there is none', async () => {
+    await bundle.writePrd(fullPrd());
+    expect((await planningContext(bundle)).lastTurn).toBeNull();
+    expect(orchestratorSystemPrompt('', [], await planningContext(bundle))).toContain('(no previous turn)');
+
+    await bundle.publishBriefing({
+      slug: 'demo', title: 'Demo', status: 'active', priority: 'project', summary: 'wired the parser',
+      progress: { done: 1, total: 3 }, blockers: ['no API key'], nextSteps: ['add the lexer'], updatedAt: 1,
+    });
+
+    const prompt = orchestratorSystemPrompt('', [], await planningContext(bundle));
+    expect(prompt).toContain('## Last turn\nwired the parser\nNext steps it planned: add the lexer\nBlockers it reported: no API key');
+    expect(prompt).toContain('do not list or read files just to orient');
+    expect(prompt).toContain('complete_milestone(id)');
+  });
+
+  it('digests the workspace — path, size, opening line — leaving node_modules out', async () => {
+    await bundle.writePrd(fullPrd());
+    await mkdir(join(bundle.workspace, 'src'), { recursive: true });
+    await mkdir(join(bundle.workspace, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(join(bundle.workspace, 'src', 'index.ts'), '\n// entry point\nexport {};\n', 'utf8');
+    await writeFile(join(bundle.workspace, 'data.bin'), Buffer.alloc(2048), 'utf8');
+    await writeFile(join(bundle.workspace, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n', 'utf8');
+
+    const { digest } = await planningContext(bundle);
+
+    expect(digest.split('\n')).toEqual(['data.bin (2.0 KB)', 'src/index.ts (27 B) \u2014 // entry point']);
+    expect(digest).not.toContain('node_modules');
+    expect(orchestratorSystemPrompt('', [], await planningContext(bundle))).toContain('## Workspace digest');
+  });
+
+  it('bounds the digest by entries and characters', async () => {
+    for (let i = 0; i < DIGEST_MAX_ENTRIES + 10; i++) {
+      await writeFile(join(bundle.workspace, `file-${String(i).padStart(3, '0')}.md`), `# ${'heading '.repeat(20)}\n`, 'utf8');
+    }
+
+    const { digest } = await planningContext(bundle);
+
+    expect(digest.length).toBeLessThanOrEqual(DIGEST_MAX_CHARS);
+    expect(digest.split('\n').length).toBeLessThanOrEqual(DIGEST_MAX_ENTRIES + 1);
+    expect(digest).not.toContain('file-160.md');
   });
 });
 

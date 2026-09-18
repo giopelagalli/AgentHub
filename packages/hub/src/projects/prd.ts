@@ -3,6 +3,7 @@ import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { routeFor, type ModelGateway } from '../gateway.js';
 import type { ProjectBundle } from './bundle.js';
+import { workspaceDigest } from './digest.js';
 import type { PlanningContext } from './prompts.js';
 import { currentMilestoneId, normalizeMilestones } from './roadmap.js';
 
@@ -108,7 +109,11 @@ export function prdBrief(markdown: string): string {
   }).join('\n').trim();
 }
 
-/** Everything the orchestrator's prompt needs about the plan, read from the bundle in one place. */
+/**
+ * Everything the orchestrator's prompt needs about the plan and where it stands, read from the
+ * bundle in one place: the PRD, the roadmap, what the last turn reported, and what the workspace
+ * holds — so a turn starts from what is known instead of rediscovering it.
+ */
 export async function planningContext(bundle: ProjectBundle): Promise<PlanningContext> {
   const prd = await bundle.prd();
   const milestones = await bundle.roadmap();
@@ -118,6 +123,8 @@ export async function planningContext(bundle: ProjectBundle): Promise<PlanningCo
     scaffoldOnly: isPrdScaffold(prd),
     milestones,
     currentId: currentMilestoneId(milestones),
+    lastTurn: await bundle.latestBriefing(),
+    digest: await workspaceDigest(bundle.workspace),
   };
 }
 

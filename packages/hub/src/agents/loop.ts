@@ -1,10 +1,20 @@
-import type { ChatMessage, ChatResult, Tier } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, Tier, TurnEvent } from '@agenthub/shared';
 import type { ModelGateway, Route } from '../gateway.js';
 import { runToolCall, type Tool, type ToolContext } from './tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from './transcript.js';
 
 /** What an `outward` tool must return: a `ConfirmationGate` proposal id, never a done-it result. */
 const OUTWARD_RESULT_RE = /^pending confirmation /;
+
+/** Caps on what a live event carries: a glance at what is happening, not the transcript itself. */
+const EVENT_TEXT_LIMIT = 300;
+const EVENT_SUMMARY_LIMIT = 200;
+
+/** One line of at most `limit` chars, with an ellipsis where it was cut. */
+export function clip(text: string, limit: number): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length <= limit ? line : `${line.slice(0, limit - 1)}\u2026`;
+}
 
 export interface AgentRunOptions {
   kind: SessionKind;
@@ -22,6 +32,14 @@ export interface AgentRunOptions {
   memberId?: string;
   /** Called with true when a roster member's run starts and false when it ends, for a "working" dot. */
   onBusy?: (busy: boolean) => void;
+  /** Called with the session id as soon as it exists, before the first model call. */
+  onStart?: (sessionId: number) => void;
+  /**
+   * Receives every live event of this run — its text, tool calls and results, plus whatever its
+   * tools emit through `ToolContext.onEvent` (a spawned subagent's events, a verification). Each one
+   * is also persisted under this run's session, so a turn can be replayed after a restart.
+   */
+  onEvent?: (e: TurnEvent) => void;
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
   /** Which model serves this run's tier — a project's `modelPolicy`, resolved by `routeFor`. */
   route?: Route;
@@ -54,8 +72,15 @@ export class AgentLoop {
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});
+    opts.onStart?.(sessionId);
     if (opts.memberId) opts.onBusy?.(true);
-    const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal };
+    // The orchestrator's own events read as the manager's; a roster member's carry their id.
+    const who = opts.memberId ?? (opts.kind === 'orchestrator' ? 'manager' : opts.kind);
+    const emit = (e: TurnEvent): void => {
+      transcript.appendTurnEvent(sessionId, e);
+      opts.onEvent?.(e);
+    };
+    const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal, onEvent: emit };
     const toolDefs = opts.tools.map((t) => t.def);
 
     const system: ChatMessage = { role: 'system', content: opts.system };
@@ -108,6 +133,7 @@ export class AgentLoop {
       };
       messages.push(assistant);
       transcript.append(sessionId, assistant);
+      if (result.content.trim()) emit({ kind: 'text', who, text: clip(result.content, EVENT_TEXT_LIMIT) });
 
       if (result.toolCalls.length === 0) return finish('stop');
 
@@ -124,7 +150,14 @@ export class AgentLoop {
         }
         toolCalls++;
         lastTool = call.name;
-        answer(call, this.checkOutward(opts.tools, call, sessionId, await runToolCall(opts.tools, call, ctx)));
+        emit({ kind: 'tool-call', who, tool: call.name, args: clip(call.arguments, EVENT_SUMMARY_LIMIT) });
+        const startedAt = Date.now();
+        const output = this.checkOutward(opts.tools, call, sessionId, await runToolCall(opts.tools, call, ctx));
+        emit({
+          kind: 'tool-result', who, tool: call.name, ok: !output.startsWith('error:'),
+          summary: clip(output, EVENT_SUMMARY_LIMIT), ms: Date.now() - startedAt,
+        });
+        answer(call, output);
       }
     }
   }

@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, VideoPayload } from '@agenthub/shared';
+import type { BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -90,6 +90,8 @@ const QUIESCE_GRACE_MS = 1000;
 const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
 /** How much of a session's last message the roster carries; the UI shows it as a one-liner. */
 const TEAM_LAST_MESSAGE_LIMIT = 200;
+/** How many past orchestrator turns `/turns` replays. */
+const TURNS_LIMIT = 20;
 /** Cap on the messages `/team/:id/activity` returns — the tail, which is what "doing now" means. */
 const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
 
@@ -237,6 +239,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),
+    onEvent: (slug, sessionId, event) => broadcast({ type: 'turn-event', slug, sessionId, at: Date.now(), event }),
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
@@ -941,6 +944,29 @@ export function createHub(opts: HubOptions = {}): Hub {
     const briefing = await projects.runTurn(slug, body?.instruction);
     await refreshProjects();
     return briefing;
+  });
+
+  /** The last orchestrator turns with their events replayed from the transcript, newest first. */
+  const turnRecord = (session: SessionRecord): TurnRecord => {
+    const events = transcript.turnEvents(session.id);
+    const end = events.find((e): e is TurnEvent & { kind: 'turn-end'; at: number } => e.kind === 'turn-end');
+    return {
+      sessionId: session.id,
+      startedAt: session.startedAt,
+      // A turn's own end comes after its session's: the briefing is published in between.
+      endedAt: end?.at ?? session.endedAt,
+      outcome: end?.outcome ?? session.outcome,
+      summary: end?.summary ?? '',
+      toolCalls: events.filter((e) => e.kind === 'tool-call' && e.who === 'manager').length,
+      events,
+    };
+  };
+
+  app.get('/api/projects/:slug/turns', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    if (!(await resolveProject(slug, reply))) return reply;
+    const sessions = transcript.sessions({ kind: 'orchestrator', subject: slug, limit: TURNS_LIMIT }).reverse();
+    return { running: projects.runningTurn(slug), turns: sessions.map(turnRecord) };
   });
 
   app.get('/api/projects/:slug/transcript', async (req, reply) => {

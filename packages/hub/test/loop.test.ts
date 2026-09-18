@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ChatMessage } from '@agenthub/shared';
+import type { ChatMessage, TurnEvent } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb, type Db } from '../src/db.js';
 import { JobQueue } from '../src/queue.js';
@@ -285,5 +285,56 @@ describe('AgentLoop', () => {
 
     expect(res.outcome).toBe('error');
     expect(calls).toEqual([true, false]);
+  });
+
+  it('emits a text event for a text-only run, as the run kind when there is no member', async () => {
+    const { loop, transcript, ctx } = await setup([{ content: 'plain reply' }]);
+    const events: TurnEvent[] = [];
+    let started: number | undefined;
+
+    const res = await loop.run({ ...runOpts({ tools: [], onEvent: (e) => events.push(e), onStart: (id) => { started = id; } }), ctx });
+
+    expect(started).toBe(res.sessionId);
+    expect(events).toEqual([{ kind: 'text', who: 'subagent', text: 'plain reply' }]);
+    expect(transcript.turnEvents(res.sessionId)).toEqual([{ ...events[0], at: expect.any(Number) }]);
+    // The turn events are not mixed into the session's own notes.
+    expect(transcript.events(res.sessionId)).toEqual([]);
+  });
+
+  it('emits tool-call / tool-result around every step, attributed to the member, and persists them', async () => {
+    const boom: Tool = {
+      def: { type: 'tool', name: 'boom', description: 'always fails', parameters: { type: 'object', properties: {} } },
+      run: async () => { throw new Error('kaboom'); },
+    };
+    const { loop, transcript, ctx } = await setup([
+      { toolCalls: [{ name: 'read_file', arguments: { path: 'notes.txt' } }, { name: 'boom', arguments: {} }], content: 'reading' },
+      { content: 'summary' },
+    ]);
+    const events: TurnEvent[] = [];
+
+    const res = await loop.run({ ...runOpts({ tools: [...workspaceTools(), boom], memberId: 'coder-1', onEvent: (e) => events.push(e) }), ctx });
+
+    expect(events.map((e) => e.kind)).toEqual(['text', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text']);
+    expect(events.every((e) => 'who' in e && e.who === 'coder-1')).toBe(true);
+    expect(events[1]).toEqual({ kind: 'tool-call', who: 'coder-1', tool: 'read_file', args: '{"path":"notes.txt"}' });
+    expect(events[2]).toMatchObject({ kind: 'tool-result', tool: 'read_file', ok: true, summary: 'the file body', ms: expect.any(Number) });
+    expect(events[4]).toMatchObject({ kind: 'tool-result', tool: 'boom', ok: false, summary: 'error: kaboom' });
+    expect(transcript.turnEvents(res.sessionId).map((e) => e.kind)).toEqual(events.map((e) => e.kind));
+  });
+
+  it('clips long text and argument summaries', async () => {
+    const long = 'x'.repeat(1000);
+    const { loop, ctx } = await setup([
+      { toolCalls: [{ name: 'write_file', arguments: { path: 'big.txt', content: long } }], content: long },
+      { content: 'done' },
+    ]);
+    const events: TurnEvent[] = [];
+
+    await loop.run({ ...runOpts({ onEvent: (e) => events.push(e) }), ctx });
+
+    const text = events[0];
+    const call = events[1];
+    expect(text.kind === 'text' && text.text.length).toBe(300);
+    expect(call.kind === 'tool-call' && call.args.length).toBe(200);
   });
 });

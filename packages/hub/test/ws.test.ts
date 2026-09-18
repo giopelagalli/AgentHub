@@ -1,19 +1,23 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createMockOpenAI } from '@agenthub/mocks';
 import type { FastifyInstance } from 'fastify';
 import { createHub, type Hub } from '../src/server.js';
 
 // Node 22 has a global WebSocket client — use it, no new deps.
-let mock: FastifyInstance; let hub: Hub; let base: string; let wsUrl: string;
+let mock: FastifyInstance; let hub: Hub; let base: string; let wsUrl: string; let projectsRoot: string;
 beforeAll(async () => {
   mock = createMockOpenAI({ tokenDelayMs: 5 });
   await mock.listen({ port: 0, host: '127.0.0.1' });
-  hub = createHub();
+  projectsRoot = await mkdtemp(join(tmpdir(), 'agenthub-ws-projects-'));
+  hub = createHub({ projectsRoot });
   await hub.app.listen({ port: 0, host: '127.0.0.1' });
   const port = (hub.app.server.address() as { port: number }).port;
   base = `http://127.0.0.1:${port}`; wsUrl = `ws://127.0.0.1:${port}/ws`;
 });
-afterAll(async () => { await hub.stop(); await mock.close(); });
+afterAll(async () => { await hub.stop(); await mock.close(); await rm(projectsRoot, { recursive: true, force: true }); });
 
 const nextMessage = (ws: WebSocket, pred: (m: any) => boolean, timeoutMs = 5000) =>
   new Promise<any>((resolve, reject) => {
@@ -81,5 +85,29 @@ describe('hub websocket', () => {
 
     late.close();
     await chatDone;
+  });
+
+  it('streams turn-event frames while an orchestrator turn runs', async () => {
+    const mockUrl = `http://127.0.0.1:${(mock.server.address() as { port: number }).port}`;
+    await fetch(`${base}/api/nodes/register`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'brain', arch: 'x64', endpoints: [{ tier: 'orchestrator', url: mockUrl, model: 'mock-model', maxStreams: 4 }] }) });
+    await fetch(`${base}/api/projects`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ slug: 'demo', title: 'Demo', intent: 'ship it' }) });
+    const ws = new WebSocket(wsUrl);
+    await nextMessage(ws, (m) => m.type === 'state');
+    const frames: any[] = [];
+    ws.addEventListener('message', (ev: MessageEvent) => {
+      const m = JSON.parse(String(ev.data));
+      if (m.type === 'turn-event') frames.push(m);
+    });
+    const ended = nextMessage(ws, (m) => m.type === 'turn-event' && m.event.kind === 'turn-end');
+
+    await fetch(`${base}/api/projects/demo/turn`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    await ended;
+
+    expect(frames.map((f) => f.event.kind)).toEqual(['turn-start', 'text', 'turn-end']);
+    expect(frames[0]).toMatchObject({ type: 'turn-event', slug: 'demo', sessionId: expect.any(Number), at: expect.any(Number), event: { kind: 'turn-start', who: 'manager' } });
+    expect(frames.every((f) => f.sessionId === frames[0].sessionId)).toBe(true);
+    ws.close();
   });
 });

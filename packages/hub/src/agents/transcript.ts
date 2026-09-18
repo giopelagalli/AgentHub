@@ -1,5 +1,12 @@
-import type { ChatMessage, Tier, ToolCall } from '@agenthub/shared';
+import type { ChatMessage, Tier, ToolCall, TurnEvent } from '@agenthub/shared';
 import type { Db } from '../db.js';
+
+/**
+ * Marks an `event` row that is a serialized `TurnEvent` rather than a note about the session. Same
+ * table and role as the other events — a hub restart keeps them — but `events()` leaves them out
+ * and `turnEvents()` is the only reader, so the two kinds never mix.
+ */
+const TURN_EVENT_PREFIX = 'turn-event:';
 
 export type SessionKind = 'master' | 'orchestrator' | 'subagent' | 'assistant' | 'chat';
 export type SessionOutcome = 'stop' | 'budget-exhausted' | 'error' | 'aborted';
@@ -61,8 +68,22 @@ export class Transcript {
   }
 
   events(sessionId: number): { content: string; at: number }[] {
-    return this.db.prepare(`SELECT content, created_at AS at FROM messages WHERE session_id=? AND role='event' ORDER BY id`)
-      .all(sessionId) as { content: string; at: number }[];
+    return this.db.prepare(
+      `SELECT content, created_at AS at FROM messages WHERE session_id=? AND role='event' AND content NOT LIKE ? ORDER BY id`,
+    ).all(sessionId, `${TURN_EVENT_PREFIX}%`) as { content: string; at: number }[];
+  }
+
+  /** Persists one live turn event under the session it happened in, so `/turns` can replay it. */
+  appendTurnEvent(sessionId: number, event: TurnEvent, now = Date.now()): void {
+    this.appendEvent(sessionId, `${TURN_EVENT_PREFIX}${JSON.stringify(event)}`, now);
+  }
+
+  /** A session's turn events in the order they happened, each stamped with when. */
+  turnEvents(sessionId: number): (TurnEvent & { at: number })[] {
+    const rows = this.db.prepare(
+      `SELECT content, created_at AS at FROM messages WHERE session_id=? AND role='event' AND content LIKE ? ORDER BY id`,
+    ).all(sessionId, `${TURN_EVENT_PREFIX}%`) as { content: string; at: number }[];
+    return rows.map((r) => ({ ...(JSON.parse(r.content.slice(TURN_EVENT_PREFIX.length)) as TurnEvent), at: r.at }));
   }
 
   endSession(id: number, outcome: SessionOutcome, now = Date.now()): void {

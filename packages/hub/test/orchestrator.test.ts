@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
-import { PRD_SECTIONS } from '@agenthub/shared';
+import { PRD_SECTIONS, type TurnEvent } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
 import { JobQueue } from '../src/queue.js';
@@ -47,6 +47,8 @@ interface Harness {
   registry: NodeRegistry;
   loop: AgentLoop;
   queue: JobQueue;
+  /** Every live event the orchestrator reported, stamped with the turn's session. */
+  events: (TurnEvent & { sessionId: number })[];
 }
 
 /** Two mocks — one per tier — so orchestrator and subagent scripts stay independent. */
@@ -67,8 +69,12 @@ async function setup(brainScript: ScriptStep[], workerScript: ScriptStep[] = [],
   const gateway = new ModelGateway(registry);
   const loop = new AgentLoop({ gateway, transcript });
   const queue = new JobQueue(db);
-  const orchestrator = new ProjectOrchestrator({ bundle: target, loop, gateway, queue, registry, transcript });
-  return { orchestrator, transcript, brain, worker, registry, loop, queue };
+  const events: (TurnEvent & { sessionId: number })[] = [];
+  const orchestrator = new ProjectOrchestrator({
+    bundle: target, loop, gateway, queue, registry, transcript,
+    onEvent: (sessionId, e) => events.push({ ...e, sessionId }),
+  });
+  return { orchestrator, transcript, brain, worker, registry, loop, queue, events };
 }
 
 const publishStep = (over: Record<string, unknown> = {}): ScriptStep => ({
@@ -168,7 +174,7 @@ describe('ProjectOrchestrator', () => {
 
     const orchestratorSession = transcript.sessions({ kind: 'orchestrator' })[0];
     const results = transcript.messages(orchestratorSession.id).filter((m) => m.role === 'tool');
-    expect(results[0].content).toBe('the repo holds one package');
+    expect(results[0].content).toBe('the repo holds one package\n\nFiles written: (none)');
 
     // The subagent got the task as its user message and only workspace tools.
     const workerMessages = transcript.messages(subagentSessions[0].id);
@@ -204,6 +210,56 @@ describe('ProjectOrchestrator', () => {
     expect(system.content).toContain('wire the frobnicator');
     expect(system.content).toContain('use SQLite WAL');
     expect(system.content).toContain('concurrent readers during turns');
+  });
+});
+
+describe('turn events', () => {
+  it('brackets the turn, forwards a subagent\'s events with its id, and reports the files it wrote', async () => {
+    const { orchestrator, transcript, events } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'add the lexer', member: 'coder-1' } }], content: 'delegating' },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [
+        { toolCalls: [{ name: 'write_file', arguments: { path: 'src/lexer.js', content: 'export const lex = () => [];\n' } }] },
+        { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['cp', 'src/lexer.js', 'src/copy.js'] } }] },
+        { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['cat', 'src/lexer.js'] } }] },
+        { content: 'lexer added' },
+      ],
+    );
+
+    await orchestrator.turn();
+
+    const session = transcript.sessions({ kind: 'orchestrator' })[0];
+    expect(events.every((e) => e.sessionId === session.id)).toBe(true);
+    expect(events.map((e) => `${e.kind}:${'who' in e ? e.who : '-'}`)).toEqual([
+      'turn-start:manager',
+      'text:manager',
+      'tool-call:manager',
+      'subagent-start:coder-1',
+      'tool-call:coder-1', 'tool-result:coder-1',
+      'tool-call:coder-1', 'tool-result:coder-1',
+      'tool-call:coder-1', 'tool-result:coder-1',
+      'text:coder-1',
+      'subagent-end:coder-1',
+      'tool-result:manager',
+      'tool-call:manager', 'tool-result:manager',
+      'text:manager',
+      'turn-end:-',
+    ]);
+    expect(events[3]).toMatchObject({ kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'add the lexer' });
+    expect(events[11]).toMatchObject({ kind: 'subagent-end', who: 'coder-1', outcome: 'stop', ms: expect.any(Number) });
+    expect(events[events.length - 1]).toMatchObject({ kind: 'turn-end', outcome: 'stop', summary: 'model-written summary', ms: expect.any(Number) });
+
+    // The manager learns what changed from the report, not by inspecting the workspace.
+    const results = transcript.messages(session.id).filter((m) => m.role === 'tool');
+    expect(results[0].content).toBe('lexer added\n\nFiles written: src/lexer.js, src/copy.js');
+
+    // The whole turn replays from the orchestrator session; the member's session holds its own part.
+    expect(transcript.turnEvents(session.id).map((e) => e.kind)).toEqual(events.map((e) => e.kind));
+    const member = transcript.sessions({ kind: 'subagent' })[0];
+    expect(transcript.turnEvents(member.id).map((e) => e.kind)).toEqual(['tool-call', 'tool-result', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text']);
   });
 });
 

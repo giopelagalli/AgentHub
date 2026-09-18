@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type ModelPolicy, type Priority, type ProjectIntake } from '@agenthub/shared';
+import { PRIORITY_RANK, type ModelPolicy, type Priority, type ProjectIntake, type TurnEvent } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -31,6 +31,8 @@ export interface ProjectServiceDeps {
   external?: Tool[];
   /** Notified with (slug, memberId, busy) whenever a project's delegated subagent run starts or ends. */
   onBusy?: (slug: string, memberId: string, busy: boolean) => void;
+  /** Receives every live event of every project's turns, keyed by slug and orchestrator session. */
+  onEvent?: (slug: string, sessionId: number, e: TurnEvent) => void;
   tickIntervalMs?: number;
   /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
   turnTimeoutMs?: number;
@@ -73,6 +75,8 @@ export class ProjectService {
   private chains = new Map<string, Promise<unknown>>();
   /** One controller per in-flight turn, keyed by slug — `stop()` aborts whatever's still running. */
   private turnControllers = new Map<string, AbortController>();
+  /** The orchestrator session each in-flight turn is running as, once its `turn-start` has fired. */
+  private runningTurns = new Map<string, { sessionId: number; startedAt: number }>();
   private listeners: BriefingListener[] = [];
   private timer: NodeJS.Timeout | undefined;
   private tickInFlight: Promise<void> = Promise.resolve();
@@ -160,6 +164,11 @@ export class ProjectService {
     return (await this.get(slug)).tasks().then((t) => t.tasks);
   }
 
+  /** The turn in flight for `slug`, once it has a session; null between turns. */
+  runningTurn(slug: string): { sessionId: number; startedAt: number } | null {
+    return this.runningTurns.get(slug) ?? null;
+  }
+
   /**
    * Runs one orchestrator turn. Turns for one project are serialized — a second caller (the owner
    * while the scheduler is mid-tick, say) queues behind the first rather than racing it through the
@@ -196,6 +205,7 @@ export class ProjectService {
         clearTimeout(deadline);
         signal?.removeEventListener('abort', onCallerAbort);
         if (this.turnControllers.get(slug) === controller) this.turnControllers.delete(slug);
+        this.runningTurns.delete(slug);
       }
     });
   }
@@ -280,10 +290,15 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, leases, browser, external, onBusy } = this.deps;
+    const { loop, gateway, queue, registry, transcript, leases, browser, external, onBusy, onEvent } = this.deps;
     const orchestrator = new ProjectOrchestrator({
       bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser, external,
       ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
+      onEvent: (sessionId, e) => {
+        // Turns are serialized per slug, so the session a turn-start names is the one running now.
+        if (e.kind === 'turn-start') this.runningTurns.set(slug, { sessionId, startedAt: Date.now() });
+        onEvent?.(slug, sessionId, e);
+      },
     });
     this.orchestrators.set(slug, orchestrator);
     return orchestrator;

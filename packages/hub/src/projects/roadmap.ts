@@ -1,4 +1,4 @@
-import { MILESTONE_STATUSES, type Milestone, type MilestoneStatus } from '@agenthub/shared';
+import { MILESTONE_STATUSES, type Milestone, type MilestoneStatus, type MilestoneVerification } from '@agenthub/shared';
 
 /**
  * The milestone the project is on: the first one that isn't done. A roadmap whose every milestone is
@@ -26,13 +26,14 @@ export function moveMilestone(milestones: Milestone[], id: string, direction: 'u
 }
 
 /**
- * Applies an owner's edit to one milestone. Ids are positional handles the roadmap is ordered by, so
- * they are never patched; everything else is replaced field by field, and `estimate: ''` clears it.
+ * Applies an edit to one milestone — the owner's, or a turn's status change with the evidence behind
+ * it. Ids are positional handles the roadmap is ordered by, so they are never patched; everything
+ * else is replaced field by field, and `estimate: ''` clears it.
  */
 export function patchMilestone(
   milestones: Milestone[],
   id: string,
-  patch: { title?: string; summary?: string; status?: MilestoneStatus; estimate?: string },
+  patch: { title?: string; summary?: string; status?: MilestoneStatus; estimate?: string; startedCommit?: string; verification?: MilestoneVerification },
 ): Milestone[] {
   return milestones.map((m) => {
     if (m.id !== id) return m;
@@ -40,6 +41,8 @@ export function patchMilestone(
     if (patch.title !== undefined) next.title = patch.title;
     if (patch.summary !== undefined) next.summary = patch.summary;
     if (patch.status !== undefined) next.status = patch.status;
+    if (patch.startedCommit !== undefined) next.startedCommit = patch.startedCommit;
+    if (patch.verification !== undefined) next.verification = patch.verification;
     if (patch.estimate !== undefined) {
       if (patch.estimate) next.estimate = patch.estimate;
       else delete next.estimate;

@@ -164,6 +164,11 @@ export interface ProjectManifest {
   intake?: ProjectIntake;
   /** `auditPrd(prd.md).score`, refreshed on every PRD write, so the UI can badge an unfinished PRD. */
   prdScore?: number;
+  /**
+   * The shell command `complete_milestone` runs in `workspace/` to verify a milestone, when the
+   * project's tests aren't a plain `npm test`. Absent, the command is inferred from the workspace.
+   */
+  verifyCmd?: string;
 }
 
 // --- product plan: PRD, roadmap, docs ------------------------------------------
@@ -180,6 +185,18 @@ export interface Milestone {
   estimate?: string;
   /** Ids of earlier milestones this one needs finished first. */
   dependsOn?: string[];
+  /** The bundle commit when the milestone went `in-progress`; what "changed since" is measured from. */
+  startedCommit?: string;
+  /** What the last `complete_milestone` found, whether or not it ended in `done`. */
+  verification?: MilestoneVerification;
+}
+
+/** The evidence behind a milestone's status: tests ran (or couldn't), the reviewer read the change. */
+export interface MilestoneVerification {
+  tests: 'pass' | 'fail' | 'skipped';
+  review: 'approved' | 'changes' | 'skipped';
+  at: number;
+  notes: string;
 }
 
 export const MILESTONE_STATUSES = ['planned', 'in-progress', 'done', 'blocked'] as const satisfies readonly MilestoneStatus[];
@@ -275,7 +292,43 @@ export type WsMessage =
   | { type: 'project-busy'; slug: string; who: string; busy: boolean }
   // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
   // clients are not looking at the screening room.
-  | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number };
+  | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number }
+  | TurnEventFrame;
+
+// --- orchestrator turn events --------------------------------------------------
+
+/**
+ * What happens inside one orchestrator turn, as it happens: the manager's own text and tool calls,
+ * the subagents it spawns (whose events are forwarded with their own `who`), milestone verifications
+ * and the turn's start and end. Streamed live over the websocket and replayed by `/turns`.
+ */
+export type TurnEvent =
+  | { kind: 'turn-start'; who: 'manager' }
+  /** `text` is at most 300 chars. */
+  | { kind: 'text'; who: string; text: string }
+  /** `args` is a JSON-ish summary of at most 200 chars. */
+  | { kind: 'tool-call'; who: string; tool: string; args: string }
+  /** `summary` is at most 200 chars; `ok` is false when the result was an `error:`. */
+  | { kind: 'tool-result'; who: string; tool: string; ok: boolean; summary: string; ms: number }
+  /** `who` is the member id; `task` is at most 200 chars. */
+  | { kind: 'subagent-start'; who: string; name: string; role: string; task: string }
+  | { kind: 'subagent-end'; who: string; outcome: string; ms: number }
+  | { kind: 'verify'; milestoneId: string; tests: 'pass' | 'fail' | 'skipped'; review: 'approved' | 'changes' | 'skipped'; summary: string }
+  | { kind: 'turn-end'; outcome: string; ms: number; summary: string };
+
+export interface TurnEventFrame { type: 'turn-event'; slug: string; sessionId: number; at: number; event: TurnEvent }
+
+/** One orchestrator turn as `GET /api/projects/:slug/turns` replays it. */
+export interface TurnRecord {
+  sessionId: number;
+  startedAt: number;
+  endedAt: number | null;
+  outcome: string | null;
+  summary: string;
+  /** The manager's own tool calls — the ones its turn budget counts. */
+  toolCalls: number;
+  events: (TurnEvent & { at: number })[];
+}
 
 /** Exactly the video payload of PRD §11 / the plan's Global Constraints. */
 export interface VideoPayload {

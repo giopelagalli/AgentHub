@@ -1,22 +1,24 @@
-import { readdir, readFile, mkdir, realpath, writeFile } from 'node:fs/promises';
+import { readdir, readFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { JobResult, JobType, MilestoneStatus, Priority, Tier, ToolCall, ToolDef } from '@agenthub/shared';
-import { MILESTONE_STATUSES, PRD_SECTIONS } from '@agenthub/shared';
+import type { JobResult, JobType, MilestoneStatus, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
+import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
-import { subagentSystemPrompt, SUBAGENT_ROLES } from '../projects/prompts.js';
+import { subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import { SUBAGENT_TOOL_CALLS } from './budgets.js';
-import type { AgentLoop } from './loop.js';
+import { clip, type AgentLoop, type AgentRunResult } from './loop.js';
 import type { Route } from '../gateway.js';
 
 const TOOL_RESULT_LIMIT = 8000;
 const SHELL_TIMEOUT_MS = 60_000;
+/** How much of a delegated task a `subagent-start` event carries. */
+const EVENT_TASK_LIMIT = 200;
 
 export interface HubDeps {
   queue: JobQueue;
@@ -31,6 +33,8 @@ export interface ToolContext {
   log(line: string): void;
   /** Aborts long-running tools (currently `run_shell`) when the owning session is cancelled. */
   signal?: AbortSignal;
+  /** The owning run's live event sink: a tool that runs a subagent or a verification reports through it. */
+  onEvent?: (e: TurnEvent) => void;
 }
 
 export interface Tool {
@@ -173,6 +177,18 @@ async function assertShellInWorkspace(workspace: string, cmd: string[], cwd: str
 
 // --- workspace tools --------------------------------------------------------
 
+export interface WorkspaceToolOptions {
+  /**
+   * Told each workspace-relative path a tool wrote: every `write_file`, and every path-shaped
+   * `run_shell` argument that exists after the command and was created or modified by it. It is how
+   * a subagent's caller learns what changed without inspecting the workspace itself.
+   */
+  onWrite?: (path: string) => void;
+}
+
+/** `mtimeMs` of an existing file, or null — the before/after pair `run_shell` reports writes from. */
+const fileStamp = (p: string): Promise<number | null> => stat(p).then((s) => (s.isFile() ? s.mtimeMs : null), () => null);
+
 /**
  * File and shell tools scoped to `<bundle>/workspace`.
  *
@@ -183,7 +199,7 @@ async function assertShellInWorkspace(workspace: string, cmd: string[], cwd: str
  * whatever the hub's OS user can reach. Real isolation has to come from running these tools under a
  * sandboxed user or container.
  */
-export function workspaceTools(): Tool[] {
+export function workspaceTools(opts: WorkspaceToolOptions = {}): Tool[] {
   return [
     {
       def: {
@@ -207,6 +223,7 @@ export function workspaceTools(): Tool[] {
         const full = inWorkspace(ctx, path);
         await mkdir(dirname(full), { recursive: true });
         await writeFile(full, content, 'utf8');
+        opts.onWrite?.(relative(needBundle(ctx).workspace, full).split(sep).join('/'));
         return `wrote ${path} (${Buffer.byteLength(content)} bytes)`;
       },
     },
@@ -240,15 +257,25 @@ export function workspaceTools(): Tool[] {
       run: async (args, ctx) => {
         const cmd = strArray(args, 'cmd');
         const cwd = optStr(args, 'cwd');
-        await assertShellInWorkspace(needBundle(ctx).workspace, cmd, cwd);
+        const workspace = needBundle(ctx).workspace;
+        await assertShellInWorkspace(workspace, cmd, cwd);
         const timeoutRaw = fields(args).timeoutMs;
         const timeoutMs = typeof timeoutRaw === 'number' && timeoutRaw > 0 ? timeoutRaw : SHELL_TIMEOUT_MS;
+        // The command's path arguments, stamped before it runs: whichever ones it created or touched
+        // are reported as writes (`cp a b`, `git apply x.patch`) — merely reading one is not.
+        const target = resolveWorkspace(workspace, '.', cwd);
+        const paths = opts.onWrite ? pathArgs(cmd).map((arg) => (isAbsolute(arg) ? arg : resolve(target, arg))) : [];
+        const before = await Promise.all(paths.map(fileStamp));
         const result = await runShellTask(
           { cmd, cwd, timeoutMs },
           // `'.'` as the project segment: the bundle workspace is already project-scoped, so the
           // sandbox root is the workspace itself.
-          { workspaceRoot: needBundle(ctx).workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
+          { workspaceRoot: workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
         );
+        const after = await Promise.all(paths.map(fileStamp));
+        paths.forEach((p, i) => {
+          if (after[i] !== null && after[i] !== before[i]) opts.onWrite?.(relative(workspace, p).split(sep).join('/'));
+        });
         return renderShellResult(result, timeoutMs);
       },
     },
@@ -295,6 +322,9 @@ function parseTasks(args: unknown): TaskItem[] {
 
 /** The two document tools a turn gets: it keeps the docs true and moves the roadmap along. */
 const TURN_DOC_TOOLS = ['write_doc', 'set_milestone_status'];
+
+/** What `set_milestone_status` accepts: everything but `done`, which only a verification grants. */
+const SETTABLE_MILESTONE_STATUSES = MILESTONE_STATUSES.filter((s) => s !== 'done');
 
 export function bundleTools(): Tool[] {
   return [
@@ -530,10 +560,12 @@ export function docTools(actor: DocActor = 'agent'): Tool[] {
     },
     {
       def: {
-        type: 'tool', name: 'set_milestone_status', description: 'Set one roadmap milestone\'s status.',
+        type: 'tool', name: 'set_milestone_status',
+        description: 'Set one roadmap milestone\'s status to planned, in-progress or blocked. A milestone becomes done only ' +
+          'through complete_milestone, which verifies it first.',
         parameters: {
           type: 'object',
-          properties: { id: strProp('Milestone id, e.g. "m2".'), status: { type: 'string', enum: [...MILESTONE_STATUSES] } },
+          properties: { id: strProp('Milestone id, e.g. "m2".'), status: { type: 'string', enum: SETTABLE_MILESTONE_STATUSES } },
           required: ['id', 'status'],
         },
       },
@@ -541,9 +573,13 @@ export function docTools(actor: DocActor = 'agent'): Tool[] {
         const bundle = needBundle(ctx);
         const id = str(args, 'id');
         const status = oneOf(args, 'status', MILESTONE_STATUSES) as MilestoneStatus;
+        if (status === 'done') return 'error: use complete_milestone';
         const milestones = await bundle.roadmap();
         if (!milestones.some((m) => m.id === id)) throw new Error(`unknown milestone: ${id}`);
-        await bundle.writeRoadmap(patchMilestone(milestones, id, { status }));
+        // Starting a milestone records where the bundle stood, so its verification can review what
+        // changed since rather than the whole workspace.
+        const patch = status === 'in-progress' ? { status, startedCommit: await bundle.head() } : { status };
+        await bundle.writeRoadmap(patchMilestone(milestones, id, patch));
         await bundle.commit(`${prefix}milestone ${id} ${status}`);
         return `milestone ${id} is now ${status}`;
       },
@@ -650,22 +686,73 @@ export function hubTools(): Tool[] {
 
 const SUBAGENT_RESULT_LIMIT = 4000;
 
-/**
- * Runs one ephemeral subagent session inline (awaited) on the worker tier, with workspace tools
- * only, and hands its final report back as the tool result. Parallel fan-out is a later
- * optimization; the caller's tool budget is what bounds how many of these a turn can start.
- */
-export function spawnSubagentTool(deps: {
-  loop: AgentLoop; subject: string; browser?: BrowserToolDeps; external?: Tool[];
+export interface SubagentDeps {
+  loop: AgentLoop;
+  subject: string;
   /** The project's model policy resolved for the worker tier; absent, the gateway's own ordering. */
   route?: Route;
   /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
-}): Tool {
+}
+
+export interface SubagentRun {
+  role: SubagentRole;
+  /** The roster member the run is attributed to; absent when the roster has nobody with the role. */
+  member?: TeamMember;
+  task: string;
+  /** Tools beyond the workspace ones (the browser, the external belt). */
+  extras?: Tool[];
+}
+
+export interface SubagentOutcome extends AgentRunResult {
+  /** Workspace-relative paths the subagent wrote, in first-written order. */
+  filesWritten: string[];
+}
+
+/**
+ * Runs one ephemeral subagent session inline (awaited) on the worker tier, with workspace tools
+ * only (plus `extras`), bracketed by `subagent-start`/`subagent-end` events on the caller's sink
+ * with the child's own events forwarded in between. Both `spawn_subagent` and the milestone
+ * reviewer come through here, so every delegated run looks the same in the turn feed.
+ */
+export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: SubagentRun): Promise<SubagentOutcome> {
+  const { member, role } = run;
+  const who = member?.id ?? role;
+  const written: string[] = [];
+  const tools = [...workspaceTools({ onWrite: (p) => { if (!written.includes(p)) written.push(p); } }), ...(run.extras ?? [])];
+  ctx.onEvent?.({ kind: 'subagent-start', who, name: member?.name ?? role, role, task: clip(run.task, EVENT_TASK_LIMIT) });
+  const startedAt = Date.now();
+  const res = await deps.loop.run({
+    kind: 'subagent',
+    subject: deps.subject,
+    tier: 'worker',
+    system: subagentSystemPrompt(role, (run.extras ?? []).map((t) => t.def.name), member?.instructions),
+    user: run.task,
+    tools,
+    ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
+    ...(deps.route ? { route: deps.route } : {}),
+    // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
+    ctx: { bundle: ctx.bundle },
+    maxToolCalls: SUBAGENT_TOOL_CALLS,
+    signal: ctx.signal,
+    onLog: ctx.log,
+    onEvent: ctx.onEvent,
+  });
+  ctx.onEvent?.({ kind: 'subagent-end', who, outcome: res.outcome, ms: Date.now() - startedAt });
+  return { ...res, filesWritten: written };
+}
+
+/**
+ * Delegates one task to a subagent and hands its final report back as the tool result, ending with
+ * the files it wrote. Parallel fan-out is a later optimization; the caller's tool budget is what
+ * bounds how many of these a turn can start.
+ */
+export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDeps; external?: Tool[] }): Tool {
   return {
     def: {
       type: 'tool', name: 'spawn_subagent',
-      description: 'Delegate one self-contained task to an ephemeral subagent and get its report back.',
+      description: 'Delegate one self-contained task to an ephemeral subagent and get its report back, ending with a ' +
+        '"Files written:" line naming what it changed in the workspace.',
       parameters: {
         type: 'object',
         properties: {
@@ -692,25 +779,10 @@ export function spawnSubagentTool(deps: {
       const extras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
         : role === 'researcher' ? (deps.external ?? [])
         : [];
-      const tools = [...workspaceTools(), ...extras];
-      const res = await deps.loop.run({
-        kind: 'subagent',
-        subject: deps.subject,
-        tier: 'worker',
-        system: subagentSystemPrompt(role, extras.map((t) => t.def.name), member?.instructions),
-        user: task,
-        tools,
-        ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
-        ...(deps.route ? { route: deps.route } : {}),
-        // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
-        ctx: { bundle: ctx.bundle },
-        maxToolCalls: SUBAGENT_TOOL_CALLS,
-        signal: ctx.signal,
-        onLog: ctx.log,
-      });
+      const res = await runSubagent(deps, ctx, { role, member, task, extras });
       const text = res.text.trim();
-      if (!text) return `subagent ${role} ended (${res.outcome}) without a report`;
-      return truncateResult(text, SUBAGENT_RESULT_LIMIT);
+      const report = text ? truncateResult(text, SUBAGENT_RESULT_LIMIT) : `subagent ${role} ended (${res.outcome}) without a report`;
+      return `${report}\n\nFiles written: ${res.filesWritten.length ? res.filesWritten.join(', ') : '(none)'}`;
     },
   };
 }

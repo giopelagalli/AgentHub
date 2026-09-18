@@ -1,9 +1,11 @@
+import type { TurnEvent } from '@agenthub/shared';
 import { routeFor, type ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { bundleTools, hubTools, spawnSubagentTool, workspaceTools, type Tool } from '../agents/tools.js';
+import { completeMilestoneTool } from '../agents/verify.js';
 import { ORCHESTRATOR_TOOL_CALLS } from '../agents/budgets.js';
 import { browserTools } from '../agents/browser-tools.js';
 import type { AgentRunResult } from '../agents/loop.js';
@@ -41,6 +43,8 @@ export interface ProjectOrchestratorDeps {
   external?: Tool[];
   /** Notified with (memberId, busy) whenever a delegated subagent run starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
+  /** Receives every live event of a turn, keyed by the turn's orchestrator session. */
+  onEvent?: (sessionId: number, e: TurnEvent) => void;
 }
 
 /**
@@ -55,7 +59,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, leases, browser, external, onBusy } = this.deps;
+    const { bundle, loop, queue, registry, transcript, leases, browser, external, onBusy, onEvent } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -63,6 +67,20 @@ export class ProjectOrchestrator {
     // orchestrator tier, and everything it delegates runs on the worker one.
     const orchestratorRoute = routeFor(manifest.modelPolicy, 'orchestrator');
     const workerRoute = routeFor(manifest.modelPolicy, 'worker');
+    const delegation = { loop, subject: manifest.slug, onBusy, ...(workerRoute ? { route: workerRoute } : {}) };
+
+    // The turn's own bracketing events. The loop persists what happens inside it under the session
+    // it starts, so these two go through the same store and the same sink once that session exists.
+    const startedAt = Date.now();
+    let sessionId = 0;
+    const emit = (e: TurnEvent): void => {
+      transcript.appendTurnEvent(sessionId, e);
+      onEvent?.(sessionId, e);
+    };
+    const finish = (briefing: Briefing, outcome: string, summary = briefing.summary): Briefing => {
+      emit({ kind: 'turn-end', outcome, ms: Date.now() - startedAt, summary });
+      return briefing;
+    };
 
     const result = await loop.run({
       kind: 'orchestrator',
@@ -76,30 +94,33 @@ export class ProjectOrchestrator {
         ...hubTools(),
         ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
-        spawnSubagentTool({ loop, subject: manifest.slug, browser: browserDeps, external, onBusy, ...(workerRoute ? { route: workerRoute } : {}) }),
+        spawnSubagentTool({ ...delegation, browser: browserDeps, external }),
+        completeMilestoneTool(delegation),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
       ...(orchestratorRoute ? { route: orchestratorRoute } : {}),
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
+      onStart: (id) => { sessionId = id; emit({ kind: 'turn-start', who: 'manager' }); },
+      onEvent: (e) => onEvent?.(sessionId, e),
     });
     const n = ++this.turns;
 
     // `publish_briefing` commits its own write, so the published path needs nothing further here.
     const published = await bundle.latestBriefing();
-    if (published && published.updatedAt !== before?.updatedAt) return published;
+    if (published && published.updatedAt !== before?.updatedAt) return finish(published, result.outcome);
 
     const endedEarly = result.outcome === 'aborted' || result.outcome === 'error';
     if (endedEarly) transcript.appendEvent(result.sessionId, `turn ${n} ended ${result.outcome} without a briefing`);
     // An interrupted turn only saw part of the project. Overwriting the last good briefing with
     // whatever it managed to say would tell the master *less* than it already knows.
-    if (endedEarly && before) return before;
+    if (endedEarly && before) return finish(before, result.outcome, `The turn ended ${result.outcome} without a briefing.`);
 
     // Otherwise the master still needs a report: synthesize one from the board and what was said.
     const briefing = await this.synthesize(manifest, result);
     await bundle.publishBriefing(briefing);
     await bundle.commit(`agent: turn ${n} — ${label(briefing.summary)}`);
-    return briefing;
+    return finish(briefing, result.outcome);
   }
 
   private async synthesize(manifest: Manifest, result: AgentRunResult): Promise<Briefing> {

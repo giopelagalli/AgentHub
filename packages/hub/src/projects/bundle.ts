@@ -558,6 +558,25 @@ export class ProjectBundle {
     if (changed) await writeFile(gitignorePath, lines.join('\n'), 'utf8');
   }
 
+  /** The bundle's current commit hash. */
+  async head(): Promise<string> {
+    return (await this.git.revparse(['HEAD'])).trim();
+  }
+
+  /**
+   * Workspace-relative paths changed since `commit` — tracked files that differ from it, plus files
+   * not yet tracked at all (a subagent's new modules before the next bundle commit picks them up).
+   * Without a commit to measure from, every workspace file the bundle knows counts as changed.
+   */
+  async changedWorkspaceFiles(commit: string | undefined): Promise<string[]> {
+    const prefix = 'workspace/';
+    const lines = (out: string): string[] => out.split('\n').map((l) => l.trim()).filter((l) => l.startsWith(prefix));
+    const diff = commit ? await this.git.diff(['--name-only', commit, '--', 'workspace']) : await this.git.raw(['ls-files', '--', 'workspace']);
+    const untracked = await this.git.raw(['ls-files', '--others', '--exclude-standard', '--', 'workspace']);
+    const all = new Set([...lines(diff), ...lines(untracked)]);
+    return [...all].map((p) => p.slice(prefix.length)).filter((p) => p && p !== '.gitkeep').sort();
+  }
+
   async commit(message: string): Promise<void> {
     await this.excludeNestedRepos();
 

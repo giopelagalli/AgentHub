@@ -102,6 +102,20 @@ describe('complete_milestone', () => {
     expect(messages[1].content).toContain('VERDICT: APPROVE');
   });
 
+  it('gives the reviewer read-only tools — no write_file, no run_shell', async () => {
+    await mkdir(join(bundle.workspace, 'test'), { recursive: true });
+    await writeFile(join(bundle.workspace, 'test', 'app.test.js'), `import { test } from 'node:test'; test('boots', () => {});\n`, 'utf8');
+    const { complete, worker } = await setup([APPROVE]);
+
+    await complete('m1');
+
+    const tools = (worker.lastRequest().tools ?? []) as { function: { name: string } }[];
+    const names = tools.map((t) => t.function.name);
+    expect(names).toEqual(expect.arrayContaining(['read_file', 'list_dir']));
+    expect(names).not.toContain('write_file');
+    expect(names).not.toContain('run_shell');
+  });
+
   it('runs npm test when package.json declares a test script', async () => {
     await writeFile(join(bundle.workspace, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'exit 0' } }), 'utf8');
     const { complete } = await setup([APPROVE]);
@@ -146,15 +160,49 @@ describe('complete_milestone', () => {
     expect(await complete('m1')).toContain('review: changes');
   });
 
-  it('skips the review when nobody on the roster is a reviewer, and the tests when there are none', async () => {
+  it('leaves a milestone in progress with no verification available when both checks are skipped', async () => {
     await bundle.writeTeam((await bundle.team()).filter((m) => m.role !== 'reviewer'));
     const { complete, transcript } = await setup();
 
     const result = await complete('m1');
 
-    expect(result).toBe('milestone m1 is now done — tests: skipped (no test command found); review: skipped (no reviewer on the roster)');
-    expect((await milestone('m1')).verification).toMatchObject({ tests: 'skipped', review: 'skipped' });
+    expect(result).toContain('milestone m1 stays in-progress');
+    expect(result).toContain('no verification available: no test command and no reviewer on the roster — add one or set manifest.verifyCmd');
+    const m1 = await milestone('m1');
+    expect(m1.status).toBe('in-progress');
+    expect(m1.verification).toMatchObject({ tests: 'skipped', review: 'skipped' });
     expect(transcript.sessions({ kind: 'subagent' })).toHaveLength(0);
+  });
+
+  it('marks the milestone done on passing tests alone when nobody on the roster is a reviewer', async () => {
+    await writeFile(join(bundle.workspace, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'exit 0' } }), 'utf8');
+    await bundle.writeTeam((await bundle.team()).filter((m) => m.role !== 'reviewer'));
+    const { complete } = await setup();
+
+    const result = await complete('m1');
+
+    expect(result).toBe('milestone m1 is now done — tests: pass (npm test, exit 0); review: skipped (no reviewer on the roster)');
+    expect((await milestone('m1')).status).toBe('done');
+  });
+
+  it('marks the milestone done on reviewer approval alone when there is no test command', async () => {
+    const { complete } = await setup([APPROVE]);
+
+    const result = await complete('m1');
+
+    expect(result).toBe('milestone m1 is now done — tests: skipped (no test command found); review: approved (Vex)');
+    expect((await milestone('m1')).status).toBe('done');
+  });
+
+  it('stamps startedCommit when a milestone had none and is left in-progress', async () => {
+    await setVerifyCmd('exit 1');
+    const { complete } = await setup([APPROVE]);
+    expect((await milestone('m1')).startedCommit).toBeUndefined();
+    const before = await bundle.head();
+
+    await complete('m1');
+
+    expect((await milestone('m1')).startedCommit).toBe(before);
   });
 
   it('points the reviewer at the files changed since the milestone went in-progress', async () => {

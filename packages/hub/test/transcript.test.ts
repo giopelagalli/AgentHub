@@ -30,3 +30,29 @@ describe('Transcript.lastMessage', () => {
     expect(transcript.lastMessage(session)).toBe('');
   });
 });
+
+describe('Transcript.endOpenSessions', () => {
+  it('closes every open session of the given kind, and leaves others alone', () => {
+    const transcript = new Transcript(openDb(':memory:'));
+    const orch1 = transcript.startSession('orchestrator', 'acme', 'orchestrator');
+    const orch2 = transcript.startSession('orchestrator', 'beta', 'orchestrator');
+    const alreadyEnded = transcript.startSession('orchestrator', 'gamma', 'orchestrator');
+    transcript.endSession(alreadyEnded, 'stop', 100);
+    const sub = transcript.startSession('subagent', 'acme', 'worker');
+
+    const closed = transcript.endOpenSessions('orchestrator', 'aborted', 500);
+
+    expect(closed).toBe(2);
+    const [s1, s2, s3, s4] = transcript.sessions();
+    expect(s1).toMatchObject({ id: orch1, endedAt: 500, outcome: 'aborted' });
+    expect(s2).toMatchObject({ id: orch2, endedAt: 500, outcome: 'aborted' });
+    // Already-ended session keeps its own outcome, and a session of another kind is untouched.
+    expect(s3).toMatchObject({ id: alreadyEnded, endedAt: 100, outcome: 'stop' });
+    expect(s4).toMatchObject({ id: sub, endedAt: null, outcome: null });
+  });
+
+  it('is a no-op when nothing of that kind is open', () => {
+    const transcript = new Transcript(openDb(':memory:'));
+    expect(transcript.endOpenSessions('orchestrator', 'aborted')).toBe(0);
+  });
+});

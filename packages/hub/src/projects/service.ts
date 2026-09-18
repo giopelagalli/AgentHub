@@ -32,7 +32,7 @@ export interface ProjectServiceDeps {
   /** Notified with (slug, memberId, busy) whenever a project's delegated subagent run starts or ends. */
   onBusy?: (slug: string, memberId: string, busy: boolean) => void;
   /** Receives every live event of every project's turns, keyed by slug and orchestrator session. */
-  onEvent?: (slug: string, sessionId: number, e: TurnEvent) => void;
+  onEvent?: (slug: string, sessionId: number, e: TurnEvent, at: number) => void;
   tickIntervalMs?: number;
   /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
   turnTimeoutMs?: number;
@@ -294,10 +294,10 @@ export class ProjectService {
     const orchestrator = new ProjectOrchestrator({
       bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser, external,
       ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
-      onEvent: (sessionId, e) => {
+      onEvent: (sessionId, e, at) => {
         // Turns are serialized per slug, so the session a turn-start names is the one running now.
-        if (e.kind === 'turn-start') this.runningTurns.set(slug, { sessionId, startedAt: Date.now() });
-        onEvent?.(slug, sessionId, e);
+        if (e.kind === 'turn-start') this.runningTurns.set(slug, { sessionId, startedAt: at });
+        onEvent?.(slug, sessionId, e, at);
       },
     });
     this.orchestrators.set(slug, orchestrator);

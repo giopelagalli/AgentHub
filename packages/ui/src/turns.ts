@@ -25,13 +25,13 @@ export type TimedEvent = TurnEvent & { at: number };
 /** One `turn-event` frame off the socket. */
 export interface TurnFrame {
   slug: string;
-  sessionId: string;
+  sessionId: number;
   at: number;
   event: TurnEvent;
 }
 
 export interface TurnRecord {
-  sessionId: string;
+  sessionId: number;
   startedAt: number;
   endedAt: number | null;
   outcome: string | null;
@@ -42,7 +42,7 @@ export interface TurnRecord {
 
 /** `GET /api/projects/:slug/turns`. */
 export interface TurnsResponse {
-  running: { sessionId: string; startedAt: number } | null;
+  running: { sessionId: number; startedAt: number } | null;
   turns: TurnRecord[];
 }
 
@@ -54,7 +54,7 @@ export const MANAGER_AVATAR = 'robot-amber';
 
 // --- reducer -------------------------------------------------------------------
 
-function blankTurn(sessionId: string, startedAt: number): TurnRecord {
+function blankTurn(sessionId: number, startedAt: number): TurnRecord {
   return { sessionId, startedAt, endedAt: null, outcome: null, summary: '', toolCalls: 0, events: [] };
 }
 
@@ -103,7 +103,14 @@ function mergeTurn(local: TurnRecord | undefined, fetched: TurnRecord): TurnReco
 
 /** `/turns` landed: every fetched turn replaces its local twin, and turns only we know of stay. */
 export function mergeTurns(local: TurnRecord[], fetched: TurnsResponse): TurnRecord[] {
-  const merged = fetched.turns.map((turn) => mergeTurn(local.find((t) => t.sessionId === turn.sessionId), turn));
+  const merged = fetched.turns.map((turn) => {
+    const next = mergeTurn(local.find((t) => t.sessionId === turn.sessionId), turn);
+    // `running` is authoritative: a turn the merge still thinks is open, but that the hub does not
+    // name as the one running, is dead — a socket that never delivered its turn-end, or a hub that
+    // restarted mid-turn.
+    if (next.endedAt !== null || next.sessionId === fetched.running?.sessionId) return next;
+    return { ...next, endedAt: next.endedAt ?? next.startedAt, outcome: 'unknown' };
+  });
   const known = new Set(merged.map((t) => t.sessionId));
   return byNewest([...merged, ...local.filter((t) => !known.has(t.sessionId))]);
 }

@@ -144,6 +144,8 @@ describe('handleWsMessage', () => {
       JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', at: 1 }),
       JSON.stringify({ type: 'browser-frame', jpegBase64: 'abc', at: 1 }),
       JSON.stringify({ type: 'browser-frame', nodeName: 'macmini', jpegBase64: 'abc' }),
+      // A sessionId that isn't a number — the hub sends a SQLite integer, never a string.
+      JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 's1', at: 10, event: { kind: 'text', who: 'manager', text: 'x' } }),
     ]) {
       expect(() => handleWsMessage(store, raw)).not.toThrow();
     }
@@ -155,13 +157,14 @@ describe('handleWsMessage', () => {
 
   it('dispatches a well-formed turn-event frame and drops a malformed one', () => {
     const store = new Store();
+    // The hub's sessionId is a SQLite integer, so a live frame carries a number, not a string.
     handleWsMessage(store, JSON.stringify({
-      type: 'turn-event', slug: 'acme', sessionId: 's1', at: 10,
+      type: 'turn-event', slug: 'acme', sessionId: 1, at: 10,
       event: { kind: 'tool-call', who: 'coder-1', tool: 'bash', args: 'npm test' },
     }));
-    expect(turnsOf(store.getState(), 'acme').turns[0]).toMatchObject({ sessionId: 's1', toolCalls: 1 });
-    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 's1', at: 11, event: { kind: 'nope' } }));
-    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 's1', event: { kind: 'text', who: 'manager', text: 'x' } }));
+    expect(turnsOf(store.getState(), 'acme').turns[0]).toMatchObject({ sessionId: 1, toolCalls: 1 });
+    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 1, at: 11, event: { kind: 'nope' } }));
+    handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 1, event: { kind: 'text', who: 'manager', text: 'x' } }));
     expect(turnsOf(store.getState(), 'acme').turns[0].events).toHaveLength(1);
   });
 });

@@ -91,7 +91,7 @@ export function handleWsMessage(store: Store, raw: string): void {
   if (
     frame.type === 'turn-event'
     && typeof frame.slug === 'string'
-    && typeof frame.sessionId === 'string'
+    && typeof frame.sessionId === 'number'
     && typeof frame.at === 'number'
     && isTurnEvent(frame.event)
   ) {

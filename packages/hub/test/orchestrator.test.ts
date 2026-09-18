@@ -184,6 +184,30 @@ describe('ProjectOrchestrator', () => {
     expect(offered).toEqual(workspaceTools().map((t) => t.def.name));
   });
 
+  it('gives a roster-less subagent\'s own events the same who as its start/end bracket', async () => {
+    // Nobody on the roster has the researcher role, so the subagent runs with no memberId.
+    await bundle.writeTeam((await bundle.team()).filter((m) => m.role !== 'researcher'));
+    const { orchestrator, events } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'summarize the repo', role: 'researcher' } }] },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [{ content: 'the repo holds one package' }],
+    );
+
+    await orchestrator.turn();
+
+    // Its text and tool events must still read 'researcher', matching subagent-start/-end — not
+    // 'subagent', which is what the loop's own kind-based fallback would otherwise give them.
+    const inner = events.filter((e) => e.kind === 'text' && 'who' in e && e.who !== 'manager');
+    expect(inner).toEqual([expect.objectContaining({ kind: 'text', who: 'researcher' })]);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'subagent-start', who: 'researcher' }),
+      expect.objectContaining({ kind: 'subagent-end', who: 'researcher' }),
+    ]));
+  });
+
   it('rehydrates a restarted orchestrator from the bundle, not the transcript', async () => {
     const first = await setup([
       {

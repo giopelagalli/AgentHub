@@ -168,6 +168,20 @@ describe('planningContext', () => {
     expect(prompt).toContain('complete_milestone(id)');
   });
 
+  it('frames a synthesized incomplete-turn note as such, and drops it from the blockers line', async () => {
+    await bundle.writePrd(fullPrd());
+    const note = 'The turn hit its tool-call budget (40) before reporting; 12 tool calls were made, last action: read_file.';
+    // What orchestrator.ts's synthesize() writes when a turn ends early with nothing else to
+    // report: the same note as both the summary and the first (only) blocker.
+    await bundle.publishBriefing({
+      slug: 'demo', title: 'Demo', status: 'active', priority: 'project', summary: note,
+      progress: { done: 1, total: 3 }, blockers: [note], nextSteps: [], updatedAt: 1,
+    });
+
+    const prompt = orchestratorSystemPrompt('', [], await planningContext(bundle));
+    expect(prompt).toContain(`## Last turn\nPrevious turn did not finish: ${note}\nNext steps it planned: none\nBlockers it reported: none`);
+  });
+
   it('digests the workspace — path, size, opening line — leaving node_modules out', async () => {
     await bundle.writePrd(fullPrd());
     await mkdir(join(bundle.workspace, 'src'), { recursive: true });
@@ -181,6 +195,19 @@ describe('planningContext', () => {
     expect(digest.split('\n')).toEqual(['data.bin (2.0 KB)', 'src/index.ts (27 B) \u2014 // entry point']);
     expect(digest).not.toContain('node_modules');
     expect(orchestratorSystemPrompt('', [], await planningContext(bundle))).toContain('## Workspace digest');
+  });
+
+  it('skips build and virtualenv output directories, not just node_modules and .git', async () => {
+    await bundle.writePrd(fullPrd());
+    await writeFile(join(bundle.workspace, 'app.py'), '# entry\n', 'utf8');
+    for (const dir of ['.venv', 'venv', 'dist', 'build', 'target', '__pycache__', '.next', 'coverage']) {
+      await mkdir(join(bundle.workspace, dir), { recursive: true });
+      await writeFile(join(bundle.workspace, dir, 'junk.txt'), 'x', 'utf8');
+    }
+
+    const { digest } = await planningContext(bundle);
+
+    expect(digest.split('\n')).toEqual(['app.py (8 B) — # entry']);
   });
 
   it('bounds the digest by entries and characters', async () => {

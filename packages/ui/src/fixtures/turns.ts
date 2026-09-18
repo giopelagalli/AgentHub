@@ -12,7 +12,7 @@ const HOUR = 3_600_000;
 const MIN = 60_000;
 
 /** A finished turn from earlier today, so the list has more than the running one in it. */
-function finished(sessionId: string, startedAt: number, ms: number, outcome: string, summary: string, verify: boolean): TurnRecord {
+function finished(sessionId: number, startedAt: number, ms: number, outcome: string, summary: string, verify: boolean): TurnRecord {
   const at = (offset: number): number => startedAt + offset;
   const events: TurnRecord['events'] = [
     { kind: 'turn-start', who: 'manager', at: at(0) },
@@ -116,14 +116,14 @@ export function injectFakeTurns(store: Store, mode: string): void {
   const start = (slug: string): void => {
     const now = Date.now();
     const history: TurnRecord[] = [
-      finished('s-3', now - 2 * HOUR, 18 * MIN, 'done', 'Milestone 1 done: the add command writes to a JSON store, with tests.', true),
-      finished('s-2', now - 5 * HOUR, 6 * MIN, 'failed', 'Turn stopped: the coder hit its tool budget while wiring the CLI entry point.', false),
-      finished('s-1', now - 26 * HOUR, 11 * MIN, 'done', 'Drafted the PRD and generated the roadmap.', false),
+      finished(3, now - 2 * HOUR, 18 * MIN, 'done', 'Milestone 1 done: the add command writes to a JSON store, with tests.', true),
+      finished(2, now - 5 * HOUR, 6 * MIN, 'failed', 'Turn stopped: the coder hit its tool budget while wiring the CLI entry point.', false),
+      finished(1, now - 26 * HOUR, 11 * MIN, 'done', 'Drafted the PRD and generated the roadmap.', false),
     ];
     store.dispatch({ type: 'turns-loaded', slug, response: { running: null, turns: history } });
     if (mode === 'idle') return;
 
-    const sessionId = 's-live';
+    const sessionId = 1000;
     const startedAt = now - 4 * MIN - 12000;
     let clock = startedAt;
     const script: TurnEvent[] = mode === 'long'

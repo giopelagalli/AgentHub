@@ -702,6 +702,11 @@ export interface SubagentRun {
   task: string;
   /** Tools beyond the workspace ones (the browser, the external belt). */
   extras?: Tool[];
+  /**
+   * Overrides the tool belt entirely, in place of `workspaceTools() + extras` — the milestone
+   * reviewer runs with this, so it gets `read_file`/`list_dir` and never `write_file`/`run_shell`.
+   */
+  tools?: Tool[];
 }
 
 export interface SubagentOutcome extends AgentRunResult {
@@ -719,7 +724,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
   const { member, role } = run;
   const who = member?.id ?? role;
   const written: string[] = [];
-  const tools = [...workspaceTools({ onWrite: (p) => { if (!written.includes(p)) written.push(p); } }), ...(run.extras ?? [])];
+  const tools = run.tools ?? [...workspaceTools({ onWrite: (p) => { if (!written.includes(p)) written.push(p); } }), ...(run.extras ?? [])];
   ctx.onEvent?.({ kind: 'subagent-start', who, name: member?.name ?? role, role, task: clip(run.task, EVENT_TASK_LIMIT) });
   const startedAt = Date.now();
   const res = await deps.loop.run({
@@ -729,6 +734,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
     system: subagentSystemPrompt(role, (run.extras ?? []).map((t) => t.def.name), member?.instructions),
     user: run.task,
     tools,
+    who,
     ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
     ...(deps.route ? { route: deps.route } : {}),
     // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.

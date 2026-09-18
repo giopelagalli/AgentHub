@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
-import { PRD_SECTIONS, type Milestone } from '@agenthub/shared';
+import { PRD_SECTIONS, type Milestone, type MilestoneVerification } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
@@ -12,7 +12,7 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { PrdDrafter } from '../src/projects/prd.js';
-import { currentMilestoneId, moveMilestone, patchMilestone } from '../src/projects/roadmap.js';
+import { currentMilestoneId, moveMilestone, normalizeMilestones, patchMilestone } from '../src/projects/roadmap.js';
 import { createHub, type Hub } from '../src/server.js';
 
 let root: string;
@@ -95,6 +95,17 @@ describe('roadmap ordering', () => {
     expect(withEstimate[0]).toEqual(MILESTONES[0]);
     expect(patchMilestone(withEstimate, 'm3', { estimate: '' })[2]).not.toHaveProperty('estimate');
   });
+
+  it('write_roadmap round-trips startedCommit and verification instead of dropping them', () => {
+    // What a model gets back from read_roadmap and could hand straight back to write_roadmap —
+    // the evidence complete_milestone already recorded must survive that round trip.
+    const verification: MilestoneVerification = { tests: 'pass', review: 'approved', at: 100, notes: 'looks good' };
+    const withEvidence: Milestone[] = [
+      { id: 'm1', title: 'Skeleton', summary: 'It boots.', status: 'in-progress', startedCommit: 'abc123', verification },
+      { id: 'm2', title: 'Auth', summary: 'Owners can log in.', status: 'planned' },
+    ];
+    expect(normalizeMilestones(withEvidence)).toEqual(withEvidence);
+  });
 });
 
 describe('PrdDrafter.generateRoadmap', () => {
@@ -162,6 +173,23 @@ describe('roadmap routes', () => {
 
     expect((await target.app.inject({ method: 'PATCH', url: '/api/projects/demo/roadmap/m9', payload: { status: 'done' } })).statusCode).toBe(404);
     expect((await target.app.inject({ method: 'PATCH', url: '/api/projects/demo/roadmap/m1', payload: { status: 'nope' } })).statusCode).toBe(400);
+  });
+
+  it('ignores fields outside title/summary/estimate/status, so a stray verification cannot ride along', async () => {
+    const { hub: target } = await hubHarness();
+    await bundle.writeRoadmap(MILESTONES);
+
+    const res = await target.app.inject({
+      method: 'PATCH', url: '/api/projects/demo/roadmap/m3',
+      payload: { estimate: '2 days', verification: 'x', startedCommit: 'deadbeef' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().milestones[2]).toMatchObject({ id: 'm3', estimate: '2 days' });
+    expect(res.json().milestones[2]).not.toHaveProperty('verification');
+    expect(res.json().milestones[2]).not.toHaveProperty('startedCommit');
+    const m3 = (await bundle.roadmap())[2];
+    expect(m3).not.toHaveProperty('verification');
+    expect(m3).not.toHaveProperty('startedCommit');
   });
 
   it('streams a generated roadmap, and 400s while the PRD is still the scaffold', async () => {

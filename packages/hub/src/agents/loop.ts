@@ -30,6 +30,13 @@ export interface AgentRunOptions {
   tools: Tool[];
   /** The project roster member this run belongs to; tags the session so the team API can find it. */
   memberId?: string;
+  /**
+   * The `who` this run's own events carry, overriding the default derived from `memberId`/`kind`.
+   * A roster-less subagent (no `memberId`) is still attributed to its role — `spawn_subagent` passes
+   * the same `who` it used for the run's `subagent-start`/`subagent-end` bracket, so every event in
+   * the turn feed agrees on who did it.
+   */
+  who?: string;
   /** Called with true when a roster member's run starts and false when it ends, for a "working" dot. */
   onBusy?: (busy: boolean) => void;
   /** Called with the session id as soon as it exists, before the first model call. */
@@ -37,9 +44,11 @@ export interface AgentRunOptions {
   /**
    * Receives every live event of this run — its text, tool calls and results, plus whatever its
    * tools emit through `ToolContext.onEvent` (a spawned subagent's events, a verification). Each one
-   * is also persisted under this run's session, so a turn can be replayed after a restart.
+   * is also persisted under this run's session, so a turn can be replayed after a restart. `at` is
+   * the timestamp it was persisted under — a caller that rebroadcasts the event should use it rather
+   * than stamping its own, so the transcript and the broadcast never disagree.
    */
-  onEvent?: (e: TurnEvent) => void;
+  onEvent?: (e: TurnEvent, at: number) => void;
   ctx: Omit<ToolContext, 'sessionId' | 'log'>;
   /** Which model serves this run's tier — a project's `modelPolicy`, resolved by `routeFor`. */
   route?: Route;
@@ -74,11 +83,15 @@ export class AgentLoop {
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});
     opts.onStart?.(sessionId);
     if (opts.memberId) opts.onBusy?.(true);
-    // The orchestrator's own events read as the manager's; a roster member's carry their id.
-    const who = opts.memberId ?? (opts.kind === 'orchestrator' ? 'manager' : opts.kind);
+    // The orchestrator's own events read as the manager's; a roster member's carry their id; `who`
+    // overrides both, so a roster-less subagent's events agree with its start/end bracket.
+    const who = opts.who ?? opts.memberId ?? (opts.kind === 'orchestrator' ? 'manager' : opts.kind);
     const emit = (e: TurnEvent): void => {
-      transcript.appendTurnEvent(sessionId, e);
-      opts.onEvent?.(e);
+      // Stamped once here, not separately by the persist path and by whatever rebroadcasts it, so
+      // the transcript and the live socket frame always agree on when the event happened.
+      const at = Date.now();
+      transcript.appendTurnEvent(sessionId, e, at);
+      opts.onEvent?.(e, at);
     };
     const ctx: ToolContext = { ...opts.ctx, sessionId, log: (line) => opts.onLog?.(line), signal: opts.signal, onEvent: emit };
     const toolDefs = opts.tools.map((t) => t.def);

@@ -46,10 +46,15 @@ export interface PlanningContext {
 /** The previous turn's report as the next one reads it: where it left off, what it meant to do next. */
 function lastTurnLines(briefing: Briefing | null): string[] {
   if (!briefing) return ['(no previous turn)'];
+  // `synthesize()` in orchestrator.ts, when a turn ends early with no report of its own, puts the
+  // same note as both the summary and the first blocker — show it once, framed as what it is,
+  // rather than as an ordinary summary line repeated as an ordinary blocker.
+  const incomplete = briefing.blockers[0] === briefing.summary;
+  const blockers = incomplete ? briefing.blockers.slice(1) : briefing.blockers;
   return [
-    briefing.summary,
+    incomplete ? `Previous turn did not finish: ${briefing.summary}` : briefing.summary,
     `Next steps it planned: ${briefing.nextSteps.length ? briefing.nextSteps.join('; ') : 'none'}`,
-    `Blockers it reported: ${briefing.blockers.length ? briefing.blockers.join('; ') : 'none'}`,
+    `Blockers it reported: ${blockers.length ? blockers.join('; ') : 'none'}`,
   ];
 }
 

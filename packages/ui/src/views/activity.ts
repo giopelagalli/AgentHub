@@ -54,7 +54,7 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
   host.appendChild(root);
 
   /** The turn on the right; null until there is one. Set by the reader, or followed to the newest. */
-  let selectedId: string | null = null;
+  let selectedId: number | null = null;
   let pinnedByReader = false;
   /** Row keys the reader has opened in the selected turn; reset on selecting another. */
   let expanded = new Set<number>();
@@ -86,7 +86,7 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
     }
   };
 
-  const select = (sessionId: string, byReader: boolean): void => {
+  const select = (sessionId: number, byReader: boolean): void => {
     if (sessionId !== selectedId) {
       selectedId = sessionId;
       expanded = new Set();
@@ -104,7 +104,7 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
     const running = turn.endedAt === null;
     const failed = !running && turn.outcome !== null && /fail|error|abort/i.test(turn.outcome);
     const item = button('', `turn${running ? ' turn--running' : ''}`);
-    item.dataset.session = turn.sessionId;
+    item.dataset.session = String(turn.sessionId);
     if (turn.sessionId === selectedId) item.setAttribute('aria-current', 'true');
 
     const head = el('span', 'turn__head');
@@ -327,7 +327,7 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
     if (next === index) return;
     event.preventDefault();
     select(turns[next].sessionId, true);
-    list.querySelector<HTMLElement>(`[data-session="${CSS.escape(turns[next].sessionId)}"]`)?.focus();
+    list.querySelector<HTMLElement>(`[data-session="${CSS.escape(String(turns[next].sessionId))}"]`)?.focus();
   };
   root.addEventListener('keydown', onKey);
 

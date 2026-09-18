@@ -80,6 +80,10 @@ export function normalizeMilestones(raw: unknown): Milestone[] {
       status: status as MilestoneStatus,
       ...(typeof item.estimate === 'string' && item.estimate ? { estimate: item.estimate } : {}),
       ...(dependsOn.length ? { dependsOn } : {}),
+      // Not something a model sets — it's the evidence complete_milestone already recorded on this
+      // milestone. Dropping it here would erase that history the moment the roadmap is rewritten.
+      ...(typeof item.startedCommit === 'string' && item.startedCommit ? { startedCommit: item.startedCommit } : {}),
+      ...(item.verification && typeof item.verification === 'object' ? { verification: item.verification as MilestoneVerification } : {}),
     };
   });
 }

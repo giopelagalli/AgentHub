@@ -349,7 +349,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** How many events of the running turn the captions have seen; null while none runs. */
   let followedEvents: number | null = null;
   /** The last turn whose end was toasted, so the POST reply and the socket don't both say it. */
-  let toastedEnd: string | null = null;
+  let toastedEnd: number | null = null;
   let progressTimer: ReturnType<typeof setTimeout> | undefined;
 
   /** The sheet, and the artifact currently mounted in it; both null while it is closed. */
@@ -528,6 +528,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
           }
           loadRoster(project.slug);
           loadArtifacts(project.slug);
+          loadTurns(project.slug);
         });
     });
     turnButton = turn;

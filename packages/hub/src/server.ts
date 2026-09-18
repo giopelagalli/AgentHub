@@ -216,6 +216,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   const gateway = new ModelGateway(registry, anthropic ? { anthropic } : {});
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
+  // A hub that died mid-turn never closed its orchestrator session: without this it stays open
+  // forever, and `/turns` (and the roster's "working" status) would report a dead turn as running.
+  transcript.endOpenSessions('orchestrator', 'aborted');
   const loop = new AgentLoop({ gateway, transcript });
   const browserNow = opts.browser?.now ? { now: opts.browser.now } : {};
   const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow });
@@ -239,7 +242,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),
-    onEvent: (slug, sessionId, event) => broadcast({ type: 'turn-event', slug, sessionId, at: Date.now(), event }),
+    onEvent: (slug, sessionId, event, at) => broadcast({ type: 'turn-event', slug, sessionId, at, event }),
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
@@ -1231,7 +1234,16 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (!bundle) return reply;
     const milestones = await bundle.roadmap();
     if (!milestones.some((m) => m.id === id)) return reply.code(404).send({ error: 'unknown milestone' });
-    const patched = patchMilestone(milestones, id, body);
+    // Only these four are the owner's to edit here — the raw body is untrusted, and passing it
+    // through whole would let a `verification` or `startedCommit` field ride along and overwrite
+    // evidence only complete_milestone is supposed to record.
+    const patch = {
+      ...(body.title !== undefined ? { title: body.title } : {}),
+      ...(body.summary !== undefined ? { summary: body.summary } : {}),
+      ...(body.estimate !== undefined ? { estimate: body.estimate } : {}),
+      ...(body.status !== undefined ? { status: body.status } : {}),
+    };
+    const patched = patchMilestone(milestones, id, patch);
     await bundle.writeRoadmap(patched);
     await bundle.commit(`owner: edit milestone ${id}`);
     return { milestones: patched };

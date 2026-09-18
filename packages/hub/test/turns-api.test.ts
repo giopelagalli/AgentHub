@@ -108,6 +108,22 @@ describe('GET /api/projects/:slug/turns', () => {
     expect(after.turns[0].endedAt).toEqual(expect.any(Number));
   });
 
+  it('closes a turn a crashed hub left open, so a restart never reports it as running forever', async () => {
+    const h1 = await openHub();
+    await h1.app.inject({ method: 'POST', url: '/api/projects', payload: { slug: 'demo', title: 'Demo', intent: 'ship the demo' } });
+    // A hub that dies mid-turn never calls endSession — simulate that by starting a turn's session
+    // and never ending it, then opening a fresh hub over the same database in place of a restart.
+    const danglingId = h1.transcript.startSession('orchestrator', 'demo', 'orchestrator');
+    h1.transcript.appendTurnEvent(danglingId, { kind: 'turn-start', who: 'manager' });
+
+    const h2 = await openHub();
+    const after = await turns(h2);
+
+    expect(after.running).toBeNull();
+    expect(after.turns).toHaveLength(1);
+    expect(after.turns[0]).toMatchObject({ sessionId: danglingId, outcome: 'aborted', endedAt: expect.any(Number) });
+  });
+
   it('lists the newest twenty turns first', async () => {
     const script: ScriptStep[] = [];
     for (let i = 0; i < 22; i++) script.push({ content: `turn ${i + 1}` });

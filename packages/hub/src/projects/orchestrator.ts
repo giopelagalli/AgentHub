@@ -43,8 +43,8 @@ export interface ProjectOrchestratorDeps {
   external?: Tool[];
   /** Notified with (memberId, busy) whenever a delegated subagent run starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
-  /** Receives every live event of a turn, keyed by the turn's orchestrator session. */
-  onEvent?: (sessionId: number, e: TurnEvent) => void;
+  /** Receives every live event of a turn, keyed by the turn's orchestrator session, with its `at`. */
+  onEvent?: (sessionId: number, e: TurnEvent, at: number) => void;
 }
 
 /**
@@ -74,8 +74,9 @@ export class ProjectOrchestrator {
     const startedAt = Date.now();
     let sessionId = 0;
     const emit = (e: TurnEvent): void => {
-      transcript.appendTurnEvent(sessionId, e);
-      onEvent?.(sessionId, e);
+      const at = Date.now();
+      transcript.appendTurnEvent(sessionId, e, at);
+      onEvent?.(sessionId, e, at);
     };
     const finish = (briefing: Briefing, outcome: string, summary = briefing.summary): Briefing => {
       emit({ kind: 'turn-end', outcome, ms: Date.now() - startedAt, summary });
@@ -102,7 +103,7 @@ export class ProjectOrchestrator {
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
       onStart: (id) => { sessionId = id; emit({ kind: 'turn-start', who: 'manager' }); },
-      onEvent: (e) => onEvent?.(sessionId, e),
+      onEvent: (e, at) => onEvent?.(sessionId, e, at),
     });
     const n = ++this.turns;
 

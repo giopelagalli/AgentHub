@@ -91,6 +91,16 @@ export class Transcript {
   }
 
   /**
+   * Closes every session of `kind` the previous process left open (`ended_at IS NULL`) — a hub that
+   * died mid-turn never called `endSession`, and without this such a session reads as running
+   * forever: stuck in `/turns`, and its roster member stuck "working". Returns how many it closed.
+   */
+  endOpenSessions(kind: SessionKind, outcome: SessionOutcome, now = Date.now()): number {
+    return this.db.prepare(`UPDATE sessions SET ended_at=?, outcome=? WHERE kind=? AND ended_at IS NULL`)
+      .run(now, outcome, kind).changes;
+  }
+
+  /**
    * The tail of a session's last non-blank message, without reading every message in it. The roster
    * only needs a one-liner per member, and a subagent's worth of tool traffic is a lot of rows to
    * pull and filter in JS just to keep the last one.

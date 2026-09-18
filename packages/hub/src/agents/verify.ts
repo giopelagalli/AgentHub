@@ -5,7 +5,7 @@ import type { Milestone, MilestoneVerification } from '@agenthub/shared';
 import { runShellTask } from '@agenthub/shared/shell';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { patchMilestone } from '../projects/roadmap.js';
-import { runSubagent, truncateResult, type SubagentDeps, type Tool, type ToolContext } from './tools.js';
+import { runSubagent, truncateResult, workspaceTools, type SubagentDeps, type Tool, type ToolContext } from './tools.js';
 
 const VERIFY_TIMEOUT_MS = 120_000;
 /** How much of the test output the milestone keeps and the manager gets back. */
@@ -83,12 +83,15 @@ function parseVerdict(report: string): ReviewStatus {
   return verdict === 'APPROVE' ? 'approved' : 'changes';
 }
 
+/** The reviewer only reads: no write_file, no run_shell — it judges the change, it doesn't touch it. */
+const REVIEWER_TOOLS: Tool[] = workspaceTools().filter((t) => t.def.name === 'read_file' || t.def.name === 'list_dir');
+
 async function runReview(deps: SubagentDeps, ctx: ToolContext, bundle: ProjectBundle, milestone: Milestone): Promise<Review> {
   const reviewer = (await bundle.team()).find((m) => m.role === 'reviewer');
   if (!reviewer) return { status: 'skipped', who: 'no reviewer on the roster', findings: '' };
   const files = await bundle.changedWorkspaceFiles(milestone.startedCommit);
   const task = reviewTask(milestone, prdHeadings(await bundle.prd()), files);
-  const res = await runSubagent(deps, ctx, { role: 'reviewer', member: reviewer, task });
+  const res = await runSubagent(deps, ctx, { role: 'reviewer', member: reviewer, task, tools: REVIEWER_TOOLS });
   const report = res.text.trim();
   if (!report) return { status: 'changes', who: reviewer.name, findings: `reviewer ended (${res.outcome}) without a report` };
   return { status: parseVerdict(report), who: reviewer.name, findings: truncateResult(report, REVIEW_REPORT_LIMIT) };
@@ -123,11 +126,20 @@ export function completeMilestoneTool(deps: SubagentDeps): Tool {
       const review: Review = tests.status === 'fail'
         ? { status: 'skipped', who: 'not run: tests failed', findings: '' }
         : await runReview(deps, ctx, bundle, milestone);
-      const done = tests.status !== 'fail' && review.status !== 'changes';
+      // Done needs at least one positive signal (tests passed, or the reviewer approved) and no
+      // negative one — two skipped checks (no test command, no reviewer on the roster) is not
+      // evidence of anything, and must not wave a milestone through.
+      const noEvidence = tests.status === 'skipped' && review.status === 'skipped';
+      const done = !noEvidence && (tests.status === 'pass' || review.status === 'approved')
+        && tests.status !== 'fail' && review.status !== 'changes';
 
-      const summary = `tests: ${tests.status} (${tests.label}); review: ${review.status} (${review.who})`;
+      const summary = noEvidence
+        ? 'no verification available: no test command and no reviewer on the roster — add one or set manifest.verifyCmd'
+        : `tests: ${tests.status} (${tests.label}); review: ${review.status} (${review.who})`;
       const verification: MilestoneVerification = { tests: tests.status, review: review.status, at: Date.now(), notes: summary };
-      await bundle.writeRoadmap(patchMilestone(milestones, id, { status: done ? 'done' : 'in-progress', verification }));
+      const patch: Partial<Milestone> = { status: done ? 'done' : 'in-progress', verification };
+      if (!done && !milestone.startedCommit) patch.startedCommit = await bundle.head();
+      await bundle.writeRoadmap(patchMilestone(milestones, id, patch));
       await bundle.appendDecision({
         title: `Milestone ${id} ${done ? 'verified and done' : 'not done: verification failed'}`,
         rationale: `${milestone.title} — ${summary}.`,

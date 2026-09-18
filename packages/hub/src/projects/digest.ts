@@ -8,8 +8,8 @@ const HEAD_BYTES = 1024;
 const HEAD_LINE_LIMIT = 80;
 const DIGEST_TRUNCATED = '\n[digest truncated]';
 
-/** Never descended into: dependency trees and nested checkouts are not the project's own files. */
-const SKIPPED_DIRS = new Set(['node_modules', '.git']);
+/** Never descended into: dependency trees, build output and nested checkouts are not the project's own files. */
+const SKIPPED_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'target', '__pycache__', '.next', 'coverage']);
 const SKIPPED_FILES = new Set(['.gitkeep']);
 
 /** Files whose first line says something about them — a comment, a shebang, a heading. */
@@ -42,7 +42,14 @@ async function headLine(path: string): Promise<string> {
   }
 }
 
-async function walk(root: string, dir: string, acc: { path: string; size: number }[]): Promise<void> {
+/**
+ * `acc` is capped at `limit + 1`: one more than the digest ever shows, just enough for
+ * `workspaceDigest` to know there were more. A workspace with a huge, skip-listed-adjacent tree
+ * (a stray `vendor/` full of thousands of files, say) would otherwise cost a full recursive
+ * `readdir` walk for entries nothing ever renders.
+ */
+async function walk(root: string, dir: string, acc: { path: string; size: number }[], limit: number): Promise<void> {
+  if (acc.length > limit) return;
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -50,9 +57,10 @@ async function walk(root: string, dir: string, acc: { path: string; size: number
     return;
   }
   for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (acc.length > limit) return;
     const full = join(dir, e.name);
     if (e.isDirectory()) {
-      if (!SKIPPED_DIRS.has(e.name)) await walk(root, full, acc);
+      if (!SKIPPED_DIRS.has(e.name)) await walk(root, full, acc, limit);
     } else if (e.isFile() && !SKIPPED_FILES.has(e.name)) {
       const size = await stat(full).then((s) => s.size, () => 0);
       acc.push({ path: relative(root, full).split(sep).join('/'), size });
@@ -67,7 +75,7 @@ async function walk(root: string, dir: string, acc: { path: string; size: number
  */
 export async function workspaceDigest(workspace: string): Promise<string> {
   const files: { path: string; size: number }[] = [];
-  await walk(workspace, workspace, files);
+  await walk(workspace, workspace, files, DIGEST_MAX_ENTRIES);
   if (files.length === 0) return '(empty)';
   const shown = files.slice(0, DIGEST_MAX_ENTRIES);
   const lines = await Promise.all(shown.map(async (f) => {

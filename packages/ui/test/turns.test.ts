@@ -16,11 +16,11 @@ const roster: TeamRoster = {
 
 const T0 = 1_700_000_000_000;
 
-function frame(sessionId: string, at: number, event: TurnEvent) {
+function frame(sessionId: number, at: number, event: TurnEvent) {
   return { sessionId, at, event };
 }
 
-function play(turns: TurnRecord[], sessionId: string, events: TurnEvent[], from = T0, step = 1000): TurnRecord[] {
+function play(turns: TurnRecord[], sessionId: number, events: TurnEvent[], from = T0, step = 1000): TurnRecord[] {
   return events.reduce((acc, event, i) => applyTurnEvent(acc, frame(sessionId, from + i * step, event)), turns);
 }
 
@@ -41,12 +41,12 @@ const SCRIPT: TurnEvent[] = [
 
 describe('applyTurnEvent', () => {
   it('creates the running turn on turn-start and closes it on turn-end', () => {
-    let turns = play([], 's1', SCRIPT.slice(0, 1));
+    let turns = play([], 1, SCRIPT.slice(0, 1));
     expect(turns).toHaveLength(1);
-    expect(turns[0]).toMatchObject({ sessionId: 's1', startedAt: T0, endedAt: null, outcome: null, toolCalls: 0 });
-    expect(runningTurn(turns)?.sessionId).toBe('s1');
+    expect(turns[0]).toMatchObject({ sessionId: 1, startedAt: T0, endedAt: null, outcome: null, toolCalls: 0 });
+    expect(runningTurn(turns)?.sessionId).toBe(1);
 
-    turns = play(turns, 's1', SCRIPT.slice(1), T0 + 1000);
+    turns = play(turns, 1, SCRIPT.slice(1), T0 + 1000);
     expect(turns[0].events).toHaveLength(SCRIPT.length);
     expect(turns[0].toolCalls).toBe(3);
     expect(turns[0]).toMatchObject({ endedAt: T0 + 11_000, outcome: 'done', summary: 'Milestone 1 done.' });
@@ -54,30 +54,30 @@ describe('applyTurnEvent', () => {
   });
 
   it('starts a turn from any first frame, so a socket that came up mid-turn still shows it', () => {
-    const turns = play([], 's1', SCRIPT.slice(5, 7), T0 + 5000);
-    expect(turns[0]).toMatchObject({ sessionId: 's1', startedAt: T0 + 5000, endedAt: null, toolCalls: 1 });
+    const turns = play([], 1, SCRIPT.slice(5, 7), T0 + 5000);
+    expect(turns[0]).toMatchObject({ sessionId: 1, startedAt: T0 + 5000, endedAt: null, toolCalls: 1 });
     expect(turns[0].events.map((e) => e.kind)).toEqual(['tool-call', 'tool-result']);
   });
 
   it('keeps newest first and holds at most twenty', () => {
     let turns: TurnRecord[] = [];
-    for (let i = 0; i < 25; i++) turns = play(turns, `s${i}`, [SCRIPT[0], SCRIPT[SCRIPT.length - 1]], T0 + i * 60_000);
+    for (let i = 0; i < 25; i++) turns = play(turns, i, [SCRIPT[0], SCRIPT[SCRIPT.length - 1]], T0 + i * 60_000);
     expect(turns).toHaveLength(20);
-    expect(turns[0].sessionId).toBe('s24');
-    expect(turns[19].sessionId).toBe('s5');
+    expect(turns[0].sessionId).toBe(24);
+    expect(turns[19].sessionId).toBe(5);
   });
 
   it('does not touch other projects’ turns in the same list of sessions', () => {
-    const a = play([], 'a', SCRIPT.slice(0, 2));
-    const both = play(a, 'b', SCRIPT.slice(0, 1), T0 + 5000);
-    expect(both.map((t) => t.sessionId)).toEqual(['b', 'a']);
+    const a = play([], 1, SCRIPT.slice(0, 2));
+    const both = play(a, 2, SCRIPT.slice(0, 1), T0 + 5000);
+    expect(both.map((t) => t.sessionId)).toEqual([2, 1]);
     expect(both[1].events).toHaveLength(2);
   });
 });
 
 describe('mergeTurns', () => {
   const fetched = (events: TimedEvent[], ended = false): TurnRecord => ({
-    sessionId: 's1', startedAt: T0, endedAt: ended ? T0 + 11_000 : null, outcome: ended ? 'done' : null,
+    sessionId: 1, startedAt: T0, endedAt: ended ? T0 + 11_000 : null, outcome: ended ? 'done' : null,
     summary: ended ? 'Milestone 1 done.' : '', toolCalls: events.filter((e) => e.kind === 'tool-call').length, events,
   });
   const timed = (events: TurnEvent[], from = T0): TimedEvent[] => events.map((e, i) => ({ ...e, at: from + i * 1000 }));
@@ -85,38 +85,51 @@ describe('mergeTurns', () => {
   it('recovers a turn in progress after a reload: history from the fetch, the tail from the socket', () => {
     // The page reloaded mid-turn; the socket delivered events 6 and 7 before /turns answered
     // with 0..6. The tail the fetch had not seen is kept, the overlap is not doubled.
-    const local = play([], 's1', SCRIPT.slice(6, 8), T0 + 6000);
-    const merged = mergeTurns(local, { running: { sessionId: 's1', startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 7)))] });
+    const local = play([], 1, SCRIPT.slice(6, 8), T0 + 6000);
+    const merged = mergeTurns(local, { running: { sessionId: 1, startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 7)))] });
     expect(merged).toHaveLength(1);
     expect(merged[0].startedAt).toBe(T0);
     expect(merged[0].events.map((e) => e.kind)).toEqual(SCRIPT.slice(0, 8).map((e) => e.kind));
     expect(merged[0].toolCalls).toBe(3);
-    expect(runningTurn(merged)?.sessionId).toBe('s1');
+    expect(runningTurn(merged)?.sessionId).toBe(1);
   });
 
   it('keeps a local turn-end the fetch predates', () => {
-    const local = play([], 's1', SCRIPT, T0);
-    const merged = mergeTurns(local, { running: { sessionId: 's1', startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 4)))] });
+    const local = play([], 1, SCRIPT, T0);
+    const merged = mergeTurns(local, { running: { sessionId: 1, startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 4)))] });
     expect(merged[0].endedAt).toBe(T0 + 11_000);
     expect(merged[0].outcome).toBe('done');
     expect(merged[0].events).toHaveLength(SCRIPT.length);
   });
 
   it('takes the fetched record as truth where the socket saw nothing, and keeps turns the fetch lacks', () => {
-    const local = play([], 's-new', SCRIPT.slice(0, 2), T0 + 100_000);
+    const local = play([], 2, SCRIPT.slice(0, 2), T0 + 100_000);
     const merged = mergeTurns(local, { running: null, turns: [fetched(timed(SCRIPT), true)] });
-    expect(merged.map((t) => t.sessionId)).toEqual(['s-new', 's1']);
+    expect(merged.map((t) => t.sessionId)).toEqual([2, 1]);
     expect(merged[1]).toMatchObject({ endedAt: T0 + 11_000, summary: 'Milestone 1 done.' });
   });
 
   it('an empty fetch leaves what the socket delivered alone', () => {
-    const local = play([], 's1', SCRIPT.slice(0, 3));
+    const local = play([], 1, SCRIPT.slice(0, 3));
     expect(mergeTurns(local, { running: null, turns: [] })).toEqual(local);
+  });
+
+  it('closes a fetched turn the hub no longer names as running — a hub restart, or a dropped turn-end', () => {
+    const noRunning = mergeTurns([], { running: null, turns: [fetched(timed(SCRIPT.slice(0, 4)))] });
+    expect(noRunning[0]).toMatchObject({ endedAt: T0, outcome: 'unknown' });
+
+    const otherRunning = mergeTurns([], { running: { sessionId: 2, startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 4)))] });
+    expect(otherRunning[0]).toMatchObject({ endedAt: T0, outcome: 'unknown' });
+  });
+
+  it('leaves the fetched turn open when the hub names it as the one running', () => {
+    const merged = mergeTurns([], { running: { sessionId: 1, startedAt: T0 }, turns: [fetched(timed(SCRIPT.slice(0, 4)))] });
+    expect(merged[0].endedAt).toBeNull();
   });
 });
 
 describe('timelineModel', () => {
-  const events = play([], 's1', SCRIPT)[0].events;
+  const events = play([], 1, SCRIPT)[0].events;
   const model = timelineModel(events);
 
   it('groups contiguous rows by who, and names each run once', () => {
@@ -145,7 +158,7 @@ describe('timelineModel', () => {
   });
 
   it('leaves a call unanswered until its result lands, and a block open until it ends', () => {
-    const partial = timelineModel(play([], 's1', SCRIPT.slice(0, 6))[0].events);
+    const partial = timelineModel(play([], 1, SCRIPT.slice(0, 6))[0].events);
     const block = partial[1] as SubagentBlock;
     expect(block.outcome).toBeNull();
     const inner = block.items[0] as TimelineGroup;
@@ -159,12 +172,12 @@ describe('timelineModel', () => {
       { kind: 'tool-result', who: 'manager', tool: 'read_file', ok: true, summary: 'B', ms: 1 },
       { kind: 'tool-result', who: 'manager', tool: 'read_file', ok: true, summary: 'A', ms: 2 },
     ];
-    const rows = (timelineModel(play([], 's', script)[0].events)[0] as TimelineGroup).rows;
+    const rows = (timelineModel(play([], 1, script)[0].events)[0] as TimelineGroup).rows;
     expect(rows.map((r) => r.kind === 'tool' && `${r.args}:${r.summary}`)).toEqual(['a:A', 'b:B']);
   });
 
   it('gives a result whose call was never seen a row of its own', () => {
-    const rows = (timelineModel(play([], 's', SCRIPT.slice(3, 4))[0].events)[0] as TimelineGroup).rows;
+    const rows = (timelineModel(play([], 1, SCRIPT.slice(3, 4))[0].events)[0] as TimelineGroup).rows;
     expect(rows[0]).toMatchObject({ kind: 'tool', tool: 'read_file', args: '', ok: true, ms: 40 });
   });
 
@@ -183,7 +196,7 @@ describe('timelineModel', () => {
       { kind: 'text', who: 'coder-1', text: 'back' },
       { kind: 'subagent-end', who: 'coder-1', outcome: 'done', ms: 9 },
     ];
-    const [outer] = timelineModel(play([], 's', script)[0].events) as SubagentBlock[];
+    const [outer] = timelineModel(play([], 1, script)[0].events) as SubagentBlock[];
     expect(outer.items.map((i) => i.kind)).toEqual(['subagent', 'group']);
     expect((outer.items[0] as SubagentBlock).outcome).toBe('approved');
     expect(outer.outcome).toBe('done');
@@ -194,7 +207,7 @@ describe('timelineModel', () => {
       { kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'x' },
       { kind: 'turn-end', outcome: 'aborted', ms: 1, summary: 'stopped' },
     ];
-    const items = timelineModel(play([], 's', script)[0].events);
+    const items = timelineModel(play([], 1, script)[0].events);
     expect(items.map((i) => i.kind)).toEqual(['subagent', 'group']);
     expect((items[1] as TimelineGroup).rows[0].kind).toBe('end');
   });
@@ -219,27 +232,27 @@ describe('who and doing', () => {
   });
 
   it('reads the latest tool call or text by who, held to sixty characters', () => {
-    const turn = play([], 's1', SCRIPT.slice(0, 9))[0];
+    const turn = play([], 1, SCRIPT.slice(0, 9))[0];
     expect(doingCaption(turn, 'coder-1')).toBe('running npm test');
     expect(doingCaption(turn, 'manager')).toBe('reading docs/roadmap.md');
     expect(doingCaption(turn, 'reviewer-1')).toBeNull();
     expect(doingCaption(null, 'manager')).toBeNull();
-    const chatty = play([], 's', [{ kind: 'text', who: 'manager', text: 'y'.repeat(120) }])[0];
+    const chatty = play([], 1, [{ kind: 'text', who: 'manager', text: 'y'.repeat(120) }])[0];
     expect(doingCaption(chatty, 'manager')).toHaveLength(60);
   });
 
   it('knows who is acting: the innermost open subagent, else the manager', () => {
-    expect(activeWho(play([], 's', SCRIPT.slice(0, 3))[0])).toBe('manager');
-    expect(activeWho(play([], 's', SCRIPT.slice(0, 6))[0])).toBe('coder-1');
-    expect(activeWho(play([], 's', SCRIPT.slice(0, 11))[0])).toBe('manager');
-    expect(openSubagents(play([], 's', SCRIPT.slice(0, 6))[0])).toEqual(['coder-1']);
+    expect(activeWho(play([], 1, SCRIPT.slice(0, 3))[0])).toBe('manager');
+    expect(activeWho(play([], 1, SCRIPT.slice(0, 6))[0])).toBe('coder-1');
+    expect(activeWho(play([], 1, SCRIPT.slice(0, 11))[0])).toBe('manager');
+    expect(openSubagents(play([], 1, SCRIPT.slice(0, 6))[0])).toEqual(['coder-1']);
     expect(openSubagents(null)).toEqual([]);
   });
 });
 
 describe('activityHint', () => {
   it('says what the team is doing while a turn runs', () => {
-    const turns = play([], 's1', SCRIPT.slice(0, 8), T0);
+    const turns = play([], 1, SCRIPT.slice(0, 8), T0);
     const { hint, filled, running } = activityHint('ready', turns, roster, T0 + 252_000);
     expect(hint).toBe('Running · 4m12s · Ada is running npm test');
     expect(filled).toBe(true);
@@ -247,12 +260,12 @@ describe('activityHint', () => {
   });
 
   it('says only the clock while the turn has nothing to show yet', () => {
-    const turns = play([], 's1', SCRIPT.slice(0, 1), T0);
+    const turns = play([], 1, SCRIPT.slice(0, 1), T0);
     expect(activityHint('loading', turns, roster, T0 + 3000).hint).toBe('Running · 3s');
   });
 
   it('describes the last turn once idle', () => {
-    const turns = play([], 's1', SCRIPT, T0);
+    const turns = play([], 1, SCRIPT, T0);
     const done = { ...turns[0], endedAt: T0 + 18 * 60_000 };
     const { hint, filled, running } = activityHint('ready', [done], roster, T0 + 99 * 60_000);
     expect(hint).toBe('Last turn 18m · Milestone 1 done.');
@@ -267,7 +280,7 @@ describe('activityHint', () => {
   });
 
   it('still shows what the socket delivered when the fetch failed', () => {
-    const turns = play([], 's1', SCRIPT.slice(0, 3), T0);
+    const turns = play([], 1, SCRIPT.slice(0, 3), T0);
     expect(activityHint('failed', turns, roster, T0 + 5000).running).toBe(true);
   });
 });

@@ -139,10 +139,18 @@ export class ModelGateway {
   private now: () => number;
   /** Serves every `provider: 'anthropic'` endpoint; absent when no cloud tier is configured. */
   private anthropic: AnthropicLike | undefined;
+  /** Whether a route's model override may be sent to `ep` — absent means every override is allowed. */
+  private modelAllowed: ((ep: ServingEndpoint, model: string) => boolean) | undefined;
+  /** Model ids already reported switched off, so a refused override costs one log line, not one per request. */
+  private refusedModelsLogged = new Set<string>();
 
-  constructor(private registry: NodeRegistry, opts: { now?: () => number; anthropic?: AnthropicLike } = {}) {
+  constructor(
+    private registry: NodeRegistry,
+    opts: { now?: () => number; anthropic?: AnthropicLike; modelAllowed?: (ep: ServingEndpoint, model: string) => boolean } = {},
+  ) {
     this.now = opts.now ?? Date.now;
     this.anthropic = opts.anthropic;
+    this.modelAllowed = opts.modelAllowed;
   }
 
   private key(node: NodeInfo, ep: ServingEndpoint): string { return `${node.name}|${ep.tier}|${ep.url}`; }
@@ -282,7 +290,18 @@ export class ModelGateway {
       const key = this.key(picked.node, picked.endpoint);
       // A project that named a model gets it, but only on the cloud it named: a local endpoint
       // serves whatever its node loaded, and asking it for another model would just 404.
-      const model = modelOverrideApplies(picked.endpoint, route) ? route!.model! : picked.endpoint.model;
+      let model = picked.endpoint.model;
+      if (modelOverrideApplies(picked.endpoint, route)) {
+        // A policy saved while the hard tier was on must not keep billing after it is switched off.
+        if (this.modelAllowed?.(picked.endpoint, route!.model!) === false) {
+          if (!this.refusedModelsLogged.has(route!.model!)) {
+            this.refusedModelsLogged.add(route!.model!);
+            console.warn(`[gateway] ${route!.model!} is switched off; using ${picked.endpoint.model}`);
+          }
+        } else {
+          model = route!.model!;
+        }
+      }
       this.active.set(key, (this.active.get(key) ?? 0) + 1);
       let streamedAny = false;
       let nonRetryable = false;

@@ -71,6 +71,8 @@ describe('optionsFromEnv', () => {
     // Both providers can be on at once; each keeps its own overrides.
     expect(optionsFromEnv({ CLOUD_ANTHROPIC: '1', FIREWORKS_API_KEY: 'fw' }, quiet).options.cloud)
       .toEqual({ anthropic: {}, fireworks: {} });
+    expect(optionsFromEnv({ FIREWORKS_API_KEY: 'fw', FIREWORKS_HARD_MODELS: '1' }, quiet).options.cloud)
+      .toEqual({ fireworks: { hardModels: true } });
   });
 
   it('keeps an external tool only when its key is present and its provider is known', () => {

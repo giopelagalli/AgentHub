@@ -29,7 +29,7 @@ const fireworks = options.cloud?.fireworks;
 if (fireworks) {
   const short = (model: string) => model.slice(model.lastIndexOf('/') + 1);
   const key = process.env.FIREWORKS_API_KEY ? '' : ' — FIREWORKS_API_KEY is not set, so it will be skipped';
-  console.log(`[hub] cloud tier: fireworks (${short(fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL)} / ${short(fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL)})${key}`);
+  console.log(`[hub] cloud tier: fireworks (${short(fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL)} / ${short(fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL)}) — hard models ${fireworks.hardModels ? 'on' : 'off'}${key}`);
 }
 
 const hub = createHub({ ...options, uiDist });

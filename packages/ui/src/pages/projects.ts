@@ -116,6 +116,7 @@ export function modelPicker(
     const item = document.createElement('option');
     item.value = option.value;
     item.textContent = option.label;
+    if (option.disabled) item.disabled = true;
     main.appendChild(item);
   }
   const current = valueFromPolicy(policy);
@@ -141,6 +142,7 @@ export function modelPicker(
       const item = document.createElement('option');
       item.value = option.value;
       item.textContent = option.label;
+      if (option.disabled) item.disabled = true;
       worker.appendChild(item);
     }
     const workerCurrent = policy?.workerModel && policy.workerModel !== policy.orchestratorModel

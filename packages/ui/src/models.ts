@@ -8,7 +8,7 @@ import type { CloudProvider, ModelCatalog, ModelPolicy } from '@agenthub/shared'
  * Option values are `auto` | `local` | `cloud` | `cloud:<provider>` | `cloud:<provider>:<model id>`.
  * Model ids carry slashes but no colons, so the third field is simply the rest of the string.
  */
-export interface ModelOption { value: string; label: string }
+export interface ModelOption { value: string; label: string; disabled?: boolean }
 
 export const AUTO_VALUE = 'auto';
 export const LOCAL_VALUE = 'local';
@@ -38,6 +38,9 @@ export function modelOptions(catalog: ModelCatalog | null): ModelOption[] {
     for (const model of row.models) {
       options.push({ value: `cloud:${row.provider}:${model}`, label: `${name}: ${shortModel(model)}` });
     }
+    for (const model of row.disabled ?? []) {
+      options.push({ value: `cloud:${row.provider}:${model}`, label: `${name}: ${shortModel(model)} (off)`, disabled: true });
+    }
   }
   return options;
 }
@@ -48,6 +51,7 @@ export function workerOptions(catalog: ModelCatalog | null, provider: CloudProvi
   return [
     { value: SAME_AS_ORCHESTRATOR, label: 'Worker: same model' },
     ...(row?.models ?? []).map((model) => ({ value: model, label: `Worker: ${shortModel(model)}` })),
+    ...(row?.disabled ?? []).map((model) => ({ value: model, label: `Worker: ${shortModel(model)} (off)`, disabled: true })),
   ];
 }
 

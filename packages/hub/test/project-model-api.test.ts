@@ -10,6 +10,7 @@ import { createHub, type Hub } from '../src/server.js';
 const KEY_ENV = 'FIREWORKS_API_KEY';
 const GLM = 'accounts/fireworks/models/glm-5p3';
 const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
+const DEEPSEEK = 'accounts/fireworks/models/deepseek-v4p1-flash';
 
 let hub: Hub | undefined;
 let local: MockOpenAI | undefined;
@@ -19,7 +20,7 @@ const savedKey = process.env[KEY_ENV];
 
 /**
  * A hub with a temp projects root, one local node, and a Fireworks cloud tier pointed at a second
- * mock — whose `/v1/models` lists `mock-model`, so the catalog has something beyond the defaults.
+ * mock. The cloud model list is the curated one, not fetched from the mock.
  */
 async function setup(): Promise<void> {
   process.env[KEY_ENV] = 'fw-secret';
@@ -69,10 +70,10 @@ function setPolicy(payload: Record<string, unknown>): Promise<LightMyRequestResp
 describe('POST /api/projects/:slug/model', () => {
   it('stores the policy on the manifest and commits it', async () => {
     await setup();
-    const res = await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM, workerModel: FLASH });
+    const res = await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: FLASH, workerModel: DEEPSEEK });
     expect(res.statusCode).toBe(200);
     expect(res.json().modelPolicy).toEqual({
-      prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM, workerModel: FLASH,
+      prefer: 'cloud', provider: 'fireworks', orchestratorModel: FLASH, workerModel: DEEPSEEK,
     });
 
     const read = await app().inject({ method: 'GET', url: '/api/projects/demo' });
@@ -88,29 +89,47 @@ describe('POST /api/projects/:slug/model', () => {
     expect((await setPolicy({ prefer: 'auto' })).json().modelPolicy).toEqual({ prefer: 'auto' });
   });
 
-  it('rejects a bad preference, an unknown provider, and a model the catalog does not list', async () => {
+  it('rejects a bad preference, an unknown provider, a switched-off hard model, and a model the catalog does not list', async () => {
     await setup();
     expect((await setPolicy({ prefer: 'whatever' })).statusCode).toBe(400);
     expect((await setPolicy({})).statusCode).toBe(400);
     expect((await setPolicy({ prefer: 'cloud', provider: 'openai' })).statusCode).toBe(400);
     expect((await setPolicy({ prefer: 'cloud', provider: 'anthropic' })).statusCode).toBe(400); // not configured here
 
+    const off = await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM });
+    expect(off.statusCode).toBe(400);
+    expect(off.json().error).toMatch(/switched off/);
+
     const unknown = await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: 'accounts/me/models/nope' });
     expect(unknown.statusCode).toBe(400);
     expect(unknown.json().error).toContain('unknown model');
 
     // A model override without a provider has nothing to validate against.
-    expect((await setPolicy({ prefer: 'cloud', orchestratorModel: GLM })).statusCode).toBe(400);
+    expect((await setPolicy({ prefer: 'cloud', orchestratorModel: FLASH })).statusCode).toBe(400);
 
     // The manifest is untouched by every refusal.
     const read = await app().inject({ method: 'GET', url: '/api/projects/demo' });
     expect(read.json().manifest.modelPolicy).toBeUndefined();
   });
 
-  it('accepts a model the live catalog lists as well as the configured defaults', async () => {
+  it('accepts the curated models and the configured defaults', async () => {
     await setup();
-    // The mock's /v1/models lists `mock-model`; the configured defaults are the GLM pair.
-    expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', workerModel: 'mock-model' })).statusCode).toBe(200);
+    expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', workerModel: FLASH })).statusCode).toBe(200);
+    expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: DEEPSEEK })).statusCode).toBe(200);
+  });
+
+  it('accepts a hard model once FIREWORKS_HARD_MODELS is on', async () => {
+    process.env[KEY_ENV] = 'fw-secret';
+    root = await mkdtemp(join(tmpdir(), 'agenthub-model-policy-'));
+    fireworks = createMockOpenAI();
+    await fireworks.listen({ port: 0, host: '127.0.0.1' });
+    const fireworksUrl = `http://127.0.0.1:${(fireworks.server.address() as { port: number }).port}`;
+    hub = createHub({ projectsRoot: root, cloud: { fireworks: { baseUrl: fireworksUrl, hardModels: true } } });
+    await hub.app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { slug: 'demo', title: 'Demo', intent: 'ship the demo' },
+    });
+
     expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM })).statusCode).toBe(200);
   });
 
@@ -119,37 +138,18 @@ describe('POST /api/projects/:slug/model', () => {
     const res = await app().inject({ method: 'POST', url: '/api/projects/ghost/model', payload: { prefer: 'local' } });
     expect(res.statusCode).toBe(404);
   });
-
-  it('404s a bad slug before checking the catalog, even with a provider named', async () => {
-    await setup();
-    let catalogHits = 0;
-    // The mock is already listening by the time this test runs, so a Fastify hook is refused —
-    // count directly on the underlying HTTP server instead.
-    fireworks!.server.on('request', (req) => { if (req.url?.startsWith('/v1/models')) catalogHits++; });
-
-    const missing = await app().inject({
-      method: 'POST', url: '/api/projects/ghost/model',
-      payload: { prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM },
-    });
-    expect(missing.statusCode).toBe(404);
-    expect(catalogHits).toBe(0); // resolveProject ran first, so the catalog was never fetched
-
-    // A real project with the same payload does fetch the catalog, confirming the hook works.
-    expect((await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM })).statusCode).toBe(200);
-    expect(catalogHits).toBe(1);
-  });
 });
 
 describe('a project turn under a model policy', () => {
   it('sends the orchestrator turn to the policy\'s cloud model', async () => {
     await setup();
-    await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM, workerModel: FLASH });
+    await setPolicy({ prefer: 'cloud', provider: 'fireworks', orchestratorModel: FLASH, workerModel: DEEPSEEK });
 
     const turn = await app().inject({ method: 'POST', url: '/api/projects/demo/turn', payload: {} });
     expect(turn.statusCode).toBe(200);
     // The turn ran against the Fireworks endpoint, under the orchestrator model the owner chose.
     expect(fireworks!.requests.length).toBeGreaterThan(0);
-    expect(fireworks!.lastRequest().model).toBe(GLM);
+    expect(fireworks!.lastRequest().model).toBe(FLASH);
     expect(local!.requests).toHaveLength(0);
   });
 

@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL, type AnthropicLike } from './providers/anthropic.js';
 import {
   DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL, DEFAULT_FIREWORKS_WORKER_MODEL,
-  FIREWORKS_API_KEY_ENV, FIREWORKS_BASE_URL, FireworksCatalog,
+  FIREWORKS_API_KEY_ENV, FIREWORKS_BASE_URL, fireworksModels,
 } from './providers/fireworks.js';
 import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
@@ -174,6 +174,8 @@ export interface HubOptions {
       workerModel?: string;
       maxStreams?: number;
       baseUrl?: string;
+      /** Enables the expensive tier (GLM 5.3, Kimi K3). */
+      hardModels?: boolean;
     };
   };
 }
@@ -208,7 +210,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   }
   const fireworks = opts.cloud?.fireworks;
   const fireworksBase = fireworks?.baseUrl ?? FIREWORKS_BASE_URL;
-  const fireworksCatalog = fireworks ? new FireworksCatalog({ baseUrl: fireworksBase }) : undefined;
+  const fireworksModelSet = fireworks ? fireworksModels(fireworks.hardModels ?? false) : undefined;
   if (fireworks) {
     cloudNodes.push(CLOUD_FIREWORKS_NODE_NAME);
     registry.register({
@@ -219,7 +221,13 @@ export function createHub(opts: HubOptions = {}): Hub {
       ],
     });
   }
-  const gateway = new ModelGateway(registry, anthropic ? { anthropic } : {});
+  const fireworksDisabled = new Set(fireworksModelSet?.disabled ?? []);
+  const gateway = new ModelGateway(registry, {
+    ...(anthropic ? { anthropic } : {}),
+    ...(fireworks
+      ? { modelAllowed: (ep: ServingEndpoint, model: string) => ep.provider !== 'fireworks' || !fireworksDisabled.has(model) }
+      : {}),
+  });
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
   // A hub that died mid-turn never closed its orchestrator session: without this it stays open
@@ -608,11 +616,10 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   /**
    * Everything the owner can point a project at. The local half is whatever is serving right now;
-   * the cloud half is per configured provider, and Fireworks' list is fetched (and cached for ten
-   * minutes) from the account's own catalog, so it is the truth about which ids exist rather than a
-   * hard-coded guess.
+   * the cloud half is per configured provider, and Fireworks' list is the curated, tiered one —
+   * `disabled` names the hard models the hub knows but currently refuses.
    */
-  const modelCatalog = async (): Promise<ModelCatalog> => {
+  const modelCatalog = (): ModelCatalog => {
     const local: ModelCatalog['local'] = [];
     for (const node of registry.online()) {
       for (const ep of node.endpoints) {
@@ -627,10 +634,11 @@ export function createHub(opts: HubOptions = {}): Hub {
       };
       cloudRows.push({ provider: 'anthropic', models: [...new Set([configured.orchestrator, configured.worker])].sort(), configured });
     }
-    if (fireworks && fireworksCatalog) {
+    if (fireworks && fireworksModelSet) {
       cloudRows.push({
         provider: 'fireworks',
-        models: await fireworksCatalog.models(process.env[FIREWORKS_API_KEY_ENV]),
+        models: fireworksModelSet.enabled,
+        disabled: fireworksModelSet.disabled,
         configured: {
           orchestrator: fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL,
           worker: fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL,
@@ -904,10 +912,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
 
   /**
-   * The owner's model choice for one project. A named provider is checked against the live catalog:
-   * a model id the account cannot serve is a 400 rather than a policy that fails on the next turn.
-   * The provider's own configured ids always pass — they are what the tier uses today, and a catalog
-   * call that failed (or an unset key) must not lock the owner out of its defaults.
+   * The owner's model choice for one project. A named provider is checked against the curated
+   * model catalog: a model id the hub doesn't know is a 400 rather than a policy that fails on the
+   * next turn, and a hard model the hub knows but refuses is a distinct 400 naming the switch.
+   * The provider's own configured ids always pass — they are what the tier uses today.
    */
   app.post('/api/projects/:slug/model', async (req, reply) => {
     const { slug } = req.params as { slug: string };
@@ -924,11 +932,17 @@ export function createHub(opts: HubOptions = {}): Hub {
         return reply.code(400).send({ error: `invalid ${field}` });
       }
     }
-    // Cheap, I/O-free checks above; a bad slug 404s here, before the catalog fetch below.
+    // Cheap, I/O-free checks above; a bad slug 404s here, before the catalog lookup below.
     if (!(await resolveProject(slug, reply))) return reply;
     if (body.provider) {
-      const row = (await modelCatalog()).cloud.find((c) => c.provider === body.provider);
+      const row = modelCatalog().cloud.find((c) => c.provider === body.provider);
       if (!row) return reply.code(400).send({ error: `provider not configured: ${body.provider}` });
+      for (const field of ['orchestratorModel', 'workerModel'] as const) {
+        const value = body[field];
+        if (value && (row.disabled ?? []).includes(value)) {
+          return reply.code(400).send({ error: `model switched off: ${value} (set FIREWORKS_HARD_MODELS=1)` });
+        }
+      }
       const known = new Set([...row.models, row.configured.orchestrator, row.configured.worker]);
       for (const field of ['orchestratorModel', 'workerModel'] as const) {
         const value = body[field];

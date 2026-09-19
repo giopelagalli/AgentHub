@@ -126,6 +126,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ? {
         ...(env.FIREWORKS_ORCHESTRATOR_MODEL ? { orchestratorModel: env.FIREWORKS_ORCHESTRATOR_MODEL } : {}),
         ...(env.FIREWORKS_WORKER_MODEL ? { workerModel: env.FIREWORKS_WORKER_MODEL } : {}),
+        ...(env.FIREWORKS_HARD_MODELS === '1' ? { hardModels: true } : {}),
       }
     : undefined;
   const cloud = anthropicCloud || fireworksCloud

@@ -265,20 +265,19 @@ secret itself is never stored or sent to the UI). An unset key costs one log
 line and takes the node out of rotation rather than failing a turn.
 
     FIREWORKS_API_KEY=fw-... npm run dev:hub
-    # [hub] cloud tier: fireworks (glm-5p3 / glm-5p3-flash)
+    # [hub] cloud tier: fireworks (glm-5p3-flash / glm-5p3-flash) — hard models off
 
-The model ids default to `accounts/fireworks/models/glm-5p3` (orchestrator) and
-`accounts/fireworks/models/glm-5p3-flash` (worker), overridable with
-`FIREWORKS_ORCHESTRATOR_MODEL` / `FIREWORKS_WORKER_MODEL`. **Those two defaults
-follow Fireworks' documented naming but are unverified** — `GET /api/models` is
-the source of truth: it lists what the account can actually serve (fetched from
-Fireworks and cached for ten minutes) alongside every local endpoint and each
-cloud provider's configured ids.
-
-**Operationally**, check `GET /api/models` and set `FIREWORKS_ORCHESTRATOR_MODEL`
-/ `FIREWORKS_WORKER_MODEL` to ids it actually lists before relying on `auto`
-routing to reach Fireworks — the built-in defaults above are unverified, and a
-turn against an id the account can't serve fails rather than falling back.
+The hub offers a curated Fireworks list in two tiers. The cheap tier is always
+on: `accounts/fireworks/models/glm-5p3-flash` (the default for both the
+orchestrator and worker tiers) and `accounts/fireworks/models/deepseek-v4p1-flash`.
+The expensive tier — `accounts/fireworks/models/glm-5p3` and
+`accounts/fireworks/models/kimi-k3` — is off unless `FIREWORKS_HARD_MODELS=1`:
+the project model route refuses it (400), the Models picker shows it greyed-out
+"(off)", and a policy that named a hard model while the switch was on falls back
+to the endpoint's configured model with one log line once it is off.
+`FIREWORKS_ORCHESTRATOR_MODEL` / `FIREWORKS_WORKER_MODEL` override the defaults.
+`GET /api/models` lists the offered ids, the refused ones (`disabled`), and each
+provider's configured pair alongside every local endpoint.
 
 ## Choosing models per project
 

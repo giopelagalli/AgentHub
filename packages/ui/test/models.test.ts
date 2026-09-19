@@ -6,11 +6,12 @@ import {
 
 const GLM = 'accounts/fireworks/models/glm-5p3';
 const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
+const KIMI = 'accounts/fireworks/models/kimi-k3';
 
 const catalog: ModelCatalog = {
   local: [{ node: 'spark', tier: 'worker', model: 'qwen-local' }],
   cloud: [
-    { provider: 'fireworks', models: [GLM, FLASH], configured: { orchestrator: GLM, worker: FLASH } },
+    { provider: 'fireworks', models: [GLM, FLASH], disabled: [KIMI], configured: { orchestrator: GLM, worker: FLASH } },
     { provider: 'anthropic', models: ['claude-opus-4-8'], configured: { orchestrator: 'claude-opus-4-8', worker: 'claude-sonnet-5' } },
   ],
 };
@@ -31,6 +32,7 @@ describe('modelOptions', () => {
       { value: 'cloud:fireworks', label: 'Fireworks (default models)' },
       { value: `cloud:fireworks:${GLM}`, label: 'Fireworks: glm-5p3' },
       { value: `cloud:fireworks:${FLASH}`, label: 'Fireworks: glm-5p3-flash' },
+      { value: `cloud:fireworks:${KIMI}`, label: 'Fireworks: kimi-k3 (off)', disabled: true },
       { value: 'cloud:anthropic', label: 'Anthropic (default models)' },
       { value: 'cloud:anthropic:claude-opus-4-8', label: 'Anthropic: claude-opus-4-8' },
     ]);
@@ -41,6 +43,7 @@ describe('modelOptions', () => {
       { value: '', label: 'Worker: same model' },
       { value: GLM, label: 'Worker: glm-5p3' },
       { value: FLASH, label: 'Worker: glm-5p3-flash' },
+      { value: KIMI, label: 'Worker: kimi-k3 (off)', disabled: true },
     ]);
     expect(workerOptions(null, 'fireworks')).toHaveLength(1);
   });

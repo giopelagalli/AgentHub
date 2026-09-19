@@ -269,6 +269,8 @@ export interface ModelCatalog {
   cloud: {
     provider: CloudProvider;
     models: string[];
+    /** Ids the hub knows but refuses right now (Fireworks' hard models while FIREWORKS_HARD_MODELS is unset). */
+    disabled?: string[];
     configured: { orchestrator: string; worker: string };
   }[];
 }

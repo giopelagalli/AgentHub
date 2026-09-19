@@ -209,4 +209,24 @@ describe('the route model override', () => {
     expect(local.mock.lastRequest().model).toBe('local-worker');
     expect(cloud.mock.requests).toHaveLength(1);
   });
+
+  it('falls back to the endpoint\'s own model when modelAllowed refuses the override', async () => {
+    process.env[KEY_ENV] = 'fw-secret';
+    const { mock, url } = await mockServer();
+    const registry = new NodeRegistry(openDb(':memory:'));
+    registry.register(cloudNode('fireworks', url));
+    const gateway = new ModelGateway(registry, {
+      modelAllowed: (ep, model) => model !== 'fireworks-hard',
+    });
+
+    await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {
+      route: { prefer: 'cloud', provider: 'fireworks', model: 'fireworks-hard' },
+    });
+    expect(mock.lastRequest().model).toBe('fireworks-worker'); // the endpoint's own model, not the refused override
+
+    await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {
+      route: { prefer: 'cloud', provider: 'fireworks', model: 'fireworks-ok' },
+    });
+    expect(mock.lastRequest().model).toBe('fireworks-ok'); // an allowed override still applies
+  });
 });

@@ -4,39 +4,34 @@ import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
 import type { AnthropicLike } from '../src/providers/anthropic.js';
-import { FireworksCatalog, CATALOG_TTL_MS } from '../src/providers/fireworks.js';
 import { createHub, CLOUD_FIREWORKS_NODE_NAME, type Hub } from '../src/server.js';
 
 const KEY_ENV = 'FIREWORKS_API_KEY';
+const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
+const DEEPSEEK = 'accounts/fireworks/models/deepseek-v4p1-flash';
+const GLM = 'accounts/fireworks/models/glm-5p3';
+const KIMI = 'accounts/fireworks/models/kimi-k3';
 
 /**
- * A fake Fireworks: the OpenAI-compatible chat completion it streams, the model catalog it lists,
- * and the `authorization` header each request arrived with. Nothing leaves the machine.
+ * A fake Fireworks: the OpenAI-compatible chat completion it streams, and the `authorization`
+ * header each request arrived with. Nothing leaves the machine.
  */
 interface FakeFireworks {
   app: FastifyInstance;
   url: string;
   chatAuth: (string | undefined)[];
-  catalogAuth: (string | undefined)[];
   chatBodies: { model: string }[];
-  catalogCalls: number;
   status: number;
 }
 
-async function fakeFireworks(opts: { models?: { id: string; supports_chat?: boolean }[] } = {}): Promise<FakeFireworks> {
+async function fakeFireworks(): Promise<FakeFireworks> {
   const app = Fastify();
   const state: FakeFireworks = {
-    app, url: '', chatAuth: [], catalogAuth: [], chatBodies: [], catalogCalls: 0, status: 200,
+    app, url: '', chatAuth: [], chatBodies: [], status: 200,
   };
 
   app.addHook('onRequest', async (req) => {
-    if (req.url.endsWith('/v1/models')) state.catalogAuth.push(req.headers.authorization);
-    else state.chatAuth.push(req.headers.authorization);
-  });
-
-  app.get('/v1/models', async () => {
-    state.catalogCalls++;
-    return { object: 'list', data: opts.models ?? [{ id: 'accounts/fireworks/models/glm-5p3' }] };
+    state.chatAuth.push(req.headers.authorization);
   });
 
   app.post('/v1/chat/completions', async (req, reply) => {
@@ -133,63 +128,6 @@ describe('the fireworks endpoint', () => {
   });
 });
 
-describe('FireworksCatalog', () => {
-  it('lists chat-capable ids, sorted, and caches them for ten minutes', async () => {
-    fake = await fakeFireworks({ models: [
-      { id: 'accounts/fireworks/models/glm-5p3-flash' },
-      { id: 'accounts/fireworks/models/an-embedder', supports_chat: false },
-      { id: 'accounts/fireworks/models/glm-5p3', supports_chat: true },
-    ] });
-    let now = 1_000;
-    const catalog = new FireworksCatalog({ baseUrl: fake.url, now: () => now });
-
-    expect(await catalog.models('fw-secret')).toEqual([
-      'accounts/fireworks/models/glm-5p3',
-      'accounts/fireworks/models/glm-5p3-flash',
-    ]);
-    expect(fake.catalogAuth).toEqual(['Bearer fw-secret']);
-
-    await catalog.models('fw-secret');
-    expect(fake.catalogCalls).toBe(1); // served from the cache
-
-    now += CATALOG_TTL_MS + 1;
-    await catalog.models('fw-secret');
-    expect(fake.catalogCalls).toBe(2);
-  });
-
-  it('answers empty without a key, and on a failed call', async () => {
-    fake = await fakeFireworks();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const catalog = new FireworksCatalog({ baseUrl: fake.url });
-    expect(await catalog.models(undefined)).toEqual([]);
-    expect(fake.catalogCalls).toBe(0);
-
-    await fake.app.close();
-    expect(await catalog.models('fw-secret')).toEqual([]);
-    expect(warn).toHaveBeenCalled();
-    fake = undefined;
-  });
-
-  it('gives up on a server that never answers, empty and no throw, well under a real timeout', async () => {
-    const hang = Fastify();
-    // Never replies — the request just hangs, the way an unreachable or overloaded Fireworks would.
-    hang.get('/v1/models', () => new Promise(() => {}));
-    await hang.listen({ port: 0, host: '127.0.0.1' });
-    const hangUrl = `http://127.0.0.1:${(hang.server.address() as { port: number }).port}`;
-    try {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      // A short injected timeout keeps the test fast; production uses the real (5s) default.
-      const catalog = new FireworksCatalog({ baseUrl: hangUrl, timeoutMs: 50 });
-      const start = Date.now();
-      await expect(catalog.models('fw-secret')).resolves.toEqual([]);
-      expect(Date.now() - start).toBeLessThan(6_000);
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      await hang.close();
-    }
-  });
-});
-
 describe('the synthetic fireworks node', () => {
   it('registers, is never swept, and refuses a daemon under its name', async () => {
     fake = await fakeFireworks();
@@ -199,8 +137,8 @@ describe('the synthetic fireworks node', () => {
     const node = hub.registry.byName(CLOUD_FIREWORKS_NODE_NAME)!;
     expect(node.arch).toBe('cloud');
     expect(node.endpoints.map((e) => [e.tier, e.model, e.provider, e.apiKeyEnv])).toEqual([
-      ['orchestrator', 'accounts/fireworks/models/glm-5p3', 'fireworks', KEY_ENV],
-      ['worker', 'accounts/fireworks/models/glm-5p3-flash', 'fireworks', KEY_ENV],
+      ['orchestrator', FLASH, 'fireworks', KEY_ENV],
+      ['worker', FLASH, 'fireworks', KEY_ENV],
     ]);
     expect(node.jobTypes).toEqual([]);
     expect(node.browser).toBeUndefined();
@@ -226,11 +164,8 @@ describe('the synthetic fireworks node', () => {
 });
 
 describe('GET /api/models', () => {
-  it('lists local endpoints and every configured cloud, and caches the fireworks catalog', async () => {
-    fake = await fakeFireworks({ models: [
-      { id: 'accounts/fireworks/models/glm-5p3-flash' },
-      { id: 'accounts/fireworks/models/glm-5p3' },
-    ] });
+  it('lists local endpoints and the curated fireworks models, cheap enabled and hard disabled', async () => {
+    fake = await fakeFireworks();
     process.env[KEY_ENV] = 'fw-secret';
     hub = createHub({ cloud: { fireworks: { baseUrl: fake.url } } });
     await hub.app.inject({
@@ -247,16 +182,22 @@ describe('GET /api/models', () => {
       local: [{ node: 'spark', tier: 'worker', model: 'qwen-local' }],
       cloud: [{
         provider: 'fireworks',
-        models: ['accounts/fireworks/models/glm-5p3', 'accounts/fireworks/models/glm-5p3-flash'],
-        configured: {
-          orchestrator: 'accounts/fireworks/models/glm-5p3',
-          worker: 'accounts/fireworks/models/glm-5p3-flash',
-        },
+        models: [FLASH, DEEPSEEK],
+        disabled: [GLM, KIMI],
+        configured: { orchestrator: FLASH, worker: FLASH },
       }],
     });
+  });
 
-    await hub.app.inject({ method: 'GET', url: '/api/models' });
-    expect(fake.catalogCalls).toBe(1);
+  it('lists every curated model, none disabled, when the hard tier is switched on', async () => {
+    fake = await fakeFireworks();
+    process.env[KEY_ENV] = 'fw-secret';
+    hub = createHub({ cloud: { fireworks: { baseUrl: fake.url, hardModels: true } } });
+
+    const res = await hub.app.inject({ method: 'GET', url: '/api/models' });
+    const row = res.json().cloud.find((c: { provider: string }) => c.provider === 'fireworks');
+    expect(row.models).toEqual([FLASH, DEEPSEEK, GLM, KIMI]);
+    expect(row.disabled).toEqual([]);
   });
 
   it('reports the configured anthropic ids and no cloud row at all without a cloud tier', async () => {

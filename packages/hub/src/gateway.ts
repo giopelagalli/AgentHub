@@ -294,7 +294,7 @@ export class ModelGateway {
       if (modelOverrideApplies(picked.endpoint, route)) {
         // A policy saved while the hard tier was on must not keep billing after it is switched off.
         if (this.modelAllowed?.(picked.endpoint, route!.model!) === false) {
-          if (!this.refusedModelsLogged.has(route!.model!)) {
+          if (route!.model !== picked.endpoint.model && !this.refusedModelsLogged.has(route!.model!)) {
             this.refusedModelsLogged.add(route!.model!);
             console.warn(`[gateway] ${route!.model!} is switched off; using ${picked.endpoint.model}`);
           }

@@ -13,17 +13,22 @@ hubCandidates:
   - http://strix.<tailnet>.ts.net:4000
 advertiseHost: spark.<tailnet>.ts.net
 heartbeatMs: 5000
+# `priority: 10` = vLLM request priority (lower is served sooner). The Spark also answers the
+# owner's Telegram assistant, which sends none (0, the front of the line); agents yield to it.
+# Needs the server started with `--scheduling-policy priority`, or non-zero values are a 400.
 serving:
   - tier: worker
     model: nvidia/Qwen3.6-35B-A3B-NVFP4
     port: 8001
     maxStreams: 48
     cmd: ["./launch-worker.sh"]
+    priority: 10
   - tier: orchestrator
     model: RadixArk/Qwen3.8-Flash-Next-NVFP4
     port: 8002
     maxStreams: 4
     cmd: ["./launch-orchestrator.sh"]
+    priority: 10
 jobTypes: ["shell-task", "video-gen"]
 workspaceRoot: /home/<you>/agenthub-workspace
 claimIntervalMs: 1000

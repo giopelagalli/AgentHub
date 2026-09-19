@@ -327,7 +327,12 @@ export class ModelGateway {
         const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({ model, messages: toOpenAiMessages(messages), stream: true, ...(tools ? { tools: toOpenAiTools(tools) } : {}) }),
+          body: JSON.stringify({
+            model, messages: toOpenAiMessages(messages), stream: true,
+            ...(tools ? { tools: toOpenAiTools(tools) } : {}),
+            // vLLM priority scheduling: agents yield to the owner's assistant on a shared server.
+            ...(picked.endpoint.priority != null ? { priority: picked.endpoint.priority } : {}),
+          }),
           signal,
         });
         if (!res.ok) {

@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
-import { execSync } from 'node:child_process';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { loadConfig } from '../src/config.js';
 import { Daemon } from '../src/daemon.js';
@@ -66,6 +66,28 @@ describe('node daemon', () => {
     expect(() => loadConfig(bad)).toThrow(/daemon config/);
   });
 
+  it('loadConfig accepts a serving entry without cmd and rejects an empty cmd list', () => {
+    const dir = tmpDir();
+    const okPath = join(dir, 'ok.yaml');
+    writeFileSync(okPath, [
+      'node:', '  name: attach-node', '  arch: arm64',
+      'hub: http://127.0.0.1:4000',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', '    port: 8888', '    maxStreams: 2',
+    ].join('\n'));
+    const cfg = loadConfig(okPath);
+    expect(cfg.serving?.[0].cmd).toBeUndefined();
+
+    const badPath = join(dir, 'bad.yaml');
+    writeFileSync(badPath, [
+      'node:', '  name: attach-node', '  arch: arm64',
+      'hub: http://127.0.0.1:4000',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', '    port: 8888', '    maxStreams: 2', '    cmd: []',
+    ].join('\n'));
+    expect(() => loadConfig(badPath)).toThrow(/cmd must be a non-empty list/);
+  });
+
   it('spawns serving processes, registers with hub, and heartbeats', async () => {
     hub = createHub({ staleMs: 60000 });
     await hub.app.listen({ port: 0, host: '127.0.0.1' });
@@ -100,6 +122,65 @@ describe('node daemon', () => {
     expect(models.status).toBe(200);
   }, 30000);
 
+  it('attaches to a server it did not start: health-checks, registers, and leaves it running on stop', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+    const servePort = await getEphemeralPort();
+
+    let mock: ChildProcess | undefined;
+    try {
+      // node + TSX_CLI (not npx) so the spawned pid is the actual server process, not an npx wrapper
+      // with an unreaped grandchild.
+      mock = spawn('node', [TSX_CLI, MOCK_SERVE, String(servePort)], { stdio: 'inherit' });
+      const deadline = Date.now() + 10000;
+      for (;;) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${servePort}/v1/models`);
+          if (res.ok) break;
+        } catch { /* not up yet */ }
+        if (Date.now() > deadline) throw new Error('mock server did not come up');
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const dir = tmpDir();
+      const cfgPath = join(dir, 'daemon.yaml');
+      writeFileSync(cfgPath, [
+        'node:', '  name: attach-node', '  arch: arm64',
+        `hub: http://127.0.0.1:${hubPort}`,
+        'heartbeatMs: 200',
+        'serving:',
+        '  - tier: worker', '    model: mock-model', `    port: ${servePort}`, '    maxStreams: 4',
+      ].join('\n'));
+
+      daemon = new Daemon(loadConfig(cfgPath));
+      await daemon.start();
+
+      const node = hub.registry.byName('attach-node');
+      expect(node?.status).toBe('online');
+      expect(node?.endpoints[0]).toMatchObject({ tier: 'worker', url: `http://127.0.0.1:${servePort}`, maxStreams: 4 });
+
+      await daemon.stop();
+
+      // stopping the daemon must not have touched the server we didn't spawn
+      const models = await fetch(`http://127.0.0.1:${servePort}/v1/models`);
+      expect(models.status).toBe(200);
+    } finally {
+      // tsx's CLI re-execs into a child node process, so `mock.pid` alone won't reap the actual
+      // server — kill whatever is really listening on the port, plus the CLI wrapper itself.
+      try { process.kill(pidListeningOnPort(servePort), 'SIGKILL'); } catch { /* already gone */ }
+      mock?.kill('SIGKILL');
+    }
+  }, 30000);
+
+  it('an attached entry that is not answering fails startAll with the attached message', async () => {
+    const port = await getEphemeralPort();
+    const supervisor = new Supervisor([
+      { tier: 'worker', model: 'mock-model', port, maxStreams: 4 },
+    ]);
+    await expect(supervisor.startAll(1000)).rejects.toThrow(/attached\) failed health check/);
+  }, 10000);
+
   it('startAll kills already-healthy children when a sibling fails its health check', async () => {
     const okPort = await getEphemeralPort();
     const stuckPort = await getEphemeralPort();
@@ -117,6 +198,32 @@ describe('node daemon', () => {
     while (Date.now() < deadline) {
       try {
         await fetch(`http://127.0.0.1:${okPort}/v1/models`);
+      } catch {
+        alive = false;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    expect(alive).toBe(false);
+  }, 15000);
+
+  it('startAll tears down a spawned sibling when an attached entry fails its health check', async () => {
+    const spawnedPort = await getEphemeralPort();
+    const attachedPort = await getEphemeralPort();
+
+    const supervisor = new Supervisor([
+      { tier: 'worker', model: 'mock-model', port: spawnedPort, maxStreams: 4, cmd: ['npx', 'tsx', MOCK_SERVE, String(spawnedPort)] },
+      { tier: 'worker', model: 'mock-model', port: attachedPort, maxStreams: 4 },
+    ]);
+
+    await expect(supervisor.startAll(1500)).rejects.toThrow(/attached\) failed health check/);
+
+    // the spawned sibling must have been torn down too, not left orphaned
+    const deadline = Date.now() + 5000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        await fetch(`http://127.0.0.1:${spawnedPort}/v1/models`);
       } catch {
         alive = false;
         break;

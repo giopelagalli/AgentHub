@@ -1,10 +1,22 @@
 # DGX Spark node playbook (Phase 1)
 
-The Spark serves two vLLM instances (orchestrator + worker tiers) managed by
-the node daemon. Stock vLLM does not support GB10 (sm_121) — use NVIDIA's NGC
-container.
+The Spark runs one vLLM that the node daemon attaches to — see "Current
+layout" right below. The two-instance layout further down (orchestrator +
+worker tiers, each with its own vLLM) was the original plan, kept here for
+reference; it does not fit in memory. Stock vLLM does not support GB10
+(sm_121) — use NVIDIA's NGC container.
 
-## Worker tier — Qwen3.6-35B-A3B NVFP4 (official recipe)
+## Current layout (2026-09): one vLLM, attach mode
+
+The box actually runs a single Qwen3.8-Flash-Next vLLM on `:8888`
+(`sparkmodel.service`, the MiaAI-Lab single-DGX-Spark recipe), shared with the
+owner's Telegram assistant. Both AgentHub tiers attach to that one server
+instead of launching their own, each with `priority: 10` so agent traffic
+yields to the assistant. `configs/spark.yaml` is the live config. The
+two-instance layout below (8001/8002) was the original plan and does not fit
+in memory — see `docs/spark-setup.md`.
+
+## Worker tier — Qwen3.6-35B-A3B NVFP4 (official recipe) (original two-instance plan, unused)
 
     docker run --gpus all --ipc=host -p 8001:8000 \
       nvcr.io/nvidia/vllm:26.05-py3 \
@@ -13,7 +25,7 @@ container.
         --enable-prefix-caching --async-scheduling --max-num-seqs 48 \
         --reasoning-parser qwen3 --tool-call-parser qwen3_xml
 
-## Orchestrator tier — Qwen3.8-Flash-Next NVFP4 (single-Spark recipe)
+## Orchestrator tier — Qwen3.8-Flash-Next NVFP4 (single-Spark recipe) (original two-instance plan, unused)
 
 Follow https://github.com/blazux/qwen3.8-Flash-DGX with the
 RadixArk/Qwen3.8-Flash-Next-NVFP4 checkpoint (n-gram table mmap'd from NVMe;
@@ -25,32 +37,42 @@ daemon config makes this a one-line change.
 
 ## Daemon config for the Spark (configs/spark.yaml on that machine)
 
-    node: { name: spark, arch: arm64 }
-    hub: http://<control-node-tailnet-name>:4000
-    advertiseHost: <spark-tailnet-name>
+    # DGX Spark: the hub's own box. Both tiers attach to the vLLM that sparkmodel.service already
+    # runs on :8888 (one model, one server — there is no memory for a second; see docs/spark-setup.md
+    # and deploy/spark/README.md). No `cmd`: the daemon health-checks and registers, never starts or
+    # stops it.
+    node:
+      name: spark
+      arch: arm64
+    # The hub runs on this machine, and the vLLM is bound to localhost — so no advertiseHost: the
+    # endpoint registers as 127.0.0.1:8888, which is the address the hub can actually dial.
+    hub: http://127.0.0.1:4000
+    heartbeatMs: 5000
+    # `priority: 10` = vLLM request priority (lower is served sooner). The Spark also answers the
+    # owner's Telegram assistant, which sends none (0, the front of the line); agents yield to it.
+    # Needs the server started with `--scheduling-policy priority`, or non-zero values are a 400.
+    # maxStreams is small on purpose: ~1M tokens of KV are shared with the assistant.
     serving:
-      - tier: worker
-        model: nvidia/Qwen3.6-35B-A3B-NVFP4
-        port: 8001
-        maxStreams: 48
-        cmd: ["./launch-worker.sh"]
       - tier: orchestrator
-        model: RadixArk/Qwen3.8-Flash-Next-NVFP4
-        port: 8002
-        maxStreams: 4
-        cmd: ["./launch-orchestrator.sh"]
-    jobTypes: ["shell-task", "video-gen"]
-    workspaceRoot: /home/<you>/agenthub-workspace
+        model: qwen3.8-flash-next
+        port: 8888
+        maxStreams: 2
+        priority: 10
+      - tier: worker
+        model: qwen3.8-flash-next
+        port: 8888
+        maxStreams: 3
+        priority: 10
+    # No video-gen: a video model does not fit next to Flash-Next (docs/spark-setup.md §4).
+    jobTypes: ["shell-task"]
+    workspaceRoot: /home/giospark1/agenthub-workspace
+    claimIntervalMs: 1000
 
-launch-*.sh wrap the docker commands above with `exec` so SIGTERM reaches
-docker. Memory split (0.5 worker / remainder orchestrator) is a starting
-point — tune on the real box.
-
-`jobTypes` includes `video-gen` because the Spark is the only node with
-ComfyUI + MiniMax-H3 (spec §11) — video jobs only ever land here. `advertiseHost`
-must be the Spark's own tailnet name (see ../tailscale.md), since the hub
-tells the gateway to route agent traffic straight to it — not the control
-node's name, and not `127.0.0.1`.
+There are no launch scripts in attach mode — the daemon only health-checks
+and registers `:8888`. There's no `advertiseHost`: the hub runs on this box
+and the vLLM is bound to localhost, so the endpoint registers as
+`127.0.0.1:8888`, the address the hub can dial. `video-gen` is off on this
+node — a video model doesn't fit next to Flash-Next (`docs/spark-setup.md`).
 
 ## Video generation (ComfyUI + MiniMax-H3)
 

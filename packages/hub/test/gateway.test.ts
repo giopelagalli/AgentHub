@@ -338,3 +338,35 @@ describe('toOpenAiMessages', () => {
     expect(toOpenAiMessages(messages)).toEqual(messages);
   });
 });
+
+describe('request priority', () => {
+  it('sends the endpoint priority with every chat request, and nothing when unset', async () => {
+    const bodies: { priority?: number }[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      bodies.push(req.body as { priority?: number });
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        { tier: 'worker', url, model: 'mock-model', maxStreams: 2, priority: 10 },
+        { tier: 'orchestrator', url, model: 'mock-model', maxStreams: 2 },
+      ] });
+      const gateway = new ModelGateway(registry);
+      await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      await gateway.chat('orchestrator', [{ role: 'user', content: 'hi' }], {});
+      expect(bodies[0].priority).toBe(10);
+      expect('priority' in bodies[1]).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+});

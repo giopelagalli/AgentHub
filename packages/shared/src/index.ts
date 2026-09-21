@@ -25,6 +25,14 @@ export interface ServingEndpoint {
    * The *name* travels, never the secret: only the hub process reads the value.
    */
   apiKeyEnv?: string;
+  /**
+   * vLLM request priority sent with every call to this endpoint (lower is served sooner; 0 is the
+   * default and the front of the line). Set it on a server shared with an interactive user — the
+   * Spark also answers the owner's Telegram assistant, which sends no priority and so goes first —
+   * and only on a server started with `--scheduling-policy priority`: any non-zero value is a 400
+   * otherwise. Absent means the field is not sent at all.
+   */
+  priority?: number;
 }
 
 /**

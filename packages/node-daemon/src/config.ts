@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import type { JobType, Tier } from '@agenthub/shared';
 
-export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; name?: string; }
+export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; name?: string; priority?: number; }
 /** Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one. */
 export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
 /**

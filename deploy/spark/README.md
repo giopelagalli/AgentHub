@@ -16,6 +16,22 @@ yields to the assistant. `configs/spark.yaml` is the live config. The
 two-instance layout below (8001/8002) was the original plan and does not fit
 in memory — see `docs/spark-setup.md`.
 
+## Install on the box (hub + daemon under systemd)
+
+Clone to `~/AgentHub`, `npm install && npm run build:ui`, write `configs/hub.env`
+(`PORT`, `HUB_HOST=0.0.0.0`, `DATA_ROOT`, `HUB_PASSWORD`, `HUB_SESSION_SECRET`,
+`DAEMON_TOKEN`, `FIREWORKS_API_KEY`), run both by hand once, then:
+
+    mkdir -p ~/.config/systemd/user
+    cp deploy/spark/agenthub-hub.service deploy/spark/agenthub-node.service ~/.config/systemd/user/
+    sudo loginctl enable-linger $USER
+    systemctl --user daemon-reload
+    systemctl --user enable --now agenthub-hub agenthub-node
+    systemctl --user status agenthub-hub agenthub-node --no-pager
+
+The daemon exits if vLLM is not answering within 15 s and systemd restarts it
+every 15 s, so a reboot (vLLM takes ~10 min) sorts itself out.
+
 ## Worker tier — Qwen3.6-35B-A3B NVFP4 (official recipe) (original two-instance plan, unused)
 
     docker run --gpus all --ipc=host -p 8001:8000 \

@@ -1,0 +1,17 @@
+# ~/.config/systemd/user/agenthub-node.service — the node daemon, attached to the vLLM on :8888.
+# Reads DAEMON_TOKEN from the same hub.env. sparkmodel is a system unit, so a user unit cannot
+# order after it; the daemon just retries its health check until vLLM answers (~10 min after boot).
+[Unit]
+Description=AgentHub node daemon (spark)
+After=agenthub-hub.service
+Wants=agenthub-hub.service
+
+[Service]
+WorkingDirectory=%h/AgentHub
+EnvironmentFile=%h/AgentHub/configs/hub.env
+ExecStart=/usr/bin/env npx tsx packages/node-daemon/src/main.ts configs/spark.yaml
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,16 @@
+# ~/.config/systemd/user/agenthub-hub.service  (user unit; `loginctl enable-linger giospark1` once)
+# Needs node/npx on the system PATH (NodeSource apt package, or symlink them into /usr/local/bin).
+[Unit]
+Description=AgentHub hub
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/AgentHub
+EnvironmentFile=%h/AgentHub/configs/hub.env
+ExecStart=/usr/bin/env npx tsx packages/hub/src/main.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

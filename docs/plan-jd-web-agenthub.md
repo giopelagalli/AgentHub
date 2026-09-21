@@ -9,15 +9,13 @@ on the Spark as the execution engine, JD drives it (start a project, run a turn,
 briefings, and reports progress in the same voice he reports anything else. **Door:** a website at
 `hub.rosenroot.com`, behind the DigitalOcean proxy AgentHub already designed, where you log in,
 see projects, chat with JD, and talk to him hands-free. Telegram stays exactly as it is; it becomes
-one connector among several (web now, Discord and email after). Claude, signed in on the Spark,
-becomes the orchestrator brain for project work; the local Qwen does the volume.
+one connector among several (web now, Discord and email after). The local Qwen does all of it for now; Claude (the Code subscription, not the API) may join as the orchestrator brain later.
 
 ```
  phone ── Telegram ──┐                     ┌── vLLM :8888  (Qwen, priority 0 for JD, 10 for agents)
  browser ── https ── droplet (Caddy) ──tailnet──▶ Spark ──┤── voice :8890  (whisper / kokoro / embeddings)
    hub.rosenroot.com   basic auth + hub login            │── JD core :8891  (connectors: telegram, web, …)
                                                           │── AgentHub hub :4000 + node daemon
-                                                          └── Claude (Anthropic SDK login) for orchestrator turns
 ```
 
 ## Decisions (confirm the first two, the rest are mine)
@@ -50,10 +48,10 @@ becomes the orchestrator brain for project work; the local Qwen does the volume.
   URL). Both tiers → `http://localhost:8888`, model `qwen3.8-flash-next`, `priority: 10`,
   `maxStreams` 3 and 2. Merge `feat/vllm-request-priority`. `jobTypes: ["shell-task"]`, no
   `video-gen`.
-- **Claude on the Spark.** `ant auth login` as `giospark1`; hub env `CLOUD_ANTHROPIC=1`. Default
-  project policy: orchestrator on Claude, workers local (`prefer: local` for the worker tier).
-  That's the batching story: one Claude turn fans out to N local workers on Qwen, at priority 10,
-  behind JD.
+- **Claude on the Spark: deferred.** Both tiers run on the local Qwen for now. When Claude joins,
+  it is the Claude Code subscription (the `claude` CLI signed in on the Spark), not the Anthropic
+  API — so not the hub's SDK provider or `CLOUD_ANTHROPIC=1`; that integration is its own piece of
+  work, later. Cloud fallback in the meantime is Fireworks `glm-5p3-flash`.
 - **Acceptance:** `curl localhost:4000/api/health` → ok; `/api/nodes` shows `spark` online with
   two endpoints; a test project's first turn completes on Claude + Qwen; JD keeps answering in
   under 5 s while a turn is running.
@@ -180,9 +178,9 @@ systemd per the playbook. Power: it's a desktop GPU running around the clock; bu
 
 | You | Me |
 |---|---|
-| Confirm decisions 1 and 2 | Attach mode + priority merge in AgentHub |
+| Confirm decisions 1 and 2 | Attach mode + priority merge in AgentHub (done 2026-09-21) |
 | Node + AgentHub install on the Spark, env, systemd | JD ↔ AgentHub tools, context, `/projects`, reporting |
 | The PC: Linux, ROCm, Tailscale, llama.cpp worker, ComfyUI, one clip by hand | Image/video request tools in JD, delivery to Telegram and web |
-| `ant auth login` on the Spark | Connector layer, JD web API, hub JD page |
+| — | Connector layer, JD web API, hub JD page |
 | Droplet, Tailscale, Caddy, DNS for `hub.rosenroot.com` | Call mode |
 | Try each phase for a day before the next | Discord, email, the self-improvement loop |

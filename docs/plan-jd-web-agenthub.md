@@ -53,7 +53,7 @@ one connector among several (web now, Discord and email after). The local Qwen d
   API — so not the hub's SDK provider or `CLOUD_ANTHROPIC=1`; that integration is its own piece of
   work, later. Cloud fallback in the meantime is Fireworks `glm-5p3-flash`.
 - **Acceptance:** `curl localhost:4000/api/health` → ok; `/api/nodes` shows `spark` online with
-  two endpoints; a test project's first turn completes on Claude + Qwen; JD keeps answering in
+  two endpoints; a test project's first turn completes on Qwen alone; JD keeps answering in
   under 5 s while a turn is running.
 
 ### Phase 1 — JD drives AgentHub (~1 day, me)

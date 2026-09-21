@@ -2,16 +2,10 @@
 node:
   name: amd
   arch: x64
-# The tailnet alias for whichever machine is currently the control node — not a
-# machine name, so a /controlnode switch needs no config change here
-# (deploy/do/README.md §6, deploy/controlnode.md).
-hub: http://hub.internal:4000
-# Backstop for the window before the alias has moved: probed in order after
-# three consecutive failed heartbeats.
-hubCandidates:
-  - http://macmini.<tailnet>.ts.net:4000
-  - http://strix.<tailnet>.ts.net:4000
-advertiseHost: amd.<tailnet>.ts.net
+# The hub lives on the Spark (docs/plan-jd-web-agenthub.md, decision 1).
+hub: http://spark-f9a9:4000
+# This box's own tailnet name: the hub routes agent traffic straight to it.
+advertiseHost: <amd-tailnet-name>
 heartbeatMs: 5000
 serving:
   - tier: worker
@@ -19,6 +13,7 @@ serving:
     model: unsloth/Qwen3.6-35B-A3B-GGUF
     port: 8001
     maxStreams: 4
+    # deploy/amd/launch-worker.sh, copied next to this file
     cmd: ["./launch-worker.sh"]
 jobTypes: ["shell-task"]
 workspaceRoot: /home/<you>/agenthub-workspace

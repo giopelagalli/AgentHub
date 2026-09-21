@@ -27,7 +27,7 @@ until that's fixed upstream. Do not add `video-gen` to `jobTypes` here.
 in the tailnet host and workspace path:
 
     node: { name: amd, arch: x64 }
-    hub: http://<control-node-tailnet-name>:4000
+    hub: http://spark-f9a9:4000
     advertiseHost: <amd-tailnet-name>
     serving:
       - tier: worker
@@ -38,8 +38,10 @@ in the tailnet host and workspace path:
     jobTypes: ["shell-task"]
     workspaceRoot: /home/<you>/agenthub-workspace
 
-`launch-worker.sh` wraps the `llama-server` command above with `exec` so
-`SIGTERM` reaches the server when the daemon stops it.
+`deploy/amd/launch-worker.sh` (in the repo; copy it next to the config and
+`chmod +x`) wraps the `llama-server` command above with `exec` so `SIGTERM`
+reaches the server when the daemon stops it. Set `LLAMA_SERVER` if the binary
+is not on `PATH`.
 
 ## systemd unit (sketch)
 

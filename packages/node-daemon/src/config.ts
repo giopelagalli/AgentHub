@@ -2,7 +2,16 @@ import { readFileSync } from 'node:fs';
 import { load } from 'js-yaml';
 import type { JobType, Tier } from '@agenthub/shared';
 
-export interface ServingConfig { tier: Tier; model: string; port: number; maxStreams: number; cmd: string[]; name?: string; priority?: number; }
+export interface ServingConfig {
+  tier: Tier;
+  model: string;
+  port: number;
+  maxStreams: number;
+  /** Absent = attach mode — the server is started elsewhere; the daemon only health-checks `port` and registers it. */
+  cmd?: string[];
+  name?: string;
+  priority?: number;
+}
 /** Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one. */
 export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
 /**
@@ -62,8 +71,10 @@ export function loadConfig(path: string): DaemonConfig {
   if (!Array.isArray(serving)) throw new Error('daemon config: serving must be a list');
   const seenNames = new Set<string>();
   for (const s of serving) {
-    if (!s.tier || !s.model || !s.port || !s.maxStreams || !Array.isArray(s.cmd) || s.cmd.length === 0)
-      throw new Error('daemon config: serving entry missing tier/model/port/maxStreams/cmd');
+    if (!s.tier || !s.model || !s.port || !s.maxStreams)
+      throw new Error('daemon config: serving entry missing tier/model/port/maxStreams');
+    if (s.cmd !== undefined && (!Array.isArray(s.cmd) || s.cmd.length === 0))
+      throw new Error('daemon config: serving entry cmd must be a non-empty list');
     const name = s.name ?? `${s.tier}:${s.port}`;
     if (seenNames.has(name)) throw new Error(`daemon config: duplicate serving entry name ${name}`);
     seenNames.add(name);

@@ -20,7 +20,7 @@ export function entryName(s: ServingConfig): string {
   return s.name ?? `${s.tier}:${s.port}`;
 }
 
-interface Running { cfg: ServingConfig; child: ChildProcess; stopping: boolean; }
+interface Running { cfg: ServingConfig; child: ChildProcess | undefined; stopping: boolean; }
 
 export class Supervisor {
   private running = new Map<string, Running>();
@@ -73,6 +73,14 @@ export class Supervisor {
     const spawnErrors: Error[] = [];
     const started: Running[] = [];
     for (const s of entries) {
+      if (!s.cmd) {
+        // Attach mode: the server is started elsewhere. Nothing to spawn — just track it so the
+        // health check below and stop/terminate see a running entry.
+        const rec: Running = { cfg: s, child: undefined, stopping: false };
+        this.running.set(entryName(s), rec);
+        started.push(rec);
+        continue;
+      }
       const [cmd, ...args] = s.cmd;
       // detached: true makes the child a process-group leader (setsid), so its pid doubles as its
       // group id — matches job-runner/shell-task's discipline, letting stopEntries below kill a whole
@@ -93,9 +101,13 @@ export class Supervisor {
         if (spawnErrors.length) throw spawnErrors[0];
         try {
           const res = await fetch(`http://127.0.0.1:${cfg.port}/v1/models`);
-          if (res.ok && child.exitCode === null && child.signalCode === null) return;
+          if (res.ok && (!child || (child.exitCode === null && child.signalCode === null))) return;
         } catch { /* not up yet */ }
-        if (Date.now() > deadline) throw new Error(`serving process on port ${cfg.port} failed health check`);
+        if (Date.now() > deadline) {
+          throw new Error(child
+            ? `serving process on port ${cfg.port} failed health check`
+            : `serving on port ${cfg.port} (attached) failed health check`);
+        }
         await sleep(250);
       }
     }));
@@ -105,6 +117,7 @@ export class Supervisor {
     rec.stopping = true;
     this.running.delete(name);
     const { child } = rec;
+    if (!child) return Promise.resolve(); // attached servers are not ours to stop
     return new Promise<void>((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) return resolve();
       // A SIGTERM'd child reports exitCode === null (its exit is signal-driven, not code-driven), so

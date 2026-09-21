@@ -1,34 +1,30 @@
-# DGX Spark: worker + orchestrator tiers (see deploy/spark/README.md).
+# DGX Spark: the hub's own box. Both tiers attach to the vLLM that sparkmodel.service already
+# runs on :8888 (one model, one server — there is no memory for a second; see docs/spark-setup.md
+# and deploy/spark/README.md). No `cmd`: the daemon health-checks and registers, never starts or
+# stops it.
 node:
   name: spark
   arch: arm64
-# The tailnet alias for whichever machine is currently the control node — not a
-# machine name, so a /controlnode switch needs no config change here
-# (deploy/do/README.md §6, deploy/controlnode.md).
-hub: http://hub.internal:4000
-# Backstop for the window before the alias has moved: probed in order after
-# three consecutive failed heartbeats.
-hubCandidates:
-  - http://macmini.<tailnet>.ts.net:4000
-  - http://strix.<tailnet>.ts.net:4000
-advertiseHost: spark.<tailnet>.ts.net
+# The hub runs on this machine, and the vLLM is bound to localhost — so no advertiseHost: the
+# endpoint registers as 127.0.0.1:8888, which is the address the hub can actually dial.
+hub: http://127.0.0.1:4000
 heartbeatMs: 5000
 # `priority: 10` = vLLM request priority (lower is served sooner). The Spark also answers the
 # owner's Telegram assistant, which sends none (0, the front of the line); agents yield to it.
 # Needs the server started with `--scheduling-policy priority`, or non-zero values are a 400.
+# maxStreams is small on purpose: ~1M tokens of KV are shared with the assistant.
 serving:
-  - tier: worker
-    model: nvidia/Qwen3.6-35B-A3B-NVFP4
-    port: 8001
-    maxStreams: 48
-    cmd: ["./launch-worker.sh"]
-    priority: 10
   - tier: orchestrator
-    model: RadixArk/Qwen3.8-Flash-Next-NVFP4
-    port: 8002
-    maxStreams: 4
-    cmd: ["./launch-orchestrator.sh"]
+    model: qwen3.8-flash-next
+    port: 8888
+    maxStreams: 2
     priority: 10
-jobTypes: ["shell-task", "video-gen"]
-workspaceRoot: /home/<you>/agenthub-workspace
+  - tier: worker
+    model: qwen3.8-flash-next
+    port: 8888
+    maxStreams: 3
+    priority: 10
+# No video-gen: a video model does not fit next to Flash-Next (docs/spark-setup.md §4).
+jobTypes: ["shell-task"]
+workspaceRoot: /home/giospark1/agenthub-workspace
 claimIntervalMs: 1000

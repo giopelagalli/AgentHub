@@ -73,6 +73,12 @@ describe('projectsSignature', () => {
     expect(projectsSignature(before)).not.toBe(projectsSignature(after));
   });
 
+  it('changes when the hub first answers with no projects at all', () => {
+    const before = uiState({ hub: null, project: null });
+    const after = uiState({ hub: hubState([]), project: null });
+    expect(projectsSignature(before)).not.toBe(projectsSignature(after));
+  });
+
   it('is stable when nothing relevant changed', () => {
     const state = uiState({ hub: hubState([project('a', { updatedAt: 1 })]), project: 'a' });
     expect(projectsSignature(state)).toBe(projectsSignature(state));

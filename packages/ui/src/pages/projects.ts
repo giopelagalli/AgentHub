@@ -44,6 +44,9 @@ export function projectsSignature(state: UiState): string {
   const current = projects.find((p) => p.slug === state.project);
   const held = turnsOf(state, state.project);
   return [
+    // Whether the hub has answered at all: with no projects the rest of this key is identical before
+    // and after the first state frame, and the page would stay on 'Waiting for the hub…' forever.
+    state.hub ? 'hub' : '',
     state.project,
     current?.updatedAt ?? '',
     [...state.projectBusy].sort().join(','),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { createMockOpenAI } from '@agenthub/mocks';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { createServer } from 'node:net';
@@ -366,6 +366,48 @@ describe('request priority', () => {
       expect(bodies[0].priority).toBe(10);
       expect('priority' in bodies[1]).toBe(false);
     } finally {
+      await app.close();
+    }
+  });
+
+  it('drops the priority for an endpoint that rejects it, once, and keeps serving', async () => {
+    const bodies: { priority?: number }[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      const body = req.body as { priority?: number };
+      bodies.push(body);
+      if ('priority' in body) {
+        reply.code(400).send({ error: { message: 'Priority scheduling is not enabled.' } });
+        return reply;
+      }
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        { tier: 'worker', url, model: 'mock-model', maxStreams: 2, priority: 10 },
+      ] });
+      const gateway = new ModelGateway(registry);
+      const first = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      const second = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(first.content).toBe('ok');
+      expect(second.content).toBe('ok');
+      expect(bodies).toHaveLength(3);
+      expect(bodies[0].priority).toBe(10);
+      expect('priority' in bodies[1]).toBe(false);
+      expect('priority' in bodies[2]).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatch(/rejects request priority/);
+    } finally {
+      warn.mockRestore();
       await app.close();
     }
   });

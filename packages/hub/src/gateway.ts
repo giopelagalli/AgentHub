@@ -134,6 +134,8 @@ export class ModelGateway {
   // `unhealthyUntil` this has no expiry: the endpoint's serving process is actually stopped, and
   // only the manager that parked it knows when it is back.
   private parked = new Set<string>();
+  /** Endpoints whose vLLM rejected `priority` (not started with `--scheduling-policy priority`); cleared on hub restart. */
+  private priorityRefused = new Set<string>();
   /** `apiKeyEnv` names already reported missing, so an unset key costs one log line, not one per pick. */
   private missingKeysLogged = new Set<string>();
   private now: () => number;
@@ -324,22 +326,35 @@ export class ModelGateway {
         // only difference is the bearer a remote one needs.
         const token = this.bearer(picked.endpoint);
         if (token === null) { nonRetryable = true; throw new Error(`missing ${picked.endpoint.apiKeyEnv} for ${picked.endpoint.url}`); }
-        const res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-          body: JSON.stringify({
-            model, messages: toOpenAiMessages(messages), stream: true,
-            ...(tools ? { tools: toOpenAiTools(tools) } : {}),
-            // vLLM priority scheduling: agents yield to the owner's assistant on a shared server.
-            ...(picked.endpoint.priority != null ? { priority: picked.endpoint.priority } : {}),
-          }),
-          signal,
-        });
-        if (!res.ok) {
-          const detail = await readErrorBody(res);
-          // 429 is the cloud saying "later", not "never": retryable like the Anthropic path's.
-          if (res.status < 500 && res.status !== 429) nonRetryable = true;
-          throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}${detail ? `: ${detail}` : ''}`);
+        // vLLM priority scheduling: agents yield to the owner's assistant on a shared server. An
+        // endpoint that already refused it (not started with --scheduling-policy priority) is
+        // asked plainly from here on, rather than failing every turn until the hub restarts.
+        let sendPriority = picked.endpoint.priority != null && !this.priorityRefused.has(key);
+        let res: Response;
+        for (;;) {
+          res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+            body: JSON.stringify({
+              model, messages: toOpenAiMessages(messages), stream: true,
+              ...(tools ? { tools: toOpenAiTools(tools) } : {}),
+              ...(sendPriority ? { priority: picked.endpoint.priority } : {}),
+            }),
+            signal,
+          });
+          if (!res.ok) {
+            const detail = await readErrorBody(res);
+            if (res.status === 400 && sendPriority && /priority scheduling is not enabled/i.test(detail)) {
+              this.priorityRefused.add(key);
+              console.warn(`[gateway] ${picked.endpoint.url} rejects request priority (server not started with --scheduling-policy priority); sending without it`);
+              sendPriority = false;
+              continue;
+            }
+            // 429 is the cloud saying "later", not "never": retryable like the Anthropic path's.
+            if (res.status < 500 && res.status !== 429) nonRetryable = true;
+            throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}${detail ? `: ${detail}` : ''}`);
+          }
+          break;
         }
         if (!res.body) { nonRetryable = true; throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`); }
         let full = '';

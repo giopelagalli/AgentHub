@@ -27,7 +27,7 @@ no memory for a second model. Anything new that needs an LLM uses `:8888` and se
 | Context | 262,144 native, fp8 KV cache, ~1M tokens of KV total |
 | Thinking | switchable per request via `chat_template_kwargs: {enable_thinking: true/false}`; JD keeps it **on** by default |
 | Service | `sparkmodel.service` (systemd, `Type=oneshot`, autostarts on boot, ~10 min to `/health`) |
-| Priority scheduling | `EXTRA_VLLM_ARGS="--scheduling-policy priority"` in the recipe's `.env` (added 2026-09-21; verify with `docker inspect vllm-fn-tp1 --format '{{join .Args " "}}' \| grep scheduling`) |
+| Priority scheduling | **Not live as of 2026-09-22**: the recipe `.env` never got `EXTRA_VLLM_ARGS="--scheduling-policy priority"` and the container has no such arg. Until it does (needs `sudo systemctl restart sparkmodel`, ~10 min), the hub sees vLLM reject `priority`, drops the field for that endpoint with one log line, and JD does not get the front of the line. Verify with `sudo docker inspect vllm-fn-tp1 --format '{{join .Args " "}}' \| grep -o 'scheduling-policy [a-z]*'` |
 
 Memory, the thing everything else bends around (121 GiB unified, shared CPU+GPU):
 

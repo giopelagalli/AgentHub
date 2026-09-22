@@ -11,7 +11,7 @@ makes it a place you *work in* rather than a thing you *watch*: every agent is i
 configurable on its own; the app being built is visible live (a web preview or a terminal) and its
 code is browsable like a book with a guide beside it; nodes join with one command and can be
 removed with one click; the shared browser becomes a pool; images and video render on the PC; JD
-can start and drive projects and is reachable from the website; the harness an agent runs in is a
+can start and drive projects and is reachable from the website, and every member gets a JD of their own; the harness an agent runs in is a
 choice (built-in, Claude Code, pi); and, last because it changes everything underneath, other
 people get accounts, their own projects, their own nodes, and the ability to borrow yours.
 
@@ -28,9 +28,14 @@ people get accounts, their own projects, their own nodes, and the ability to bor
    a guest's assistant 15, a guest's agents 20 — they get whatever is left, batched with yours.
    Cloud: each member brings their own Fireworks key; the admin can optionally lend the hub's key
    under a per-member daily cap.
-4. **Other people's assistants.** Each member gets the hub's built-in assistant (web chat, their
-   own memory folder, optionally their own Telegram bot token). JD stays yours and stays in
-   `telegramManager`. A friend does not get JD.
+4. **Everyone gets a JD.** JD is the product's assistant, not only yours. Each member gets their
+   own — named JD by default, renameable — as their *own instance* running on a node they own,
+   with their memory on their machine. The installer sets it up ("also install your assistant")
+   and picks a model that fits the hardware (an M-series Mac with 32 GB runs a 30B-class MoE
+   well; 16 GB gets a smaller one; a box with no capable GPU gets none locally). A member with no
+   capable node powers their JD with nodes shared with them, at guest priority. Telegram is
+   optional per member (their own bot token); the web chat always works. Your JD keeps its
+   name, its memory and its Spark.
 5. **Media.** Stills: Qwen-Image; video: Wan 2.2 (or LTX-2) — both via ComfyUI on the 7900 XTX.
    Not MiniMax-H3: it doesn't fit beside Flash-Next on the Spark, and on AMD it has the ROCm noise
    bug plus a license that excludes US use. H3 gets a slot when a second Spark exists.
@@ -100,6 +105,10 @@ my estimates of focused work; "you" items are installs, keys, and decisions.
   `lib/timer.js` do, and why?"). And the book: a **Code map** docs page the manager writes and
   refreshes at each milestone — chapters from entry points down, each line linking
   `path:line` into the viewer. That is the table of contents you read the code through.
+  **Tour mode** turns the map into a walkthrough: *Next* steps through the code snippet by
+  snippet in reading order, the Guide explains each one — what it does, and why it was done
+  that way, citing the decision log — and the explanations are cached as docs pages so the
+  second reader (or JD) gets them instantly.
 - **Acceptance:** `pomodoro-cli` opens in a terminal and `pomo start 1` rings in the browser;
   a throwaway Vite project shows its page in Preview and hot-reloads when Ada edits it; the Code
   map lists every module of `pomodoro-cli` with working links; the Guide answers a "why" question
@@ -132,6 +141,14 @@ JD page in the UI. The droplet + Caddy + `hub.rosenroot.com` is your afternoon (
   Metal on Apple) or registers as compute-only (shell tasks, browser) — installs a systemd user
   unit or a launchd agent, enrolls, starts, and prints the node's line from `/api/nodes`.
   Re-running it updates. `agenthub-node uninstall` reverses it.
+- **The recipe catalog.** A small table the installer and the Cluster page share: hardware class
+  → model + serving stack + memory it needs (Apple Silicon 16/32/64 GB+, NVIDIA 24 GB, DGX
+  Spark, AMD 24 GB, CPU-only). Verified by hand per class before it is listed; the JD-on-a-Mac
+  case (decision 4) is the first entry after the three boxes we own.
+- **An OpenAI-compatible door on the hub.** `POST /v1/chat/completions` on the hub, authenticated
+  per member, routed by the gateway with the member's priority and grants. This is how a JD
+  instance (or any external harness, Phase G) uses "my nodes or the ones shared with me" without
+  knowing where they are. Your JD switches from `SPARK_URL` to it in Phase C.
 - **Browser pool.** A browser node advertises `slots`; the lease manager hands out (node, slot)
   pairs; a project holds at most one at a time by default; the Computer page shows every live
   session as a thumbnail with *Watch* / *Take control*. The Mac mini's real desktop (virtual HDMI)
@@ -163,8 +180,11 @@ JD page in the UI. The droplet + Caddy + `hub.rosenroot.com` is your afternoon (
   The gateway sets `priority` per request from (node owner, requesting user, assistant-or-agent).
   Per-member daily turn caps; Fireworks usage logged per user; optional lending of the hub's key
   under a cap.
-- **Their assistant.** The hub's built-in assistant per member: web chat, `memory/<user>/`,
-  optional Telegram bot token of their own.
+- **Their JD.** A node may host a member's assistant: the daemon registers an `assistant`
+  capability (`{ url, owner }`), the hub proxies that member's web chat to it at `/api/jd/*`
+  (the same door as yours), and the instance calls the hub's OpenAI-compatible door with the
+  member's token, so its model comes from their nodes or their grants. The installer offers it;
+  JD's repo gets a tagged release the installer can fetch. Memory never leaves their machine.
 - **The site.** `hub.rosenroot.com` with real logins replaces the Caddy basic-auth wall (or keeps
   it as a second door for admin only). Terminals and previews scoped to the member's own
   workspaces on their own nodes.
@@ -214,4 +234,4 @@ JD page in the UI. The droplet + Caddy + `hub.rosenroot.com` is your afternoon (
 | The PC: Ubuntu, ROCm, Tailscale, ComfyUI, one clip by hand | Workbench (B), then JD (C) |
 | The droplet, Caddy, DNS for `hub.rosenroot.com` | Enrollment, installer, browser pool (D) |
 | Run the installer on the PC and the mini and tell me what hurt | Media (E), accounts and sharing (F) |
-| Invite the friend once F's acceptance passes on a test account | Harnesses (G) |
+| Invite the friend once F's acceptance passes on a test account; his Mac is the first JD-on-a-Mac | Harnesses (G) |

@@ -11,6 +11,7 @@ export interface ServingConfig {
   cmd?: string[];
   name?: string;
   priority?: number;
+  requestExtras?: Record<string, unknown>;
 }
 /** Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one. */
 export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
@@ -75,6 +76,8 @@ export function loadConfig(path: string): DaemonConfig {
       throw new Error('daemon config: serving entry missing tier/model/port/maxStreams');
     if (s.cmd !== undefined && (!Array.isArray(s.cmd) || s.cmd.length === 0))
       throw new Error('daemon config: serving entry cmd must be a non-empty list');
+    if (s.requestExtras !== undefined && (typeof s.requestExtras !== 'object' || s.requestExtras === null || Array.isArray(s.requestExtras)))
+      throw new Error('daemon config: serving entry requestExtras must be an object');
     const name = s.name ?? `${s.tier}:${s.port}`;
     if (seenNames.has(name)) throw new Error(`daemon config: duplicate serving entry name ${name}`);
     seenNames.add(name);

@@ -69,6 +69,20 @@ export class EnrollmentTokens {
       .get(hash) as { created_by: string };
     return { createdBy: row.created_by };
   }
+
+  /**
+   * Whether `token` is real, unused and unexpired — without spending it. The source-tarball route
+   * needs to check a token on every request rather than consume it on the first one (the installer
+   * still has to trade it in at `/api/nodes/enroll` right after); `consume` remains the only place a
+   * token is ever marked used.
+   */
+  isValid(token: string, now = Date.now()): boolean {
+    const hash = hashToken(token);
+    const row = this.db.prepare(`
+      SELECT 1 FROM enrollment_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at > ?
+    `).get(hash, now);
+    return row !== undefined;
+  }
 }
 
 /**

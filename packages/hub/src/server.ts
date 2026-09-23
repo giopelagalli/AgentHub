@@ -877,7 +877,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   //
   // Both routes are outside `/api/`, so `routeAccess` classifies them `none` and they answer before
   // any login — which is the point: the machine running them has no credential yet beyond the
-  // enrollment token in its command line.
+  // enrollment token in its command line. `/install.sh` carries no secrets and stays fully open;
+  // the tarball is the hub's own source, so it checks that enrollment token (or a node/admin
+  // bearer) itself, below — `routeAccess` still says `none`, since the check is a handler-local,
+  // token-in-query concern rather than the shared `onRequest` policy.
 
   /** The installer itself, straight off this checkout. Written by hand, not generated. */
   app.get('/install.sh', async (_req, reply) => {
@@ -904,7 +907,21 @@ export function createHub(opts: HubOptions = {}): Hub {
     return { sha: String(head).trim(), body: stdout as unknown as Buffer };
   };
 
-  app.get('/install/agenthub-src.tgz', async (_req, reply) => {
+  /**
+   * The hub is about to be reachable by anyone, and this route hands out its source — so, unlike
+   * `/install.sh`, it needs a credential, just not the owner's: an installer running it has none of
+   * those yet. Any of an unused enrollment token (`?token=`, checked without spending it), an
+   * existing node's own bearer (the same lookup the daemon auth above uses, so a revoked or removed
+   * node's token fails), or the admin `DAEMON_TOKEN` will do.
+   */
+  app.get('/install/agenthub-src.tgz', async (req, reply) => {
+    const { token } = req.query as { token?: string };
+    const credentialOk = (!!token && enrollmentTokens.isValid(token))
+      || nodeByBearer(req.headers.authorization) !== null
+      || (auth?.bearerOk(req.headers.authorization) ?? false);
+    if (!credentialOk) {
+      return reply.code(401).send({ error: 'an enrollment token or a node token is required' });
+    }
     sourceArchive ??= buildSourceArchive();
     try {
       const { sha, body } = await sourceArchive;

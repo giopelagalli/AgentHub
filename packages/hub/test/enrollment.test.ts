@@ -389,7 +389,12 @@ describe('what a joining node downloads', () => {
         expect(script.json()).toEqual({ error: 'installer not found' });
       }
 
-      const archive = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' });
+      // This hub has no auth configured at all, so minting is open too — same as the installer,
+      // which has only the enrollment token at this point.
+      const minted = await hub.app.inject({ method: 'POST', url: '/api/nodes/enrollment-tokens' });
+      const archive = await hub.app.inject({
+        method: 'GET', url: `/install/agenthub-src.tgz?token=${(minted.json() as { token: string }).token}`,
+      });
       if (archive.statusCode === 200) expect(archive.headers['content-type']).toContain('application/gzip');
       else expect(archive.json()).toEqual({ error: 'not a git checkout' });
     } finally {
@@ -400,12 +405,15 @@ describe('what a joining node downloads', () => {
   it('needs no session — an installer runs before anyone has logged in', async () => {
     const hub = spawn();
     expect((await hub.app.inject({ method: 'GET', url: '/install.sh' })).statusCode).not.toBe(401);
-    expect((await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' })).statusCode).not.toBe(401);
+    // No cookie — but it still needs a credential of its own; see "gating the source tarball"
+    // below for what happens with none at all.
+    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(DAEMON_TOKEN) });
+    expect(res.statusCode).not.toBe(401);
   });
 
   it('serves a source tarball holding every workspace npm ci will look for', async () => {
     const hub = spawn();
-    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' });
+    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(DAEMON_TOKEN) });
     // Not a checkout (a released tree, an unpacked tarball) — the route says so and there is
     // nothing to assert about.
     if (res.statusCode === 404) {
@@ -437,10 +445,65 @@ describe('what a joining node downloads', () => {
 
   it('builds the archive once and keeps it', async () => {
     const hub = spawn();
-    const first = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' });
+    const first = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(DAEMON_TOKEN) });
     if (first.statusCode === 404) return;
-    const second = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' });
+    const second = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(DAEMON_TOKEN) });
     expect(second.headers.etag).toBe(first.headers.etag);
     expect(second.rawPayload.equals(first.rawPayload)).toBe(true);
+  });
+});
+
+describe('gating the source tarball', () => {
+  it('refuses a request with no credential at all', async () => {
+    const hub = spawn();
+    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'an enrollment token or a node token is required' });
+  });
+
+  it('accepts a valid, unused enrollment token — and does not spend it', async () => {
+    const hub = spawn();
+    const cookie = await login(hub);
+    const { token } = await mint(hub, cookie);
+
+    const res = await hub.app.inject({ method: 'GET', url: `/install/agenthub-src.tgz?token=${token}` });
+    if (res.statusCode !== 404) expect(res.statusCode).toBe(200);
+
+    // Still unused: the installer's real enrollment call right after still spends it.
+    expect((await enroll(hub, { token, name: 'strix', arch: 'x86_64' })).statusCode).toBe(200);
+  });
+
+  it('refuses a token that has already been used', async () => {
+    const hub = spawn();
+    const cookie = await login(hub);
+    const { token } = await mint(hub, cookie);
+    expect((await enroll(hub, { token, name: 'strix', arch: 'x86_64' })).statusCode).toBe(200);
+
+    const res = await hub.app.inject({ method: 'GET', url: `/install/agenthub-src.tgz?token=${token}` });
+    expect(res.statusCode).toBe(401);
+    expect(res.json()).toEqual({ error: 'an enrollment token or a node token is required' });
+  });
+
+  it("accepts a node's own bearer, and refuses it once the node is removed", async () => {
+    const hub = spawn();
+    const cookie = await login(hub);
+    const { token } = await mint(hub, cookie);
+    const enrollRes = await enroll(hub, { token, name: 'strix', arch: 'x86_64' });
+    expect(enrollRes.statusCode).toBe(200);
+    const nodeToken = enrollRes.json().nodeToken as string;
+
+    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(nodeToken) });
+    if (res.statusCode !== 404) expect(res.statusCode).toBe(200);
+
+    expect((await hub.app.inject({ method: 'DELETE', url: '/api/nodes/strix', headers: { cookie } })).statusCode).toBe(200);
+    const after = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(nodeToken) });
+    expect(after.statusCode).toBe(401);
+    expect(after.json()).toEqual({ error: 'an enrollment token or a node token is required' });
+  });
+
+  it('accepts the admin DAEMON_TOKEN', async () => {
+    const hub = spawn();
+    const res = await hub.app.inject({ method: 'GET', url: '/install/agenthub-src.tgz', headers: bearer(DAEMON_TOKEN) });
+    if (res.statusCode !== 404) expect(res.statusCode).toBe(200);
   });
 });

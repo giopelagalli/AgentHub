@@ -6,7 +6,8 @@ One command turns a Mac or Linux box into an AgentHub node (PRD FR-D2):
 
 Mint the enrollment token on the hub's **Cluster** page (*Add node*); it is one-time and expires
 after 24 hours. The node needs no repo access and no clone — the hub serves both the script
-(`GET <hub>/install.sh`) and the daemon source (`GET <hub>/install/agenthub-src.tgz`).
+(`GET <hub>/install.sh`) and the daemon source (`GET <hub>/install/agenthub-src.tgz`), the latter
+gated by that same enrollment token on a first install, or the node's own token on an update.
 
 Re-running the same command **updates in place**: it refetches the daemon, re-reads the hardware,
 rewrites the config and restarts the service, but does not enroll again. `--uninstall` reverses

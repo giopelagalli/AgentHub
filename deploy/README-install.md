@@ -110,14 +110,10 @@ uninstall. It asserts that `--dry-run` creates no `AGENTHUB_HOME` and that no to
 echoed. It is deliberately outside vitest: it tests a shell script, and a node must be
 installable without the repo's test tooling.
 
-## Why the install is not `--omit=dev`
+## Why `--omit=dev` is enough
 
-The daemon runs from TypeScript source (`packages/node-daemon/src/main.ts`) through `tsx`, and
-the repo declares `tsx` as a **root devDependency**. `npm ci --omit=dev` therefore leaves
-`node_modules/.bin/tsx` absent and the daemon cannot start — and asking for it explicitly does
-not help, because `--omit=dev` drops a package declared in `devDependencies` even when it is
-named on the command line. The installer runs a full `npm ci` instead, which costs a node the
-dev tree (vitest, typescript, vite, esbuild — about 60 extra packages). Moving `tsx` into the
-root `dependencies` is the one-line fix; once that lands, `fetch_src` can go back to
-`npm ci --omit=dev --no-audit --no-fund`. The script fails loudly if `tsx` is missing after the
+The daemon runs from TypeScript source (`packages/node-daemon/src/main.ts`) through `tsx`, which
+the repo declares as a root **runtime** dependency for exactly this reason (the hub's own service
+units run through it too). So `npm ci --omit=dev` installs everything a node needs and skips the
+test tooling (vitest, typescript, vite). The script fails loudly if `tsx` is missing after the
 install rather than leaving a node that looks enrolled but never comes up.

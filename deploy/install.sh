@@ -379,7 +379,7 @@ fetch_src() {
   if [ "$DRY_RUN" -eq 1 ]; then
     info "[dry-run] curl -fsSL $HUB/install/agenthub-src.tgz | tar xz -C $AGENTHUB_HOME/src.new"
     info "[dry-run] swap $AGENTHUB_HOME/src.new into $SRC (the previous one is kept as $AGENTHUB_HOME/src.prev)"
-    info "[dry-run] (cd $SRC && npm ci --no-audit --no-fund)"
+    info "[dry-run] (cd $SRC && npm ci --omit=dev --no-audit --no-fund)"
     return 0
   fi
   rm -rf "$AGENTHUB_HOME/src.new"
@@ -402,9 +402,8 @@ fetch_src() {
   if [ -d "$SRC" ]; then mv "$SRC" "$AGENTHUB_HOME/src.prev"; fi
   mv "$AGENTHUB_HOME/src.new" "$SRC"
   info 'installing dependencies (native modules may compile for a minute)'
-  # Not --omit=dev: the daemon runs from TypeScript source through tsx, which the repo declares as
-  # a root devDependency. See deploy/README-install.md, "Why the install is not --omit=dev".
-  ( cd "$SRC" && npm ci --no-audit --no-fund )
+  # --omit=dev is enough: tsx, which runs the daemon from source, is a root runtime dependency.
+  ( cd "$SRC" && npm ci --omit=dev --no-audit --no-fund )
   if [ ! -x "$SRC/node_modules/.bin/tsx" ]; then
     die "tsx is missing from $SRC/node_modules - the daemon cannot start"
   fi

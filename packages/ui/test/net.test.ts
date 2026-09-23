@@ -18,6 +18,7 @@ const hubState: HubState = {
       arch: 'arm64',
       status: 'online',
       lastHeartbeat: 1,
+      owner: 'admin',
       endpoints: [{ tier: 'worker', url: 'http://127.0.0.1:8102', model: 'mock-model', maxStreams: 8 }],
       jobTypes: [],
     },

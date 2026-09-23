@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS video_slots (
   node_name TEXT PRIMARY KEY,
   job_id INTEGER NOT NULL
 );
+-- One-time tokens the owner mints from the Cluster page and the installer trades for a per-node
+-- bearer (PRD FR-D1). Only the sha256 of the token is stored, so a stolen database hands out
+-- nothing: \`used_at\` and \`expires_at\` are what make it single-use and short-lived.
+CREATE TABLE IF NOT EXISTS enrollment_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_hash TEXT UNIQUE NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used_at INTEGER,
+  suggested_name TEXT
+);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */
@@ -123,6 +135,12 @@ export function openDb(path: string): Db {
   ensureColumn(db, 'nodes', 'control_json', `TEXT`);
   ensureColumn(db, 'nodes', 'control_node', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'nodes', 'draining', `INTEGER NOT NULL DEFAULT 0`);
+  // Ownership and per-node credentials (PRD FR-D1/FR-D5). A node that registered before enrollment
+  // existed belongs to the admin, which is what the default backfills.
+  ensureColumn(db, 'nodes', 'owner', `TEXT NOT NULL DEFAULT 'admin'`);
+  ensureColumn(db, 'nodes', 'token_hash', `TEXT`);
+  ensureColumn(db, 'nodes', 'enrolled_at', `INTEGER`);
+  ensureColumn(db, 'nodes', 'hardware_json', `TEXT`);
   ensureColumn(db, 'jobs', 'attempts', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'result_json', `TEXT`);
   ensureColumn(db, 'jobs', 'error', `TEXT`);

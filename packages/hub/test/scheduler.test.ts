@@ -127,7 +127,7 @@ async function seed(h: Hub, slug: string, title: string, status: Briefing['statu
 }
 
 const node = (name: string): NodeInfo => ({
-  id: 1, name, arch: 'arm64', status: 'offline', lastHeartbeat: 0,
+  id: 1, name, arch: 'arm64', status: 'offline', lastHeartbeat: 0, owner: 'admin',
   endpoints: [{ tier: 'worker', url: 'http://x', model: 'm', maxStreams: 1 }], jobTypes: [],
 });
 

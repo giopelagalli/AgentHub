@@ -34,19 +34,43 @@ export interface AuthOptions {
 export type Access = 'none' | 'open' | 'daemon' | 'owner';
 
 /**
+ * Where a daemon route names the node it is about. A per-node token is only good for its own node,
+ * so every daemon route has to say which node a request speaks for — and each one says it somewhere
+ * different. `job` means the route names no node at all (`POST /api/jobs/:id/log`) and the subject is
+ * the job's runner of record, which the hub looks up.
+ */
+export type NodeSubject =
+  | { from: 'param'; key: string }
+  | { from: 'body'; key: string }
+  | { from: 'query'; key: string }
+  | { from: 'job'; key: string };
+
+/**
  * The `<METHOD> <route>` pairs a daemon bearer may reach: `/api/jobs/claim` plus the per-job report and
  * artifact routes it calls while running one, and the two registration routes. Anything absent is the
  * owner's.
+ *
+ * It is a map rather than a set so that no daemon route can exist without saying where its node
+ * subject comes from: adding one here is adding it to the per-node token check at the same time.
  */
-const DAEMON_ROUTES = new Set([
-  'POST /api/nodes/register',
-  'POST /api/nodes/:name/heartbeat',
-  'POST /api/jobs/claim',
-  'POST /api/jobs/:id/log',
-  'POST /api/jobs/:id/artifact',
-  'POST /api/jobs/:id/complete',
-  'POST /api/jobs/:id/fail',
+const DAEMON_ROUTES = new Map<string, NodeSubject>([
+  ['POST /api/nodes/register', { from: 'body', key: 'name' }],
+  ['POST /api/nodes/:name/heartbeat', { from: 'param', key: 'name' }],
+  ['POST /api/jobs/claim', { from: 'body', key: 'node' }],
+  ['POST /api/jobs/:id/log', { from: 'job', key: 'id' }],
+  ['POST /api/jobs/:id/artifact', { from: 'query', key: 'node' }],
+  ['POST /api/jobs/:id/complete', { from: 'body', key: 'node' }],
+  ['POST /api/jobs/:id/fail', { from: 'body', key: 'node' }],
 ]);
+
+/**
+ * Where `route` carries the name of the node the request speaks for, or undefined when it is not a
+ * daemon route at all. Pure: resolving the subject needs the request (and, for `job`, the queue),
+ * which is the server's job — this only says where to look.
+ */
+export function daemonRouteSubject(method: string, route: string | undefined): NodeSubject | undefined {
+  return route === undefined ? undefined : DAEMON_ROUTES.get(`${method} ${route}`);
+}
 
 /**
  * The policy, as a pure function of method and *matched route*: everything under `/api/` and the
@@ -54,6 +78,11 @@ const DAEMON_ROUTES = new Set([
  * the bearer token — and the owner cookie too, since the owner may drive the same routes from the
  * UI and a session is strictly the stronger credential. The browser relay is deliberately not one
  * of them: a leaked daemon token must not be able to drive the owner's browser.
+ *
+ * Enrollment is `open` like login: a machine joining the fleet has no credential yet, only the
+ * one-time token in its body, which the route itself checks — and the same throttle guards it.
+ * `/install.sh` and the source tarball are not under `/api/`, so they fall through to `none`
+ * alongside the static UI, which is what an installer running before any login needs.
  *
  * `route` is the pattern the router matched (`/api/jobs/:id/log`), never the request's raw path:
  * find-my-way percent-decodes before matching, so classifying the raw path let `/%61pi/state`
@@ -66,6 +95,7 @@ export function routeAccess(method: string, route: string | undefined): Access {
   if (route !== '/api' && !route.startsWith('/api/')) return 'none';
   if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
   if (method === 'POST' && route === '/api/login') return 'open';
+  if (method === 'POST' && route === '/api/nodes/enroll') return 'open';
   if (DAEMON_ROUTES.has(`${method} ${route}`)) return 'daemon';
   return 'owner';
 }

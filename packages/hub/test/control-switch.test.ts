@@ -430,7 +430,7 @@ describe('/controlnode over Telegram', () => {
 
 describe('resume() only follows a quiesce that actually ran', () => {
   const target: NodeInfo = {
-    id: 2, name: 'strix', arch: 'x86_64', status: 'online', lastHeartbeat: Date.now(),
+    id: 2, name: 'strix', arch: 'x86_64', status: 'online', lastHeartbeat: Date.now(), owner: 'admin',
     endpoints: [], jobTypes: [], profiles: [], video: false,
     controlNode: true, control: { url: 'http://fake-strix' },
   };

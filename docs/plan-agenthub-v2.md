@@ -1,6 +1,10 @@
 # AgentHub v2 — the workbench, the node network, and other people
 
-Date: 2026-09-22. Status: proposed; decisions in §2 need a yes before their phase starts.
+Date: 2026-09-22. Status: **decided 2026-09-23** — the owner's answers are recorded in `docs/prd-agenthub-v2.md`
+(Goals & non-goals → Decisions), which is now the source of truth for *what*; this file keeps the phases.
+Changes from the review: D-installer moves ahead of B (the PC joins through the installer); pi is the
+default employee harness with Claude Code optional; F waits but its foundations (ownership, per-node
+tokens, the OpenAI door) are built in D.
 Parent: `docs/plan-jd-web-agenthub.md` (JD + web door; its Phases 1–2 are Phase C here, unchanged).
 
 ## 1. What we're building, in one paragraph

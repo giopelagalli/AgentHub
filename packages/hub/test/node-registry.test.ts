@@ -63,6 +63,37 @@ describe('NodeRegistry', () => {
     expect(mb.profiles).toEqual([]);
     expect(mb.control).toBeUndefined();
   });
+
+  it('defaults draining to false, and setDraining toggles and persists it', () => {
+    const spark = registry.register(reg('spark'), 100);
+    expect(spark.draining).toBe(false);
+
+    expect(registry.setDraining('spark', true)).toBe(true);
+    expect(registry.byName('spark')?.draining).toBe(true);
+    expect(registry.online(150).find((n) => n.name === 'spark')?.draining).toBe(true);
+
+    expect(registry.setDraining('spark', false)).toBe(true);
+    expect(registry.byName('spark')?.draining).toBe(false);
+
+    expect(registry.setDraining('ghost', true)).toBe(false);
+  });
+
+  it('remove deletes the node from memory and the db table', () => {
+    registry.register(reg('spark'), 100);
+    expect(registry.remove('spark')).toBe(true);
+    expect(registry.byName('spark')).toBeNull();
+    expect(registry.all()).toHaveLength(0);
+    // Already gone: a second remove finds nothing.
+    expect(registry.remove('spark')).toBe(false);
+  });
+
+  it('register after remove re-creates the node fresh, not draining', () => {
+    registry.register(reg('spark'), 100);
+    registry.setDraining('spark', true);
+    registry.remove('spark');
+    const recreated = registry.register(reg('spark'), 200);
+    expect(recreated.draining).toBe(false);
+  });
 });
 
 describe('nodes table migration', () => {
@@ -88,6 +119,29 @@ describe('nodes table migration', () => {
     expect(registry.byName('legacy')).toMatchObject({ video: false, profiles: [] });
     const spark = registry.register({ ...reg('spark'), video: true, profiles: ['video'] }, 100);
     expect(spark.video).toBe(true);
+    migrated.close();
+  });
+
+  it('adds the draining column to a database written before it existed', () => {
+    const path = join(dir, 'hub.db');
+    const old = new Database(path);
+    old.exec(`
+      CREATE TABLE nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, arch TEXT NOT NULL,
+        endpoints_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'online',
+        last_heartbeat INTEGER NOT NULL, job_types_json TEXT NOT NULL DEFAULT '[]', browser_json TEXT,
+        profiles_json TEXT NOT NULL DEFAULT '[]', video INTEGER NOT NULL DEFAULT 0,
+        control_json TEXT, control_node INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO nodes (name, arch, endpoints_json, last_heartbeat) VALUES ('legacy', 'arm64', '[]', 0);
+    `);
+    old.close();
+
+    const migrated = openDb(path);
+    const registry = new NodeRegistry(migrated, { staleMs: 1000 });
+    expect(registry.byName('legacy')?.draining).toBe(false);
+    expect(registry.setDraining('legacy', true)).toBe(true);
+    expect(registry.byName('legacy')?.draining).toBe(true);
     migrated.close();
   });
 });

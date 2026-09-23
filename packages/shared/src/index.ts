@@ -72,6 +72,8 @@ export interface NodeInfo extends NodeRegistration {
   status: 'online' | 'offline';
   lastHeartbeat: number;
   jobTypes: JobType[];
+  /** Set by the owner from the Cluster page: finishes work already in flight, gets nothing new. */
+  draining?: boolean;
 }
 
 export interface ToolDef {

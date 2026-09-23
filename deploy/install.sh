@@ -592,44 +592,33 @@ show_config() {
 
 enroll() {
   step "Enrolling with $HUB"
-  enroll_name=$NAME
-  attempt=1
-  while : ; do
-    payload=$(printf '{"token":"%s","name":"%s","arch":"%s","hardware":%s}' \
-      "$(json_escape "$TOKEN")" "$(json_escape "$enroll_name")" "$ARCH" "$HARDWARE_JSON")
-    if [ "$DRY_RUN" -eq 1 ]; then
-      info "[dry-run] POST $HUB/api/nodes/enroll"
-      info "[dry-run] $(printf '%s' "$payload" | sed 's/"token":"[^"]*"/"token":"***"/')"
-      NODE_TOKEN='<node token from the hub>'
-      return 0
-    fi
-    resp=$(curl -s -m 30 -w '\n%{http_code}' -X POST \
-      -H 'Content-Type: application/json' -d "$payload" "$HUB/api/nodes/enroll" || true)
-    code=$(printf '%s' "$resp" | tail -n 1)
-    body=$(printf '%s\n' "$resp" | sed '$d')
-    case "$code" in
-      200)
-        NODE_TOKEN=$(json_str nodeToken "$body")
-        hub_name=$(json_str name "$body")
-        if [ -z "$NODE_TOKEN" ]; then die "the hub returned no nodeToken: $body"; fi
-        if [ -n "$hub_name" ]; then NAME=$hub_name; fi
-        info "enrolled as \"$NAME\" (node token $(mask "$NODE_TOKEN"))"
-        return 0
-        ;;
-      401) die 'the enrollment token is invalid or expired - mint a new one on the Cluster page' ;;
-      409)
-        if [ "$attempt" -eq 1 ]; then
-          enroll_name="$NAME-2"
-          attempt=2
-          info "the name \"$NAME\" is taken - retrying as \"$enroll_name\""
-          continue
-        fi
-        die "the names \"$NAME\" and \"$enroll_name\" are both taken - pass --name"
-        ;;
-      '') die "could not reach $HUB" ;;
-      *)  die "enrollment failed (HTTP $code): $body" ;;
-    esac
-  done
+  payload=$(printf '{"token":"%s","name":"%s","arch":"%s","hardware":%s}' \
+    "$(json_escape "$TOKEN")" "$(json_escape "$NAME")" "$ARCH" "$HARDWARE_JSON")
+  if [ "$DRY_RUN" -eq 1 ]; then
+    info "[dry-run] POST $HUB/api/nodes/enroll"
+    info "[dry-run] $(printf '%s' "$payload" | sed 's/"token":"[^"]*"/"token":"***"/')"
+    NODE_TOKEN='<node token from the hub>'
+    return 0
+  fi
+  resp=$(curl -s -m 30 -w '\n%{http_code}' -X POST \
+    -H 'Content-Type: application/json' -d "$payload" "$HUB/api/nodes/enroll" || true)
+  code=$(printf '%s' "$resp" | tail -n 1)
+  body=$(printf '%s\n' "$resp" | sed '$d')
+  case "$code" in
+    200)
+      NODE_TOKEN=$(json_str nodeToken "$body")
+      hub_name=$(json_str name "$body")
+      if [ -z "$NODE_TOKEN" ]; then die "the hub returned no nodeToken: $body"; fi
+      if [ -n "$hub_name" ]; then NAME=$hub_name; fi
+      info "enrolled as \"$NAME\" (node token $(mask "$NODE_TOKEN"))"
+      ;;
+    401) die 'the enrollment token is invalid or expired - mint a new one on the Cluster page' ;;
+    # The token is spent the instant the hub sees it, so retrying under a different name would just
+    # burn the same already-spent token and 401.
+    409) die "that node name is taken - mint a fresh token on the Cluster page and re-run with --name <other>" ;;
+    '') die "could not reach $HUB" ;;
+    *)  die "enrollment failed (HTTP $code): $body" ;;
+  esac
 }
 
 # ---------------------------------------------------------------- 7. service

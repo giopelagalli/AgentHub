@@ -86,30 +86,37 @@ export function truncateResult(text: string, limit: number): string {
 
 /**
  * 1-based `fromLine`/`maxLines` slice of `text` for read_file/read_bundle: a file comes back whole
- * up to READ_FILE_LIMIT characters, and a longer one is cut at the last line that still fits, ending
- * with a marker naming the exact `fromLine` to continue from — unlike `truncateResult`'s flat
- * character cut, a line boundary keeps every returned line intact.
+ * up to READ_FILE_LIMIT characters, and a longer one — or one `maxLines` cuts short of the end — is
+ * cut at the last line that still fits, ending with a marker naming the exact `fromLine` to continue
+ * from — unlike `truncateResult`'s flat character cut, a line boundary keeps every returned line
+ * intact. A reader that never sees this marker has to be able to assume it saw the rest of the file.
  */
 function pageLines(text: string, fromLine: number, maxLines: number | undefined, toolName: string): string {
   const lines = text.split('\n');
   if (fromLine < 1) throw new Error('fromLine must be at least 1');
+  if (maxLines !== undefined && maxLines < 1) throw new Error('maxLines must be at least 1');
   if (fromLine > lines.length) throw new Error(`fromLine ${fromLine} is past the end (${lines.length} lines)`);
   const end = maxLines !== undefined ? Math.min(lines.length, fromLine - 1 + maxLines) : lines.length;
   const slice = lines.slice(fromLine - 1, end);
   const whole = slice.join('\n');
-  if (whole.length <= READ_FILE_LIMIT) return whole;
 
-  // Keep whole lines up to the cap; the first line always makes it in, even alone over the cap.
-  const shown: string[] = [];
-  let shownLen = 0;
-  for (const line of slice) {
-    const add = line.length + (shown.length ? 1 : 0);
-    if (shown.length && shownLen + add > READ_FILE_LIMIT) break;
-    shown.push(line);
-    shownLen += add;
+  // Keep whole lines up to the character cap; the first line always makes it in, even alone over it.
+  let shown = slice;
+  let shownText = whole;
+  if (whole.length > READ_FILE_LIMIT) {
+    shown = [];
+    let shownLen = 0;
+    for (const line of slice) {
+      const add = line.length + (shown.length ? 1 : 0);
+      if (shown.length && shownLen + add > READ_FILE_LIMIT) break;
+      shown.push(line);
+      shownLen += add;
+    }
+    shownText = shown.join('\n');
   }
-  const shownText = shown.join('\n');
+
   const endLine = fromLine + shown.length - 1;
+  if (endLine >= lines.length) return shownText;
   return `${shownText}\n[showing lines ${fromLine}–${endLine} of ${lines.length} ` +
     `(${shownText.length.toLocaleString('en-US')} of ${text.length.toLocaleString('en-US')} characters); ` +
     `call ${toolName} again with fromLine: ${endLine + 1} for the rest]`;

@@ -145,9 +145,28 @@ describe('workspaceTools', () => {
     const content = ['one', 'two', 'three', 'four', 'five'].join('\n');
     await writeFile(join(bundle.workspace, 'lines.txt'), content, 'utf8');
 
+    // fromLine alone reaches the end of the file, so there is nothing to continue and no marker.
     expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', fromLine: 2 })).toBe('two\nthree\nfour\nfive');
-    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', fromLine: 2, maxLines: 2 })).toBe('two\nthree');
-    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', maxLines: 1 })).toBe('one');
+    // maxLines cutting short of the end is exactly what the marker exists for, even well under the
+    // character cap.
+    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', fromLine: 2, maxLines: 2 })).toBe(
+      'two\nthree\n[showing lines 2–3 of 5 (9 of 23 characters); call read_file again with fromLine: 4 for the rest]',
+    );
+    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', maxLines: 1 })).toBe(
+      'one\n[showing lines 1–1 of 5 (3 of 23 characters); call read_file again with fromLine: 2 for the rest]',
+    );
+  });
+
+  it('emits the continuation marker when maxLines cuts the file, not just the character cap', async () => {
+    const lines = Array.from({ length: 300 }, (_, i) => `L${i + 1}`);
+    await writeFile(join(bundle.workspace, 'many.txt'), lines.join('\n'), 'utf8');
+
+    const shown = lines.slice(0, 100).join('\n');
+    const out = await call(workspaceTools(), 'read_file', { path: 'many.txt', maxLines: 100 });
+    expect(out).toBe(
+      `${shown}\n[showing lines 1–100 of 300 (${shown.length.toLocaleString('en-US')} of ` +
+      `${lines.join('\n').length.toLocaleString('en-US')} characters); call read_file again with fromLine: 101 for the rest]`,
+    );
   });
 
   it('errors when fromLine is past the end of the file', async () => {
@@ -155,6 +174,13 @@ describe('workspaceTools', () => {
 
     const out = await call(workspaceTools(), 'read_file', { path: 'short.txt', fromLine: 400 });
     expect(out).toBe('error: fromLine 400 is past the end (3 lines)');
+  });
+
+  it('errors when maxLines is less than 1', async () => {
+    await writeFile(join(bundle.workspace, 'short.txt'), ['one', 'two', 'three'].join('\n'), 'utf8');
+
+    const out = await call(workspaceTools(), 'read_file', { path: 'short.txt', maxLines: 0 });
+    expect(out).toBe('error: maxLines must be at least 1');
   });
 });
 

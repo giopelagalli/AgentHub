@@ -739,12 +739,16 @@ export function createHub(opts: HubOptions = {}): Hub {
   }
 
   app.post('/api/nodes/register', async (req, reply) => {
+    const name = (req.body as NodeRegistration)?.name;
+    if (typeof name !== 'string' || !NODE_NAME_RE.test(name)) {
+      return reply.code(400).send({ error: 'invalid node name' });
+    }
     // The synthetic cloud nodes are owned by the hub; a daemon may not replace one of their rows.
-    if (cloudNodes.includes((req.body as NodeRegistration)?.name)) {
+    if (cloudNodes.includes(name)) {
       return reply.code(409).send({ error: 'reserved node name' });
     }
     // A name freed by a recent DELETE stays refused for REMOVED_LOCKOUT_MS — see `isRemoved`.
-    if (isRemoved((req.body as NodeRegistration)?.name)) {
+    if (isRemoved(name)) {
       return reply.code(410).send({ error: 'node removed' });
     }
     const result = registry.register(req.body as NodeRegistration);
@@ -823,7 +827,13 @@ export function createHub(opts: HubOptions = {}): Hub {
     // register a machine in their place.
     if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
     const existing = registry.byName(name);
-    if (existing && existing.owner !== minted.createdBy) return reply.code(409).send({ error: 'name taken' });
+    // Taking over an existing row requires a token minted for this exact name — the owner
+    // deliberately re-enrolling it — regardless of owner, and regardless of whether the row even
+    // has a token_hash (a node registered under the shared DAEMON_TOKEN has none and is not fair
+    // game either).
+    if (existing && (minted.suggestedName !== name || existing.owner !== minted.createdBy)) {
+      return reply.code(409).send({ error: 'name taken' });
+    }
     // A node the same owner already has is a re-install: the row keeps everything it registered and
     // only its credential is replaced, so the old token stops working the moment the new one exists.
     const nodeToken = newNodeToken();

@@ -1,8 +1,10 @@
 import type { Job, NodeInfo } from '@agenthub/shared';
+import { sendJson } from '../api.js';
 import type { Store, UiState } from '../store.js';
-import { el } from './projects.js';
+import { toast } from '../toast.js';
+import { button, el } from './projects.js';
 
-const NODE_COLUMNS = ['Node', 'Status', 'Serving', 'Streams', 'Extras'] as const;
+const NODE_COLUMNS = ['Node', 'Status', 'Serving', 'Streams', 'Extras', 'Actions'] as const;
 const JOB_COLUMNS = ['Job', 'Type', 'Status', 'Node', 'Attempts', 'Project'] as const;
 
 /** Column indexes whose cells hold identifiers — names, ids, model strings — and so set in mono. */
@@ -34,6 +36,31 @@ function streamsFor(node: NodeInfo, streams: Record<string, number>): string {
 
 function serving(node: NodeInfo): string {
   return node.endpoints.length ? node.endpoints.map((e) => `${e.tier}: ${e.model}`).join(', ') : '—';
+}
+
+/** Which buttons a node's row gets. The synthetic cloud nodes aren't machines, so they get none. */
+export function nodeActions(node: NodeInfo): ('drain' | 'undrain' | 'remove')[] {
+  if (node.arch === 'cloud') return [];
+  return [node.draining ? 'undrain' : 'drain', 'remove'];
+}
+
+/** One row's Drain/Undrain/Remove button, wired straight to the hub; the WS broadcast repaints the row. */
+function actionButton(node: NodeInfo, action: 'drain' | 'undrain' | 'remove'): HTMLButtonElement {
+  if (action === 'remove') {
+    const remove = button('Remove');
+    remove.addEventListener('click', () => {
+      if (!window.confirm(`Remove ${node.name}? Its daemon will exit; re-run its install to add it back.`)) return;
+      void sendJson(`/api/nodes/${node.name}`, undefined, 'DELETE')
+        .catch((error: unknown) => toast(`Could not remove ${node.name}: ${String(error)}`, 'error'));
+    });
+    return remove;
+  }
+  const drain = button(action === 'drain' ? 'Drain' : 'Undrain');
+  drain.addEventListener('click', () => {
+    void sendJson(`/api/nodes/${node.name}/drain`, { on: action === 'drain' })
+      .catch((error: unknown) => toast(`Could not ${action} ${node.name}: ${String(error)}`, 'error'));
+  });
+  return drain;
 }
 
 function jobRow(job: Job): string[] {
@@ -85,16 +112,26 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
 
   const render = (state: UiState): void => {
     const streams = state.hub?.streams ?? {};
-    fill(
-      nodes.body,
-      nodesEmpty,
-      (state.hub?.nodes ?? []).map((node) => [
-        node.name, node.status, serving(node), streamsFor(node, streams), extras(node),
-      ]),
-      1,
-      state.hub ? 'No node has registered.' : 'Waiting for the hub…',
-      NODE_MONO,
-    );
+    // Not routed through fill(): the Actions cell holds live buttons, not a plain string.
+    const nodeRows = state.hub?.nodes ?? [];
+    nodes.body.replaceChildren();
+    nodesEmpty.hidden = nodeRows.length > 0;
+    nodesEmpty.textContent = state.hub ? 'No node has registered.' : 'Waiting for the hub…';
+    nodes.body.parentElement?.classList.toggle('table--empty', nodeRows.length === 0);
+    for (const node of nodeRows) {
+      const row = nodes.body.insertRow();
+      const values = [node.name, node.draining ? 'draining' : node.status, serving(node), streamsFor(node, streams), extras(node)];
+      values.forEach((value, index) => {
+        const cell = row.insertCell();
+        cell.textContent = value;
+        if (index === 1) cell.className = `status status--${value}`;
+        else if (NODE_MONO.has(index)) cell.className = 'mono';
+      });
+      const actionsCell = row.insertCell();
+      const actions = nodeActions(node);
+      if (actions.length) actions.forEach((action) => actionsCell.appendChild(actionButton(node, action)));
+      else actionsCell.textContent = '—';
+    }
     fill(
       jobs.body,
       jobsEmpty,

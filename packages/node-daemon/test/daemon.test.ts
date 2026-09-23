@@ -426,4 +426,39 @@ describe('node daemon', () => {
       await hubB?.stop();
     }
   }, 20000);
+
+  it('exits (via onRemoved) when the hub reports this node was removed (heartbeat 410)', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+    const hubUrl = `http://127.0.0.1:${hubPort}`;
+    const servePort = await getEphemeralPort();
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: removable-node', '  arch: arm64',
+      `hub: ${hubUrl}`,
+      'heartbeatMs: 150',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', `    port: ${servePort}`, '    maxStreams: 4',
+      `    cmd: ["npx", "tsx", "${MOCK_SERVE}", "${servePort}"]`,
+    ].join('\n'));
+
+    let removedCalls = 0;
+    daemon = new Daemon(loadConfig(cfgPath), { onRemoved: () => { removedCalls++; } });
+    await daemon.start();
+    expect(hub.registry.byName('removable-node')?.status).toBe('online');
+
+    const del = await fetch(`${hubUrl}/api/nodes/removable-node`, { method: 'DELETE' });
+    expect(del.status).toBe(200);
+
+    const deadline = Date.now() + 3000; // ~3 heartbeats at 150ms, plus margin
+    while (removedCalls === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+    expect(removedCalls).toBe(1);
+
+    // stop() cleared the heartbeat timer, so no further ticks call onRemoved again.
+    await new Promise((r) => setTimeout(r, 400));
+    expect(removedCalls).toBe(1);
+  }, 15000);
 });

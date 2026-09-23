@@ -186,6 +186,7 @@ export class ModelGateway {
     const now = this.now();
     const out: { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] = [];
     for (const node of this.registry.online()) {
+      if (node.draining) continue; // no new work; a stream already in flight on it just runs its course
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
         const key = this.key(node, endpoint);

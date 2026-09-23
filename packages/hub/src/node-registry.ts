@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import type { JobType, NodeInfo, NodeRegistration, ServingEndpoint } from '@agenthub/shared';
 
-interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; control_node: number; }
+interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; control_node: number; draining: number; }
 
 const toInfo = (r: Row): NodeInfo => ({
   id: r.id, name: r.name, arch: r.arch, status: r.status,
@@ -12,6 +12,7 @@ const toInfo = (r: Row): NodeInfo => ({
   video: r.video === 1,
   ...(r.control_json ? { control: JSON.parse(r.control_json) as { url: string } } : {}),
   controlNode: r.control_node === 1,
+  draining: r.draining === 1,
 });
 
 export class NodeRegistry {
@@ -36,6 +37,18 @@ export class NodeRegistry {
 
   heartbeat(name: string, now = Date.now()): boolean {
     const res = this.db.prepare(`UPDATE nodes SET status='online', last_heartbeat=? WHERE name=?`).run(now, name);
+    return res.changes > 0;
+  }
+
+  /** Toggles whether `name` gets new work; running work is untouched. False if the node is unknown. */
+  setDraining(name: string, on: boolean): boolean {
+    const res = this.db.prepare(`UPDATE nodes SET draining=? WHERE name=?`).run(on ? 1 : 0, name);
+    return res.changes > 0;
+  }
+
+  /** Forgets `name` entirely — deletes its row. False if the node was already unknown. */
+  remove(name: string): boolean {
+    const res = this.db.prepare(`DELETE FROM nodes WHERE name=?`).run(name);
     return res.changes > 0;
   }
 

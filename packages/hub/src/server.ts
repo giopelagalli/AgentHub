@@ -96,6 +96,12 @@ const TURNS_LIMIT = 20;
 const DEFAULT_AUTO_RUN = { everyMinutes: 60, maxTurnsPerDay: 6 };
 /** Cap on the messages `/team/:id/activity` returns — the tail, which is what "doing now" means. */
 const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
+/**
+ * How long a removed node's name stays refused (410) on register, after `DELETE /api/nodes/:name`.
+ * Long enough that a removed daemon's own restart loop can't resurrect the node before it has
+ * actually exited; short enough that a deliberate re-install minutes later just works.
+ */
+const REMOVED_LOCKOUT_MS = 60_000;
 
 export interface AssistantOptions {
   /** Root of the git-versioned memory bundle (MEMORY.md, notes/, planner/). */
@@ -221,6 +227,16 @@ export function createHub(opts: HubOptions = {}): Hub {
       ],
     });
   }
+  // Names removed via DELETE /api/nodes/:name: register and heartbeat refuse them (410) for
+  // REMOVED_LOCKOUT_MS, then forget them — a plain register after that re-creates the node fresh.
+  const removed = new Map<string, number>();
+  const isRemoved = (name: string | undefined): boolean => {
+    if (!name) return false;
+    const at = removed.get(name);
+    if (at === undefined) return false;
+    if (Date.now() - at >= REMOVED_LOCKOUT_MS) { removed.delete(name); return false; }
+    return true;
+  };
   const fireworksDisabled = new Set(fireworksModelSet?.disabled ?? []);
   const gateway = new ModelGateway(registry, {
     ...(anthropic ? { anthropic } : {}),
@@ -590,6 +606,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (cloudNodes.includes((req.body as NodeRegistration)?.name)) {
       return reply.code(409).send({ error: 'reserved node name' });
     }
+    // A name freed by a recent DELETE stays refused for REMOVED_LOCKOUT_MS — see `isRemoved`.
+    if (isRemoved((req.body as NodeRegistration)?.name)) {
+      return reply.code(410).send({ error: 'node removed' });
+    }
     const result = registry.register(req.body as NodeRegistration);
     // A registration is also how a daemon comes back from its own restart, so the profile the node
     // is actually serving is re-checked against the slot the hub thinks it holds. Fire-and-forget:
@@ -601,6 +621,7 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.post('/api/nodes/:name/heartbeat', async (req, reply) => {
     const { name } = req.params as { name: string };
+    if (isRemoved(name)) return reply.code(410).send({ error: 'node removed' });
     if (!registry.heartbeat(name)) return reply.code(404).send({ ok: false });
     // Only the first heartbeat per node does anything: it covers the hub having restarted under a
     // node that never re-registered.
@@ -612,6 +633,26 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/nodes', async () => {
     sweepAndRequeue();
     return registry.all();
+  });
+
+  app.post('/api/nodes/:name/drain', async (req, reply) => {
+    const { name } = req.params as { name: string };
+    // The synthetic cloud nodes have no daemon to stop claiming or serving; draining one is meaningless.
+    if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
+    const body = req.body as Partial<{ on: boolean }> | undefined;
+    if (!body || typeof body.on !== 'boolean') return reply.code(400).send({ error: 'invalid drain request' });
+    if (!registry.setDraining(name, body.on)) return reply.code(404).send({ error: 'unknown node' });
+    broadcastState();
+    return { ok: true };
+  });
+
+  app.delete('/api/nodes/:name', async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
+    if (!registry.remove(name)) return reply.code(404).send({ error: 'unknown node' });
+    removed.set(name, Date.now());
+    broadcastState();
+    return { ok: true };
   });
 
   /**
@@ -693,6 +734,8 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { node, types } = body as { node: string; types: JobType[] };
     const info = registry.byName(node);
     if (!info) return reply.code(404).send({ error: 'unknown node' });
+    // Draining: no new work, whatever's already running finishes on its own.
+    if (info.draining) return reply.code(204).send();
     if (!types.every((t) => info.jobTypes.includes(t))) return reply.code(403).send({ error: 'node cannot run requested job types' });
     // Only a node with a local ComfyUI, and only one video job at a time on it: a claim is what
     // triggers the exclusivity swap, so swapping a node that cannot render would park its serving
@@ -1360,6 +1403,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.post('/api/browser/lease', async (req, reply) => {
     const requester = parseRequester(req.body, reply);
     if (!requester) return reply;
+    // The browser is one shared resource, not one per node, so draining its node doesn't preempt the
+    // current holder — it just hands out nothing new: a fresh acquire is refused, but the holder (if
+    // it's this requester) still renews, so work already using the browser finishes normally.
+    const browserNode = browserStatus().node;
+    if (browserNode && registry.byName(browserNode)?.draining) {
+      const holder = leases.holder()?.requester;
+      const isHolder = holder?.id === requester.id && holder?.kind === requester.kind;
+      if (!isHolder) return reply.code(409).send({ error: 'browser busy' });
+    }
     return leases.acquire(requester);
   });
 

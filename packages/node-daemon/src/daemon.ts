@@ -42,6 +42,8 @@ async function drain(res: Response): Promise<void> {
 export interface DaemonDeps {
   /** Swapped for a `FakeDriver` in tests, so no test ever launches a real browser. */
   createBrowserDriver?: (cfg: BrowserConfig) => Promise<BrowserDriver>;
+  /** Called instead of `process.exit(0)` when the hub reports this node was removed (heartbeat 410). */
+  onRemoved?: () => void;
 }
 
 export class Daemon {
@@ -233,6 +235,12 @@ export class Daemon {
       fetch(`${this.hubUrl}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST', headers: this.authHeaders })
         .then(async (res) => {
           await drain(res);
+          if (res.status === 410) {
+            console.error('[daemon] this node was removed from the hub; exiting');
+            await this.stop();
+            if (this.deps.onRemoved) this.deps.onRemoved(); else process.exit(0);
+            return;
+          }
           if (res.status === 404) { this.hubFailures = 0; void this.reregister('heartbeat'); return; }
           // 503 is the hub telling us it is handing itself over; anything else that isn't a 2xx is
           // a hub that can't serve this node either way.

@@ -165,8 +165,13 @@ it answers, and registers both tiers with `priority: 10` and small stream caps (
 Adding a node today: install Node 22, clone the repo, write a config from the examples in
 `configs/` (`amd.yaml` for the 7900 XTX, `macbook.yaml`, `macmini.yaml` for the browser node),
 set `DAEMON_TOKEN` to the hub's, run `npx tsx packages/node-daemon/src/main.ts <config>` under a
-service. The per-machine playbooks are in `deploy/`. A one-command installer and remove/drain
-buttons are on the roadmap (`docs/plan-agenthub-v2.md`, Phase D).
+service. The per-machine playbooks are in `deploy/`. A one-command installer is still on the
+roadmap (`docs/plan-agenthub-v2.md`, Phase D).
+
+Cluster's **Drain** button stops new jobs, turns and browser leases from landing on a node while
+whatever it's already running finishes, and **Undrain** reverses it. **Remove** forgets the node
+outright — its daemon exits once the hub tells it so — so getting it back means re-running its
+service or install.
 
 A node is *offline* when its heartbeats stop; the hub requeues its jobs and routes around it.
 

@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   profiles_json TEXT NOT NULL DEFAULT '[]',
   video INTEGER NOT NULL DEFAULT 0,
   control_json TEXT,
-  control_node INTEGER NOT NULL DEFAULT 0
+  control_node INTEGER NOT NULL DEFAULT 0,
+  draining INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -121,6 +122,7 @@ export function openDb(path: string): Db {
   ensureColumn(db, 'nodes', 'video', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'nodes', 'control_json', `TEXT`);
   ensureColumn(db, 'nodes', 'control_node', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn(db, 'nodes', 'draining', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'attempts', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'jobs', 'result_json', `TEXT`);
   ensureColumn(db, 'jobs', 'error', `TEXT`);

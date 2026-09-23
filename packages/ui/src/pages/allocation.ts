@@ -3,7 +3,7 @@ import { policyPillText } from '../models.js';
 import type { Store, UiState } from '../store.js';
 import { el, priorityPicker } from './projects.js';
 
-const COLUMNS = ['Project', 'Status', 'Priority', 'Models', 'Updated'] as const;
+const COLUMNS = ['Project', 'Status', 'Order', 'Models', 'Updated'] as const;
 
 const NOTE = 'The Master reorders these automatically during briefings; your setting wins until it changes it again.';
 

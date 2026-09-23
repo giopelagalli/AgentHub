@@ -115,7 +115,7 @@ export class ProjectOrchestrator {
     if (endedEarly) transcript.appendEvent(result.sessionId, `turn ${n} ended ${result.outcome} without a briefing`);
     // An interrupted turn only saw part of the project. Overwriting the last good briefing with
     // whatever it managed to say would tell the master *less* than it already knows.
-    if (endedEarly && before) return finish(before, result.outcome, `The turn ended ${result.outcome} without a briefing.`);
+    if (endedEarly && before) return finish(before, result.outcome, earlyEndNote(result.outcome));
 
     // Otherwise the master still needs a report: synthesize one from the board and what was said.
     const briefing = await this.synthesize(manifest, result);
@@ -143,6 +143,9 @@ export class ProjectOrchestrator {
   }
 }
 
+/** Why a hub-stopped turn never got to report: a restart/redeploy, or the 20-minute turn cap — never the model. */
+const CUT_SHORT = 'The turn was cut short (the hub stopped, or the turn hit its time limit)';
+
 /**
  * What a turn that ran out of room (or failed) says instead of its own last words. The model's final
  * assistant text there is mid-thought — "let me try a smaller range" — and publishing it as the
@@ -152,8 +155,16 @@ function incompleteNote(result: AgentRunResult): string | null {
   if (result.outcome === 'budget-exhausted') {
     return `The turn hit its tool-call budget (${ORCHESTRATOR_TOOL_CALLS}) before reporting; ${result.toolCalls} tool calls were made, last action: ${result.lastTool ?? 'none'}.`;
   }
+  if (result.outcome === 'aborted') {
+    return `${CUT_SHORT} before reporting; ${result.toolCalls} tool calls were made, last action: ${result.lastTool ?? 'none'}.`;
+  }
   if (result.outcome === 'error') {
     return `The turn ended with an error before reporting; ${result.toolCalls} tool calls were made, last action: ${result.lastTool ?? 'none'}.`;
   }
   return null;
+}
+
+/** Same reason, without the in-progress detail, for a turn that falls back to the last good briefing. */
+function earlyEndNote(outcome: AgentRunResult['outcome']): string {
+  return outcome === 'aborted' ? `${CUT_SHORT} before it could report.` : `The turn ended ${outcome} without a briefing.`;
 }

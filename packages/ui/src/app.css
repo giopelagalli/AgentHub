@@ -1549,6 +1549,58 @@ button.card__open:hover {
   padding: 20px 24px;
 }
 
+/* --- help ------------------------------------------------------------------ */
+
+.help {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  padding: 20px 24px;
+}
+
+.help__toc {
+  position: sticky;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.help__toc a {
+  padding: 4px 0;
+  color: var(--text-dim);
+  text-decoration: none;
+}
+
+.help__toc a:hover {
+  color: var(--text);
+}
+
+.help__toc a.help__toc--sub {
+  padding-left: 14px;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.help__body {
+  max-width: 760px;
+}
+
+@media (max-width: 900px) {
+  .help {
+    display: block;
+  }
+
+  .help__toc {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin-bottom: 16px;
+  }
+}
+
 /* --- drawer --------------------------------------------------------------- */
 
 .drawer {

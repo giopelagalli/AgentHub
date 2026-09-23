@@ -3,6 +3,7 @@ import { connect } from './net.js';
 import { mountAllocation } from './pages/allocation.js';
 import { mountCluster } from './pages/cluster.js';
 import { mountComputer } from './pages/computer.js';
+import { mountHelp } from './pages/help.js';
 import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
 import { mountRail, type PageId } from './rail.js';
@@ -14,6 +15,7 @@ const MOUNTS: Record<PageId, (host: HTMLElement, store: Store) => () => void> = 
   computer: mountComputer,
   cluster: mountCluster,
   allocation: mountAllocation,
+  help: mountHelp,
 };
 
 function hostElement(): HTMLElement {

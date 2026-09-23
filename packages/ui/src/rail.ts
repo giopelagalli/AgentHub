@@ -14,7 +14,7 @@ import { toast } from './toast.js';
  * Everything above `mountRail` is pure, so the rail's shape can be read without a DOM.
  */
 
-export type PageId = 'projects' | 'computer' | 'cluster' | 'allocation';
+export type PageId = 'projects' | 'computer' | 'cluster' | 'allocation' | 'help';
 
 /** The pages the rail links to; the projects view is reached through the list instead. */
 export type RailPageId = Exclude<PageId, 'projects'>;
@@ -32,6 +32,7 @@ export const RAIL_PAGES: readonly RailPage[] = [
   { id: 'computer', label: 'Computer', hint: 'Shared browser', initial: 'Co' },
   { id: 'cluster', label: 'Cluster', hint: 'Nodes and jobs', initial: 'Cl' },
   { id: 'allocation', label: 'Allocation', hint: 'What runs first', initial: 'Al' },
+  { id: 'help', label: 'Help', hint: 'How AgentHub works', initial: 'He' },
 ];
 
 export interface RailEntry extends RailPage {

@@ -25,8 +25,9 @@ const list = [
 ];
 
 describe('railModel', () => {
-  it('links to the three whole-app pages, and not to the projects view', () => {
-    expect(railModel('projects', false).entries.map((e) => e.id)).toEqual(['computer', 'cluster', 'allocation']);
+  it('links to the four whole-app pages, and not to the projects view', () => {
+    expect(railModel('projects', false).entries.map((e) => e.id))
+      .toEqual(['computer', 'cluster', 'allocation', 'help']);
     expect(railModel('projects', false).entries.map((e) => e.id)).toEqual(RAIL_PAGES.map((p) => p.id));
   });
 

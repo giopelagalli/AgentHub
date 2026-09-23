@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { HubState, Priority, ProjectManifest, ProjectStatus } from '@agenthub/shared';
+import { PRIORITY_RANK, type HubState, type Priority, type ProjectManifest, type ProjectStatus } from '@agenthub/shared';
 import type { UiState } from '../src/store.js';
 import { allocationRows } from '../src/pages/allocation.js';
-import { projectsSignature } from '../src/pages/projects.js';
+import { priorityLabel, projectsSignature } from '../src/pages/projects.js';
 
 function project(slug: string, overrides: Partial<ProjectManifest> = {}): ProjectManifest {
   return {
@@ -44,6 +44,21 @@ describe('allocationRows', () => {
     const given = [project('b', { priority: 'batch' }), project('a', { priority: 'interactive' })];
     allocationRows(given);
     expect(given.map((p) => p.slug)).toEqual(['b', 'a']);
+  });
+});
+
+describe('priorityLabel', () => {
+  it('maps each priority to its plain-English word', () => {
+    expect(priorityLabel('interactive')).toBe('Runs first');
+    expect(priorityLabel('project')).toBe('Normal');
+    expect(priorityLabel('batch')).toBe('When idle');
+  });
+
+  it('covers every key of PRIORITY_RANK', () => {
+    for (const key of Object.keys(PRIORITY_RANK) as Priority[]) {
+      expect(typeof priorityLabel(key)).toBe('string');
+      expect(priorityLabel(key).length).toBeGreaterThan(0);
+    }
   });
 });
 

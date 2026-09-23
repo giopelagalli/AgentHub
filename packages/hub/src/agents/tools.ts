@@ -787,7 +787,9 @@ export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDe
         : [];
       const res = await runSubagent(deps, ctx, { role, member, task, extras });
       const text = res.text.trim();
-      const report = text ? truncateResult(text, SUBAGENT_RESULT_LIMIT) : `subagent ${role} ended (${res.outcome}) without a report`;
+      const report = text ? truncateResult(text, SUBAGENT_RESULT_LIMIT)
+        : res.outcome === 'aborted' ? `subagent ${role} was cut short (the hub stopped, or the turn hit its time limit) without a report`
+        : `subagent ${role} ended (${res.outcome}) without a report`;
       return `${report}\n\nFiles written: ${res.filesWritten.length ? res.filesWritten.join(', ') : '(none)'}`;
     },
   };

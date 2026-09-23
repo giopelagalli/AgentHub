@@ -71,10 +71,18 @@ function selectBox(options: readonly string[], value: string): HTMLSelectElement
   return box;
 }
 
+/** Human words for the hub's queue classes (`Priority`/`PRIORITY_RANK`) — which project's turns and jobs go first when nodes are busy. */
+export const PRIORITY_LABELS: Record<Priority, string> = { interactive: 'Runs first', project: 'Normal', batch: 'When idle' };
+
+export function priorityLabel(p: Priority): string {
+  return PRIORITY_LABELS[p];
+}
+
 /** The priority `<select>`, used by both this page's header and the allocation table. */
 export function priorityPicker(slug: string, value: Priority): HTMLSelectElement {
   const box = selectBox(PRIORITIES, value);
-  box.title = 'Priority';
+  for (const item of box.options) item.textContent = PRIORITY_LABELS[item.value as Priority];
+  box.title = 'Order — which project\'s turns and jobs go first when nodes are busy';
   box.addEventListener('change', () => {
     const wanted = box.value as Priority;
     void sendJson(`/api/projects/${slug}/priority`, { priority: wanted })
@@ -293,7 +301,7 @@ function autoRunForm(
   const enabled = el('input') as HTMLInputElement;
   enabled.type = 'checkbox';
   enabled.checked = current?.enabled ?? false;
-  enabledLabel.append(enabled, document.createTextNode('Enabled'));
+  enabledLabel.append(enabled, document.createTextNode('Run turns on a schedule'));
 
   const interval = el('select', 'select');
   for (const minutes of AUTO_RUN_INTERVALS) {
@@ -303,12 +311,14 @@ function autoRunForm(
     interval.appendChild(item);
   }
   interval.value = String(current?.everyMinutes ?? 60);
+  interval.title = 'How often a turn starts on its own';
 
   const maxPerDay = el('input', 'input') as HTMLInputElement;
   maxPerDay.type = 'number';
   maxPerDay.min = '1';
   maxPerDay.max = '100';
   maxPerDay.value = String(current?.maxTurnsPerDay ?? 6);
+  maxPerDay.title = 'Daily cap for this project; the hub has its own cap too';
 
   const submit = el('button', 'btn btn--primary', 'Save');
   submit.type = 'submit';
@@ -316,7 +326,12 @@ function autoRunForm(
   cancel.addEventListener('click', onCancel);
 
   const row = el('div', 'hire__row');
-  row.append(interval, maxPerDay, submit, cancel);
+  row.append(
+    document.createTextNode('Every '), interval,
+    document.createTextNode(', at most '), maxPerDay,
+    document.createTextNode(' turns a day'),
+    submit, cancel,
+  );
 
   form.append(enabledLabel, row);
   form.addEventListener('submit', (event) => {
@@ -553,7 +568,9 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     headBox.append(line, el('p', 'detail__intent', project.intent));
 
     const controls = el('div', 'actions');
-    controls.appendChild(priorityPicker(project.slug, project.priority));
+    const priorityField = el('label', 'field');
+    priorityField.append(el('span', 'field__label', 'Order'), priorityPicker(project.slug, project.priority));
+    controls.appendChild(priorityField);
     controls.appendChild(modelPicker(
       project.slug, project.modelPolicy, catalog,
       () => selected(store.getState())?.modelPolicy,

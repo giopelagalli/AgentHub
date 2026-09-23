@@ -135,7 +135,7 @@ describe('ProjectOrchestrator', () => {
   });
 
   it('keeps the last good briefing when a turn is aborted', async () => {
-    const { orchestrator, transcript } = await setup([
+    const { orchestrator, transcript, events } = await setup([
       publishStep(),
       { content: 'published' },
       { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'sleep 30'] } }] },
@@ -154,6 +154,23 @@ describe('ProjectOrchestrator', () => {
     const aborted = transcript.sessions({ kind: 'orchestrator' })[1];
     expect(aborted.outcome).toBe('aborted');
     expect(transcript.events(aborted.id).map((e) => e.content).join('\n')).toContain('turn 2 ended aborted');
+    // The hub stopped the turn — the model never failed to report, so the note says so.
+    expect(events.filter((e) => e.kind === 'turn-end').at(-1)).toMatchObject({ summary: expect.stringMatching(/cut short/) });
+  });
+
+  it('synthesizes a "cut short" briefing when the first turn ever is aborted', async () => {
+    const { orchestrator } = await setup([
+      { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'sleep 30'] } }] },
+    ]);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+
+    const briefing = await orchestrator.turn({ signal: controller.signal });
+
+    // No prior briefing to fall back to, so this is the model's report — and it must not read as
+    // the model's own failure to report.
+    expect(briefing.summary).toMatch(/cut short/);
+    expect(briefing.summary).toContain('1 tool calls were made, last action: run_shell');
   });
 
   it('runs spawn_subagent inline on the worker tier and feeds its text back as the tool result', async () => {
@@ -182,6 +199,26 @@ describe('ProjectOrchestrator', () => {
     expect(workerMessages[0].content).toContain('researcher');
     const offered = (worker.lastRequest().tools as { function: { name: string } }[]).map((t) => t.function.name);
     expect(offered).toEqual(workspaceTools().map((t) => t.def.name));
+  });
+
+  it('tells the manager a subagent\'s report was cut short when its own run is aborted', async () => {
+    const { orchestrator, transcript } = await setup(
+      [{ toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'summarize the repo', role: 'researcher' } }] }],
+      [{ toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sh', '-c', 'sleep 30'] } }] }],
+    );
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+
+    await orchestrator.turn({ signal: controller.signal });
+
+    const subagentSessions = transcript.sessions({ kind: 'subagent' });
+    expect(subagentSessions[0].outcome).toBe('aborted');
+
+    // The hub stopped the subagent's run — the manager must not read this as the subagent failing
+    // to report.
+    const orchestratorSession = transcript.sessions({ kind: 'orchestrator' })[0];
+    const results = transcript.messages(orchestratorSession.id).filter((m) => m.role === 'tool');
+    expect(results[0].content).toMatch(/cut short/);
   });
 
   it('gives a roster-less subagent\'s own events the same who as its start/end bracket', async () => {

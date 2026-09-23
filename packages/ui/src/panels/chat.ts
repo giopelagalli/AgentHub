@@ -1,16 +1,17 @@
 import type { ChatMessage, TeamMemberView } from '@agenthub/shared';
 import { getJson } from '../api.js';
-import { latestWorkMessages, statusLabel } from '../activity.js';
+import { latestWorkMessages } from '../activity.js';
 import { parseSseFrames } from '../sse.js';
+import { mountNow, type NowDeps, type NowHandle } from './now.js';
 
 /**
- * "What they're doing", shown above the log: an employee's roster status plus their latest work
- * session, or the manager's latest published briefing. `member` comes from the roster the caller
- * already has loaded, so opening the drawer needs no extra roster fetch for the status line.
+ * What this agent is doing, shown above the log: the live Now section, plus the one line it falls
+ * back to while idle — an employee's latest work session, or the manager's latest published
+ * briefing. `member` comes from the roster the caller already has loaded.
  */
 export type ChatActivity =
-  | { kind: 'employee'; member: TeamMemberView; activityUrl: string }
-  | { kind: 'manager'; briefingUrl: string };
+  | { kind: 'employee'; member: TeamMemberView; activityUrl: string; now: NowDeps }
+  | { kind: 'manager'; briefingUrl: string; now: NowDeps };
 
 export interface ChatTarget {
   /** Speaker name in the log and the drawer heading. */
@@ -83,6 +84,12 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
 
   const activityBox = document.createElement('section');
   activityBox.className = 'chat__activity';
+  // Only the "Latest work" block lives here now, and only once it has landed; the live status and
+  // the turn feed above it are the Now section's.
+  activityBox.hidden = true;
+
+  /** The live section above the log; absent for a drawer with no agent behind it (the assistant). */
+  const now: NowHandle | null = target.activity ? mountNow(target.activity.now) : null;
 
   const log = document.createElement('div');
   log.className = 'chat__log';
@@ -99,7 +106,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   form.append(input, send);
 
   const head = drawerHeader(target.name, target.subtitle, () => dispose());
-  panel.append(...(target.activity ? [head, activityBox, log, form] : [head, log, form]));
+  panel.append(head, ...(now ? [now.root, activityBox] : []), log, form);
 
   /** Within a few pixels of the end, so a reader who scrolled back stays there. */
   const atBottom = (): boolean => log.scrollHeight - log.scrollTop - log.clientHeight < 8;
@@ -197,52 +204,36 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     }
   };
 
-  /** One line of the "What they're doing" section, built the same way a chat message row is. */
-  const activityLine = (className: string, text: string): HTMLElement => {
-    const line = document.createElement('p');
-    line.className = className;
-    line.textContent = text;
-    return line;
-  };
-
   /**
-   * "What they're doing": an employee's roster status and latest-session excerpt (already in hand
-   * from the roster the caller loaded) plus a fetch for the last turns of their current work session;
-   * the manager's latest published briefing instead. Best-effort — a failed fetch leaves whatever
-   * already rendered from the roster alone rather than replacing it with an error.
+   * The line the Now section falls back to while idle, and the "Latest work" block under it: an
+   * employee's latest work session, or the manager's latest published briefing. Best-effort — a
+   * fetch that fails leaves the Now section on what the turn feed alone can say.
    */
   const loadActivity = async (): Promise<void> => {
     const activity = target.activity;
-    if (!activity) return;
+    if (!activity || !now) return;
 
     if (activity.kind === 'manager') {
-      const line = activityLine('chat__activity-line', 'Loading the latest briefing…');
-      activityBox.appendChild(line);
       try {
         const { briefing } = await getJson<{ briefing: { summary: string } | null }>(activity.briefingUrl);
-        line.textContent = briefing ? briefing.summary : 'No briefing published yet.';
-      } catch (error) {
-        line.textContent = `Could not load the briefing: ${String(error)}`;
+        now.setLastTurn(briefing?.summary ?? null);
+      } catch {
+        // Nothing to say beyond what the feed above already shows.
       }
       return;
     }
 
     const { member, activityUrl } = activity;
-    const status = activityLine('chat__activity-line', '');
-    const dot = document.createElement('span');
-    dot.className = `dot dot--${member.status}`;
-    const label = document.createElement('span');
-    label.textContent = `${statusLabel(member.status)} · ${member.sessionsCount} session${member.sessionsCount === 1 ? '' : 's'}`;
-    status.append(dot, label);
-    activityBox.appendChild(status);
-    if (member.currentSession?.lastMessage) {
-      activityBox.appendChild(activityLine('chat__activity-line chat__activity-excerpt', member.currentSession.lastMessage));
-    }
+    // The roster the caller loaded already carries one line, so the section is never blank while
+    // the session behind it is still being fetched.
+    now.setLastTurn(member.currentSession?.lastMessage ?? null);
 
     try {
       const data = await getJson<{ session: unknown; messages: ChatMessage[] }>(activityUrl);
       const lines = data.session ? latestWorkMessages(data.messages, target.name) : [];
       if (!lines.length) return;
+      // Their own last word says more about what they did than the task they were handed.
+      now.setLastTurn([...lines].reverse().find((line) => line.speaker === target.name)?.text ?? lines[lines.length - 1].text);
       const details = document.createElement('details');
       details.className = 'chat__activity-details';
       const summary = document.createElement('summary');
@@ -261,8 +252,9 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
         details.appendChild(row);
       }
       activityBox.appendChild(details);
+      activityBox.hidden = false;
     } catch {
-      // The status line above already came from the roster; the "Latest work" block just stays off.
+      // The Now section above says what it can from the turn feed; this block just stays off.
     }
   };
 
@@ -359,6 +351,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     closed = true;
     window.removeEventListener('keydown', onKey);
     for (const controller of pending) controller.abort();
+    now?.dispose();
     panel.remove();
     target.onClose?.();
   }

@@ -1,0 +1,88 @@
+# AgentHub — architecture map
+
+One paragraph per module: what it is for, its interface, and why it has this shape. A map, not a
+manual; the code's own comments carry the detail. Decisions that shaped a module are cited by
+number (`docs/decisions/`).
+
+## Packages
+
+**`packages/shared`** — the types every package agrees on (`ServingEndpoint`, `NodeInfo`,
+`ProjectManifest`, `TeamMember`, `Milestone`, `TurnEvent`, `WsMessage`, `PRD_SECTIONS`) and the
+one runtime helper that both the hub and the daemon need, `shell-task` (`runShellTask` with
+workspace containment). Types live here so the wire format is checked at compile time on both
+ends; nothing here does I/O except the shell helper.
+
+**`packages/mocks`** — a strict OpenAI-compatible mock server (validates tool and `tool_calls`
+wire shapes, scripts replies, records requests), a ComfyUI mock, and a daemon-config writer for
+tests. Strictness is the point: a lenient mock once hid a broken wire format behind 650 green
+tests.
+
+**`packages/hub`** — the one long-running process. Fastify + SQLite. Owns the API, the UI
+bundle, the WebSocket, the queue, the gateway, the projects, the assistant, Telegram, and now
+enrollment and usage. Everything else talks to it; it talks to nodes only through what they
+register (0003).
+
+**`packages/node-daemon`** — one process per machine. Registers what the machine can do
+(serving entries spawned or attached, 0005; shell jobs; a browser; a profile set; the hub itself
+on a control node), heartbeats, claims jobs, runs them. Retries registration at startup;
+exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN` (0016).
+
+**`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
+the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
+docs and activity; a drawer per agent with a live *Now* feed and a chat. Pure model functions
+(`turns.ts`, `models.ts`, `org.ts`, `rail.ts`) are separated from DOM code so they are testable
+without a browser.
+
+## Hub modules (`packages/hub/src`)
+
+**`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
+`open`, `daemon` or `owner` by an explicit table; unknown routes deny. Daemon routes declare the
+node they are about so a node token cannot act for another node (0016). Login throttling per IP.
+
+**`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
+`auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
+marks unhealthy endpoints, sends per-endpoint `priority` and `requestExtras` (0006, 0008),
+refuses switched-off models and cloud past the spend cap (0002, 0019). It is the only place
+a model is ever called.
+
+**`providers/`** — `anthropic.ts` (SDK streaming) and `fireworks.ts` (base URL, the curated
+model list with `hard` flags and prices, the key env). No I/O beyond what the gateway asks.
+
+**`node-registry.ts`** / **`db.ts`** / **`queue.ts`** — nodes (with owner, token hash,
+draining, hardware), the SQLite schema with `ensureColumn` migrations, and the priority job queue
+with fencing and requeue-on-offline. SQLite because one hub, tens of projects, a few users.
+
+**`enrollment.ts`** — one-time enrollment tokens, hashing, the install command; the hub serves
+`/install.sh` and a `git archive` of its own source so nodes never need repo access (0016).
+
+**`usage.ts`** — per-request token usage and cost, summaries, the trailing-24h cloud spend that
+drives the dollar cap (0019).
+
+**`agents/`** — `loop.ts` (the tool-use loop: transcripts, budgets, the briefing nudge),
+`tools.ts` (workspace tools with paging, bundle tools, `spawn_subagent`, shell containment),
+`verify.ts` (`complete_milestone`: tests, then a read-only reviewer; done needs a positive signal
+and no negative one), `budgets.ts`, `transcript.ts`. The built-in loop is the manager's runtime
+and the fallback harness (0013).
+
+**`projects/`** — `bundle.ts` (a git repo per project: manifest, PRD, roadmap, docs, decisions,
+team, briefings, workspace), `prd.ts` (twelve fixed sections, the audit score, the drafter and
+roadmap generator), `roadmap.ts`, `digest.ts` (a bounded workspace digest for turn continuity),
+`chat.ts` (document-editor personas and one-on-one chats), `orchestrator.ts` (one turn),
+`prompts.ts` (all agent prompts; the verify-first rules, 0010), `service.ts` (turn serialization,
+time limit 0009, auto-run scheduling and caps 0001), `master.ts`.
+
+**`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
+
+**`assistant/`, `telegram/`, `external/`, `resources.ts`, `control-switch.ts`** — the built-in
+assistant with its markdown memory, the grammY bot with a confirmation gate, external tools
+(Grok, Gemini, search), the Spark video-slot exclusivity manager, and the control-node switch
+(snapshot, data stamp, daemon rediscovery).
+
+## Deployment
+
+**`deploy/install.sh`** — the one-command node installer: detect hardware, install Node,
+fetch the daemon from the hub, attach to an existing model server or register compute-only,
+enroll, install a launchd agent or systemd user unit (0016, 0017). **`deploy/spark/`** — the
+hub's and daemon's systemd user units and the box playbook. **`deploy/do/`** — the DigitalOcean
+Caddy edge. **`configs/`** — daemon configs; `spark.yaml` is the live one (attach mode, priority,
+thinking off for workers).

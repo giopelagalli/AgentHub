@@ -127,6 +127,16 @@ function modelOverrideApplies(ep: ServingEndpoint, route: Route | undefined): bo
   return !route.provider || ep.provider === route.provider;
 }
 
+/** What the gateway itself decides for every call — an operator's requestExtras must never set any
+ *  of these. `tools` and `priority` below are only conditionally spread, so without this filter an
+ *  extras-supplied one would survive whenever the call itself doesn't set it. */
+const RESERVED_REQUEST_KEYS = new Set(['model', 'messages', 'stream', 'tools', 'priority', 'stream_options']);
+
+function sanitizedExtras(extras: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!extras) return {};
+  return Object.fromEntries(Object.entries(extras).filter(([key]) => !RESERVED_REQUEST_KEYS.has(key)));
+}
+
 export class ModelGateway {
   private active = new Map<string, number>(); // `${node.name}|${tier}|${endpoint.url}` -> active streams
   private unhealthyUntil = new Map<string, number>(); // same key -> epoch ms until which it's skipped
@@ -337,8 +347,9 @@ export class ModelGateway {
             method: 'POST',
             headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
             body: JSON.stringify({
-              // requestExtras spreads first so the reserved keys below always win over it.
-              ...(picked.endpoint.requestExtras ?? {}),
+              // requestExtras spreads first, reserved keys already stripped, so the fields below
+              // always win over it — including the ones only conditionally set.
+              ...sanitizedExtras(picked.endpoint.requestExtras),
               model, messages: toOpenAiMessages(messages), stream: true,
               ...(tools ? { tools: toOpenAiTools(tools) } : {}),
               ...(sendPriority ? { priority: picked.endpoint.priority } : {}),

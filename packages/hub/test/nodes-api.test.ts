@@ -100,6 +100,17 @@ describe('remove', () => {
   });
 });
 
+describe('register', () => {
+  it('400s a malformed node name', async () => {
+    const res = await hub.app.inject({
+      method: 'POST', url: '/api/nodes/register',
+      payload: { name: 'a/b', arch: 'arm64', endpoints: [] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({ error: 'invalid node name' });
+  });
+});
+
 describe('ownership', () => {
   it('gives a node that only registers the admin as its owner, and shows no credential', async () => {
     await register('spark');

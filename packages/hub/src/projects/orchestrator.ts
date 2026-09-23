@@ -144,7 +144,7 @@ export class ProjectOrchestrator {
   }
 }
 
-/** Why a hub-stopped turn never got to report: a restart/redeploy, or the 20-minute turn cap — never the model. */
+/** Why a hub-stopped turn never got to report: a restart/redeploy, or the turn hit its time limit — never the model. */
 const CUT_SHORT = 'The turn was cut short (the hub stopped, or the turn hit its time limit)';
 
 /**

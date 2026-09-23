@@ -27,7 +27,7 @@ everything the script did.
    It never downloads a model without a confirmation or `--yes`.
 5. **Config** — writes `~/.agenthub/node.yaml` (mode 0600) and prints it with the token masked.
 6. **Enroll** — `POST <hub>/api/nodes/enroll`, and writes the node token the hub returns into the
-   config. If the name is taken it retries once as `<name>-2`.
+   config. If the name is taken, it exits and says to mint a fresh token and re-run with `--name`.
 7. **Service** — a launchd agent on macOS, a systemd user unit on Linux, both set to start at
    login/boot and restart on failure.
 8. **Verify** — watches the log for up to 60 s and prints `Node "<name>" is up.` once the daemon

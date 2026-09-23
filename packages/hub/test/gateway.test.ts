@@ -441,4 +441,35 @@ describe('request extras', () => {
       await app.close();
     }
   });
+
+  it('strips reserved keys even when the call itself never sets them', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      bodies.push(req.body as Record<string, unknown>);
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        // No priority and no tools on this call, which is exactly when the conditional spreads
+        // below requestExtras would otherwise let an extras-supplied one survive.
+        { tier: 'worker', url, model: 'mock-model', maxStreams: 2, requestExtras: { priority: 99, tools: [], chat_template_kwargs: { enable_thinking: false } } },
+      ] });
+      const gateway = new ModelGateway(registry);
+      await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect('tools' in bodies[0]!).toBe(false);
+      expect('priority' in bodies[0]!).toBe(false);
+      expect(bodies[0]!.chat_template_kwargs).toEqual({ enable_thinking: false });
+    } finally {
+      await app.close();
+    }
+  });
 });

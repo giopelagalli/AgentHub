@@ -59,15 +59,15 @@ export class EnrollmentTokens {
    * The update is the check: `used_at IS NULL` in the WHERE clause is what makes "single use" hold
    * even if two installers race the same token.
    */
-  consume(token: string, now = Date.now()): { createdBy: string } | null {
+  consume(token: string, now = Date.now()): { createdBy: string; suggestedName: string | null } | null {
     const hash = hashToken(token);
     const res = this.db.prepare(`
       UPDATE enrollment_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL AND expires_at > ?
     `).run(now, hash, now);
     if (res.changes === 0) return null;
-    const row = this.db.prepare(`SELECT created_by FROM enrollment_tokens WHERE token_hash=?`)
-      .get(hash) as { created_by: string };
-    return { createdBy: row.created_by };
+    const row = this.db.prepare(`SELECT created_by, suggested_name FROM enrollment_tokens WHERE token_hash=?`)
+      .get(hash) as { created_by: string; suggested_name: string | null };
+    return { createdBy: row.created_by, suggestedName: row.suggested_name };
   }
 }
 

@@ -137,19 +137,27 @@ describe('enrolling', () => {
     expect((await enroll(hub, { token, name: 'ok', arch: 'x86_64' })).statusCode).toBe(200);
   });
 
-  it('409s a name another owner already holds, and a synthetic cloud node name', async () => {
+  it('409s an existing node name unless the token was minted to re-enroll it, and a synthetic cloud node name', async () => {
     const hub = spawn();
     const cookie = await login(hub);
 
     const first = await mint(hub, cookie);
     expect((await enroll(hub, { token: first.token, name: 'shared', arch: 'x86_64' })).statusCode).toBe(200);
-    // Re-owned by hand: single-user today, so this is the only way to make the two owners differ.
-    hub.db.prepare(`UPDATE nodes SET owner='someone-else' WHERE name='shared'`).run();
+    const before = hub.db.prepare(`SELECT token_hash, owner FROM nodes WHERE name='shared'`).get();
 
+    // A token minted without naming the node does not get to take over an existing one.
     const second = await mint(hub, cookie);
     const taken = await enroll(hub, { token: second.token, name: 'shared', arch: 'x86_64' });
     expect(taken.statusCode).toBe(409);
     expect(taken.json()).toEqual({ error: 'name taken' });
+    expect(hub.db.prepare(`SELECT token_hash, owner FROM nodes WHERE name='shared'`).get()).toEqual(before);
+
+    // A token minted for that exact name is how an owner re-enrolls it: it rotates the credential.
+    const third = await mint(hub, cookie, 'shared');
+    const reenrolled = await enroll(hub, { token: third.token, name: 'shared', arch: 'x86_64' });
+    expect(reenrolled.statusCode).toBe(200);
+    const after = hub.db.prepare(`SELECT token_hash FROM nodes WHERE name='shared'`).get() as { token_hash: string };
+    expect(after.token_hash).not.toBe((before as { token_hash: string }).token_hash);
 
     const cloudHub = createHub({
       auth: { password: PASSWORD, daemonToken: DAEMON_TOKEN, sessionSecret: 'test-secret' },
@@ -157,10 +165,25 @@ describe('enrolling', () => {
     });
     hubs.push(cloudHub);
     const cloudCookie = await login(cloudHub);
-    const third = await mint(cloudHub, cloudCookie);
-    const reserved = await enroll(cloudHub, { token: third.token, name: 'cloud-fireworks', arch: 'cloud' });
+    const fourth = await mint(cloudHub, cloudCookie);
+    const reserved = await enroll(cloudHub, { token: fourth.token, name: 'cloud-fireworks', arch: 'cloud' });
     expect(reserved.statusCode).toBe(409);
     expect(reserved.json()).toEqual({ error: 'reserved node name' });
+  });
+
+  it('409s an existing node with no token hash too — a node registered under the shared DAEMON_TOKEN is protected as well', async () => {
+    const hub = spawn();
+    const cookie = await login(hub);
+    await hub.app.inject({
+      method: 'POST', url: '/api/nodes/register', headers: bearer(DAEMON_TOKEN),
+      payload: { name: 'spark', arch: 'x86_64', jobTypes: ['shell-task'], endpoints: [] },
+    });
+    expect(hub.db.prepare(`SELECT token_hash FROM nodes WHERE name='spark'`).get()).toEqual({ token_hash: null });
+
+    const { token } = await mint(hub, cookie);
+    const res = await enroll(hub, { token, name: 'spark', arch: 'x86_64' });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({ error: 'name taken' });
   });
 
   it('throttles a client that keeps guessing, like login does', async () => {
@@ -178,9 +201,9 @@ describe('enrolling', () => {
 });
 
 describe('the per-node token', () => {
-  /** Enrols `name` and returns its bearer. */
+  /** Enrols `name` and returns its bearer. Minted for `name`, so this also works as a re-enrol. */
   async function enrolled(hub: Hub, cookie: string, name: string): Promise<string> {
-    const { token } = await mint(hub, cookie);
+    const { token } = await mint(hub, cookie, name);
     const res = await enroll(hub, { token, name, arch: 'x86_64' });
     expect(res.statusCode).toBe(200);
     return res.json().nodeToken as string;
@@ -430,6 +453,11 @@ describe('what a joining node downloads', () => {
       ]) {
         expect(listing).toContain(path);
       }
+      // Secrets and runtime state never leave this machine, regardless of how SOURCE_ARCHIVE_PATHS
+      // is edited later.
+      expect(listing).not.toContain('configs/hub.env');
+      expect(listing.some((p) => p.startsWith('data/'))).toBe(false);
+      expect(listing.some((p) => p === '.env' || p.endsWith('/.env'))).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

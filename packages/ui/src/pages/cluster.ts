@@ -72,14 +72,14 @@ function actionButton(node: NodeInfo, action: 'drain' | 'undrain' | 'remove'): H
     const remove = button('Remove');
     remove.addEventListener('click', () => {
       if (!window.confirm(`Remove ${node.name}? Its daemon will exit; re-run its install to add it back.`)) return;
-      void sendJson(`/api/nodes/${node.name}`, undefined, 'DELETE')
+      void sendJson(`/api/nodes/${encodeURIComponent(node.name)}`, undefined, 'DELETE')
         .catch((error: unknown) => toast(`Could not remove ${node.name}: ${String(error)}`, 'error'));
     });
     return remove;
   }
   const drain = button(action === 'drain' ? 'Drain' : 'Undrain');
   drain.addEventListener('click', () => {
-    void sendJson(`/api/nodes/${node.name}/drain`, { on: action === 'drain' })
+    void sendJson(`/api/nodes/${encodeURIComponent(node.name)}/drain`, { on: action === 'drain' })
       .catch((error: unknown) => toast(`Could not ${action} ${node.name}: ${String(error)}`, 'error'));
   });
   return drain;

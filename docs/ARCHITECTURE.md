@@ -20,7 +20,7 @@ tests.
 **`packages/hub`** — the one long-running process. Fastify + SQLite. Owns the API, the UI
 bundle, the WebSocket, the queue, the gateway, the projects, the assistant, Telegram, and now
 enrollment and usage. Everything else talks to it; it talks to nodes only through what they
-register (0003).
+register (0003). Enrollment and usage accounting are new; usage is not yet merged.
 
 **`packages/node-daemon`** — one process per machine. Registers what the machine can do
 (serving entries spawned or attached, 0005; shell jobs; a browser; a profile set; the hub itself
@@ -42,8 +42,8 @@ node they are about so a node token cannot act for another node (0016). Login th
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
 marks unhealthy endpoints, sends per-endpoint `priority` and `requestExtras` (0006, 0008),
-refuses switched-off models and cloud past the spend cap (0002, 0019). It is the only place
-a model is ever called.
+refuses switched-off models (0002). It is the only place a model is ever called. (The cloud
+spend cap, 0019, is in progress and not yet here.)
 
 **`providers/`** — `anthropic.ts` (SDK streaming) and `fireworks.ts` (base URL, the curated
 model list with `hard` flags and prices, the key env). No I/O beyond what the gateway asks.
@@ -54,9 +54,6 @@ with fencing and requeue-on-offline. SQLite because one hub, tens of projects, a
 
 **`enrollment.ts`** — one-time enrollment tokens, hashing, the install command; the hub serves
 `/install.sh` and a `git archive` of its own source so nodes never need repo access (0016).
-
-**`usage.ts`** — per-request token usage and cost, summaries, the trailing-24h cloud spend that
-drives the dollar cap (0019).
 
 **`agents/`** — `loop.ts` (the tool-use loop: transcripts, budgets, the briefing nudge),
 `tools.ts` (workspace tools with paging, bundle tools, `spawn_subagent`, shell containment),

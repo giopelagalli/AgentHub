@@ -16,3 +16,8 @@ Node tokens valid only for the node they name (two-phase check); `DAEMON_TOKEN` 
 
 ## Consequences
 The hub's version is what nodes run. A 409 on a name clash burns the token (mint again). Verified end to end on the owner's MacBook 2026-09-23.
+Admission is trust: an enrolled node may advertise serving endpoints the gateway will route the
+owner's turns through, and may claim `shell-task` jobs carrying the owner's project work. There is
+no per-node allow-list yet; until Phase F adds ownership-aware routing, only enroll machines you
+would hand your workspace to. An enrollment token may create a node or re-enroll the node it was
+minted for (`suggested_name`); it can never take over another existing node (review 2026-09-23).

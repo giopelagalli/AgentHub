@@ -65,6 +65,8 @@ if run_installer "$OUT" --hub "$HUB" --token TEST-ENROLLMENT-TOKEN --dry-run --r
   expect "$OUT" '^==> Detecting this machine'
   expect "$OUT" '^==> Checking Node.js'
   expect "$OUT" '^==> Fetching the daemon from '"$HUB"'/install/agenthub-src.tgz'
+  # A first install fetches with the enrollment token in the query string - masked, never raw.
+  expect "$OUT" 'agenthub-src.tgz?token=.*\.\.\.'
   expect "$OUT" '^==> Choosing a serving recipe'
   expect "$OUT" '^==> Writing .*/node.yaml'
   expect "$OUT" '^==> Enrolling with '"$HUB"
@@ -181,6 +183,8 @@ if run_installer "$OUT" --hub "$HUB" --dry-run --recipe none; then
   expect "$OUT" '^==> Updating the node already installed'
   expect "$OUT" 'already enrolled - keeping the existing node token'
   expect "$OUT" 'name: already-here'
+  # An update fetches with the node's own bearer instead - masked, never raw.
+  expect "$OUT" 'Authorization: Bearer.*\.\.\.'
   reject "$OUT" '\[dry-run\] POST'
   reject "$OUT" 'an-existing-node-token'
 fi

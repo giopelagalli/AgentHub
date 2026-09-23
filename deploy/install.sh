@@ -377,14 +377,37 @@ ensure_node() {
 fetch_src() {
   step "Fetching the daemon from $HUB/install/agenthub-src.tgz"
   if [ "$DRY_RUN" -eq 1 ]; then
-    info "[dry-run] curl -fsSL $HUB/install/agenthub-src.tgz | tar xz -C $AGENTHUB_HOME/src.new"
+    if [ "$IS_UPDATE" -eq 1 ]; then
+      info "[dry-run] curl -fsSL -H 'Authorization: Bearer $(mask "$NODE_TOKEN")' $HUB/install/agenthub-src.tgz | tar xz -C $AGENTHUB_HOME/src.new"
+    else
+      info "[dry-run] curl -fsSL '$HUB/install/agenthub-src.tgz?token=$(mask "$TOKEN")' | tar xz -C $AGENTHUB_HOME/src.new"
+    fi
     info "[dry-run] swap $AGENTHUB_HOME/src.new into $SRC (the previous one is kept as $AGENTHUB_HOME/src.prev)"
     info "[dry-run] (cd $SRC && npm ci --omit=dev --no-audit --no-fund)"
     return 0
   fi
   rm -rf "$AGENTHUB_HOME/src.new"
   mkdir -p "$AGENTHUB_HOME/src.new"
-  curl -fsSL "$HUB/install/agenthub-src.tgz" | tar xz -C "$AGENTHUB_HOME/src.new"
+  # A per-node bearer on an update (the installer's own credential, stronger than a one-time
+  # token and the only one still valid), otherwise the enrollment token in the query string.
+  src_tgz=$AGENTHUB_HOME/src.tgz.download
+  rm -f "$src_tgz"
+  if [ "$IS_UPDATE" -eq 1 ]; then
+    code=$(curl -sSL -w '%{http_code}' -o "$src_tgz" -H "Authorization: Bearer $NODE_TOKEN" \
+      "$HUB/install/agenthub-src.tgz" || true)
+  else
+    code=$(curl -sSL -w '%{http_code}' -o "$src_tgz" "$HUB/install/agenthub-src.tgz?token=$TOKEN" || true)
+  fi
+  if [ "$code" != 200 ]; then
+    rm -f "$src_tgz"
+    case "$code" in
+      401) die "the hub refused the download: the enrollment token is invalid or used, or this node's token was revoked — mint a new token on the Cluster page" ;;
+      '') die "could not reach $HUB" ;;
+      *)  die "fetching the daemon source failed (HTTP $code)" ;;
+    esac
+  fi
+  tar xz -C "$AGENTHUB_HOME/src.new" < "$src_tgz"
+  rm -f "$src_tgz"
   # Tolerate a tarball packed with a single top-level directory.
   if [ ! -f "$AGENTHUB_HOME/src.new/package.json" ]; then
     inner=$(find "$AGENTHUB_HOME/src.new" -mindepth 2 -maxdepth 2 -name package.json | head -n 1)

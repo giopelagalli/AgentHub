@@ -6,8 +6,8 @@
 # over Tailscale. Everything it needs comes from /etc/caddy/agenthub.env
 # (see deploy/do/README.md):
 #
-#   HUB_DOMAIN     hub.example.com          the public name
-#   HUB_UPSTREAM   hub.internal:4000        the control-node alias (see README)
+#   HUB_DOMAIN     rosenroot.com            the public name (apex; www redirects to it)
+#   HUB_UPSTREAM   spark-f9a9.tail7ac2e2.ts.net:4000   the hub's tailnet name (see README §6)
 #   ACME_EMAIL     you@example.com          Let's Encrypt contact
 #   EDGE_USER      owner                    basic-auth user
 #   EDGE_HASH      $2a$14$...               `caddy hash-password` output
@@ -26,13 +26,17 @@
 {$HUB_DOMAIN} {
 	encode zstd gzip
 
-	# MANDATORY, not optional. The hub's own login is one password on a machine
-	# that holds the owner's memory, projects and API keys; this is the second
-	# factor in front of it, and it is what keeps unauthenticated internet
-	# traffic — scanners, exploit probes, login-throttle spam — from ever
-	# reaching the tailnet at all. Generate the hash with `caddy hash-password`;
-	# never put a plaintext password here.
-	basic_auth {
+	# The second factor for *browsers*. The hub's own login is one password on a
+	# machine that holds the owner's memory, projects and API keys; basic auth
+	# in front of the UI keeps scanners and login-throttle spam off it. It does
+	# NOT cover the machine paths: /api/* (daemons and JD authenticate with
+	# bearer tokens; the browser's own /api calls carry the hub's session
+	# cookie), /install.sh and /install/* (the node installer; the source
+	# tarball is gated by an enrollment token on the hub side) and /v1/* (the
+	# OpenAI-compatible door, bearer-authenticated). Generate the hash with
+	# `caddy hash-password`; never put a plaintext password here.
+	@ui not path /api/* /install.sh /install/* /v1/*
+	basic_auth @ui {
 		{$EDGE_USER} {$EDGE_HASH}
 	}
 
@@ -69,4 +73,9 @@
 			roll_keep 5
 		}
 	}
+}
+
+# The bare www name only redirects; the certificate for it is free.
+www.{$HUB_DOMAIN} {
+	redir https://{$HUB_DOMAIN}{uri} permanent
 }

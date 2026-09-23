@@ -10,7 +10,10 @@ over Tailscale.
 Everything else — the hub, the nodes, the models, the browser, ComfyUI — keeps
 listening on the tailnet only. Nothing anywhere needs a router port forward.
 
-    internet ──TLS──▶ droplet (Caddy, basic auth) ──tailnet──▶ control node :4000
+    internet ──TLS──▶ droplet (Caddy; basic auth on the UI paths) ──tailnet──▶ spark-f9a9:4000
+
+As deployed (2026-09-23): the public name is the apex **rosenroot.com** (DNS at Porkbun; `www`
+redirects to it); the upstream is the Spark's tailnet name; `rosenroot.ai` is a different app.
 
 ## 1. Droplet
 
@@ -43,12 +46,17 @@ entirely — the droplet's only inbound ports become 80 and 443:
 has to exist in the tailnet policy before the node can claim it (see step 5).
 `--accept-dns=true` is required: the upstream is a MagicDNS name.
 
-## 3. Public DNS
+## 3. Public DNS (Porkbun)
 
-One `A` record (and `AAAA` if you enabled IPv6) for `hub.example.com` pointing
-at the droplet's **public** IP. Nothing else is ever published — no node name,
-no tailnet address. Caddy gets its certificate from Let's Encrypt over HTTP-01
-on port 80, so let DNS propagate before starting it.
+In Porkbun → rosenroot.com → DNS records: delete the parking records Porkbun creates by default
+(the `ALIAS @ → pixie.porkbun.com` and the `CNAME www` ones), then add:
+
+    A     @      <droplet public IPv4>     TTL 600
+    A     www    <droplet public IPv4>     TTL 600
+
+(and `AAAA` for both if the droplet has IPv6). Nothing else is ever published — no node name,
+no tailnet address. Caddy gets its certificate from Let's Encrypt over HTTP-01 on port 80, so
+give DNS a few minutes to propagate before starting it (`dig +short rosenroot.com`).
 
 ## 4. Caddy
 
@@ -65,8 +73,8 @@ environment it reads:
     caddy hash-password            # type your edge password; copy the $2a$... hash
 
     sudo tee /etc/caddy/agenthub.env >/dev/null <<'EOF'
-    HUB_DOMAIN=hub.example.com
-    HUB_UPSTREAM=hub.internal:4000
+    HUB_DOMAIN=rosenroot.com
+    HUB_UPSTREAM=spark-f9a9.tail7ac2e2.ts.net:4000
     ACME_EMAIL=you@example.com
     EDGE_USER=owner
     EDGE_HASH=$2a$14$replace-me
@@ -147,8 +155,7 @@ the Tailscale admin console → Access controls:
       ]
     }
 
-Tag the Mac mini and the Strix Halo `tag:hub` (both are control-node
-candidates), every other machine `tag:node`, the droplet `tag:proxy`. Adjust
+Tag the Spark `tag:hub`, every other machine `tag:node`, the droplet `tag:proxy`. Adjust
 the port ranges to the ports your `configs/<node>.yaml` files actually use.
 The point of the shape, not the exact numbers: **`tag:proxy` can open exactly
 one port on exactly two machines**, so a compromised droplet is a compromised
@@ -158,31 +165,14 @@ There is no public exposure anywhere else. Do not add a Tailscale Funnel, do
 not open 4000 on the droplet's firewall, and keep every daemon bound to its
 tailnet interface rather than `0.0.0.0` (`deploy/tailscale.md`).
 
-## 6. The upstream name, and what the control-node switch does to it
+## 6. The upstream name
 
-`HUB_UPSTREAM` is deliberately an *alias*, not a machine name, because the
-control node moves (`deploy/controlnode.md`). Point it at whichever machine is
-currently the hub, in one of two places:
+`HUB_UPSTREAM` is the Spark's MagicDNS name, `spark-f9a9.tail7ac2e2.ts.net:4000` (the short
+`spark-f9a9:4000` also resolves when `--accept-dns` is on). The Spark is the hub for good (decision
+0003); if that ever changes, this one line and a `systemctl reload caddy` move the site. Check
+from the droplet before starting Caddy:
 
-**A. `/etc/hosts` on the droplet** (works on any tailnet, no admin console):
-
-    100.x.y.z   hub.internal        # macmini — the current control node
-
-**B. A custom DNS record in the Tailscale admin console** (DNS → Custom
-records): `hub.internal` → the control node's tailnet IP. Tidier, and it moves
-for every machine at once.
-
-Either way, `/controlnode` **does not repoint it for you** — the switch hands
-the hub over between machines, and the edge has to be told separately. After a
-switch:
-
-    sudo sed -i 's/^100\.[0-9.]* *hub\.internal/100.a.b.c   hub.internal/' /etc/hosts
-    sudo systemctl reload caddy
-    curl -sI https://hub.example.com/api/health -u owner:...   # expect 200
-
-Until you do, the public URL 502s while the tailnet UI (`http://<new
-node>.<tailnet>.ts.net:4000`) already works — which is the right failure
-direction: the owner keeps control, the internet does not.
+    curl -s http://spark-f9a9.tail7ac2e2.ts.net:4000/api/health     # {"ok":true}
 
 ## 7. The hub side: `TRUST_PROXY`
 
@@ -192,8 +182,7 @@ client — so **one attacker's five failed logins lock the owner out globally** 
 and the session cookie never gets marked `Secure`, because the hub sees plain
 HTTP.
 
-Set it in the hub's environment on the control node (`deploy/macmini/README.md`,
-`deploy/controlnode.md`):
+Set it in `~/AgentHub/configs/hub.env` on the Spark and restart the hub:
 
     TRUST_PROXY=100.x.y.z        # the droplet's tailnet IP — the safe form
     TRUST_PROXY=1                # trust any proxy: only if *nothing* else can reach :4000

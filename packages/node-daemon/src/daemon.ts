@@ -92,7 +92,7 @@ export class Daemon {
     const host = this.cfg.advertiseHost ?? '127.0.0.1';
     return {
       name: this.cfg.node.name, arch: this.cfg.node.arch,
-      endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams, ...(s.priority != null ? { priority: s.priority } : {}) })),
+      endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams, ...(s.priority != null ? { priority: s.priority } : {}), ...(s.requestExtras ? { requestExtras: s.requestExtras } : {}) })),
       jobTypes: this.cfg.jobTypes ?? [],
       ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
       profiles: Object.keys(this.cfg.profiles ?? {}),

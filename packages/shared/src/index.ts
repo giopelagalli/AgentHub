@@ -33,6 +33,11 @@ export interface ServingEndpoint {
    * otherwise. Absent means the field is not sent at all.
    */
   priority?: number;
+  /**
+   * Extra fields merged into every chat request to this endpoint (e.g. vLLM's
+   * `chat_template_kwargs`). Never overrides `model`, `messages`, `stream`, `tools`, or `priority`.
+   */
+  requestExtras?: Record<string, unknown>;
 }
 
 /**

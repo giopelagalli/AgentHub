@@ -412,3 +412,33 @@ describe('request priority', () => {
     }
   });
 });
+
+describe('request extras', () => {
+  it('merges requestExtras into the request body without letting them override the endpoint model', async () => {
+    const bodies: { model?: string; chat_template_kwargs?: unknown }[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      bodies.push(req.body as { model?: string; chat_template_kwargs?: unknown });
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const url = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        { tier: 'worker', url, model: 'mock-model', maxStreams: 2, requestExtras: { chat_template_kwargs: { enable_thinking: false }, model: 'evil' } },
+      ] });
+      const gateway = new ModelGateway(registry);
+      await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(bodies[0].chat_template_kwargs).toEqual({ enable_thinking: false });
+      expect(bodies[0].model).toBe('mock-model');
+    } finally {
+      await app.close();
+    }
+  });
+});

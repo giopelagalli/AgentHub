@@ -88,6 +88,29 @@ describe('node daemon', () => {
     expect(() => loadConfig(badPath)).toThrow(/cmd must be a non-empty list/);
   });
 
+  it('loadConfig accepts a requestExtras object and rejects a non-object value', () => {
+    const dir = tmpDir();
+    const okPath = join(dir, 'ok.yaml');
+    writeFileSync(okPath, [
+      'node:', '  name: attach-node', '  arch: arm64',
+      'hub: http://127.0.0.1:4000',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', '    port: 8888', '    maxStreams: 2',
+      '    requestExtras:', '      chat_template_kwargs: { enable_thinking: false }',
+    ].join('\n'));
+    const cfg = loadConfig(okPath);
+    expect(cfg.serving?.[0].requestExtras).toEqual({ chat_template_kwargs: { enable_thinking: false } });
+
+    const badPath = join(dir, 'bad.yaml');
+    writeFileSync(badPath, [
+      'node:', '  name: attach-node', '  arch: arm64',
+      'hub: http://127.0.0.1:4000',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', '    port: 8888', '    maxStreams: 2', '    requestExtras: "nope"',
+    ].join('\n'));
+    expect(() => loadConfig(badPath)).toThrow(/requestExtras must be an object/);
+  });
+
   it('spawns serving processes, registers with hub, and heartbeats', async () => {
     hub = createHub({ staleMs: 60000 });
     await hub.app.listen({ port: 0, host: '127.0.0.1' });
@@ -120,6 +143,31 @@ describe('node daemon', () => {
     // the spawned mock actually serves
     const models = await fetch(`http://127.0.0.1:${servePort}/v1/models`);
     expect(models.status).toBe(200);
+  }, 30000);
+
+  it('carries requestExtras through to the hub registration payload', async () => {
+    hub = createHub({ staleMs: 60000 });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const hubPort = (hub.app.server.address() as { port: number }).port;
+    const servePort = await getEphemeralPort();
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: extras-node', '  arch: arm64',
+      `hub: http://127.0.0.1:${hubPort}`,
+      'heartbeatMs: 200',
+      'serving:',
+      '  - tier: worker', '    model: mock-model', `    port: ${servePort}`, '    maxStreams: 4',
+      `    cmd: ["npx", "tsx", "${MOCK_SERVE}", "${servePort}"]`,
+      '    requestExtras:', '      chat_template_kwargs: { enable_thinking: false }',
+    ].join('\n'));
+
+    daemon = new Daemon(loadConfig(cfgPath));
+    await daemon.start();
+
+    const node = hub.registry.byName('extras-node');
+    expect(node?.endpoints[0]).toMatchObject({ requestExtras: { chat_template_kwargs: { enable_thinking: false } } });
   }, 30000);
 
   it('attaches to a server it did not start: health-checks, registers, and leaves it running on stop', async () => {

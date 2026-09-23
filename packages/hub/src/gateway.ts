@@ -337,6 +337,8 @@ export class ModelGateway {
             method: 'POST',
             headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
             body: JSON.stringify({
+              // requestExtras spreads first so the reserved keys below always win over it.
+              ...(picked.endpoint.requestExtras ?? {}),
               model, messages: toOpenAiMessages(messages), stream: true,
               ...(tools ? { tools: toOpenAiTools(tools) } : {}),
               ...(sendPriority ? { priority: picked.endpoint.priority } : {}),

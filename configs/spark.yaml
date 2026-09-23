@@ -24,6 +24,9 @@ serving:
     port: 8888
     maxStreams: 3
     priority: 10
+    # Employees and the reviewer answer without a thinking pass; the manager (orchestrator tier) keeps it.
+    requestExtras:
+      chat_template_kwargs: { enable_thinking: false }
 # No video-gen: a video model does not fit next to Flash-Next (docs/spark-setup.md §4).
 jobTypes: ["shell-task"]
 workspaceRoot: /home/giospark1/agenthub-workspace

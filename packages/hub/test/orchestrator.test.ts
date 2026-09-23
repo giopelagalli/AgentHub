@@ -316,15 +316,14 @@ describe('turn cost', () => {
     expect(summary.byModel).toEqual([{ provider: 'fireworks', model: FLASH, usd: summary.usd, tokens: summary.tokens.prompt + summary.tokens.completion }]);
     expect(summary.bySubject.map((r) => r.subject)).toEqual(['demo']);
 
-    // The turn's own total is exactly the sum of the usage events it saw, its subagent's included.
+    // The turn's events carry the manager's spend and its subagent's, and they sum to the ledger —
+    // which is what lets both the hub and the UI price a turn from its feed alone.
     const spent = h.events.filter((e) => e.kind === 'usage');
     expect(spent.map((e) => ('who' in e ? e.who : ''))).toContain('coder-1');
     expect(spent.map((e) => ('who' in e ? e.who : ''))).toContain('manager');
-    const end = h.events.find((e) => e.kind === 'turn-end') as (TurnEvent & { kind: 'turn-end' }) | undefined;
-    expect(end?.usd).toBeCloseTo(spent.reduce((n, e) => n + ('usd' in e ? (e.usd ?? 0) : 0), 0), 12);
-    expect(end?.usd).toBeCloseTo(summary.usd, 12);
-    expect(end?.tokens).toBe(spent.reduce((n, e) => n + ('tokens' in e ? e.tokens : 0), 0));
-    expect(end?.tokens).toBe(summary.tokens.prompt + summary.tokens.completion);
+    expect(spent.reduce((n, e) => n + ('usd' in e ? (e.usd ?? 0) : 0), 0)).toBeCloseTo(summary.usd, 12);
+    expect(spent.reduce((n, e) => n + ('tokens' in e ? e.tokens : 0), 0))
+      .toBe(summary.tokens.prompt + summary.tokens.completion);
   });
 });
 

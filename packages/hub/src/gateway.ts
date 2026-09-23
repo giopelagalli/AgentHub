@@ -154,6 +154,8 @@ export class ModelGateway {
   private parked = new Set<string>();
   /** Endpoints whose vLLM rejected `priority` (not started with `--scheduling-policy priority`); cleared on hub restart. */
   private priorityRefused = new Set<string>();
+  /** Endpoints that rejected `stream_options`; asked without it from then on, at the cost of their accounting. */
+  private usageRefused = new Set<string>();
   /** `apiKeyEnv` names already reported missing, so an unset key costs one log line, not one per pick. */
   private missingKeysLogged = new Set<string>();
   private now: () => number;
@@ -401,6 +403,10 @@ export class ModelGateway {
         // endpoint that already refused it (not started with --scheduling-policy priority) is
         // asked plainly from here on, rather than failing every turn until the hub restarts.
         let sendPriority = picked.endpoint.priority != null && !this.priorityRefused.has(key);
+        // Asking for usage is how a request gets costed, but an older server may reject the field
+        // outright. One that has is asked plainly from then on — its requests go unpriced rather
+        // than failing, the same bargain the priority field above strikes.
+        let sendUsage = !this.usageRefused.has(key);
         let res: Response;
         for (;;) {
           res = await fetch(`${picked.endpoint.url}/v1/chat/completions`, {
@@ -412,7 +418,7 @@ export class ModelGateway {
               model, messages: toOpenAiMessages(messages), stream: true,
               // Asks the server for a final chunk carrying the request's token counts. Reserved like
               // the keys around it, so `requestExtras` can never turn cost accounting off.
-              stream_options: { include_usage: true },
+              ...(sendUsage ? { stream_options: { include_usage: true } } : {}),
               ...(tools ? { tools: toOpenAiTools(tools) } : {}),
               ...(sendPriority ? { priority: picked.endpoint.priority } : {}),
             }),
@@ -424,6 +430,12 @@ export class ModelGateway {
               this.priorityRefused.add(key);
               console.warn(`[gateway] ${picked.endpoint.url} rejects request priority (server not started with --scheduling-policy priority); sending without it`);
               sendPriority = false;
+              continue;
+            }
+            if (res.status === 400 && sendUsage && /stream_options/i.test(detail)) {
+              this.usageRefused.add(key);
+              console.warn(`[gateway] ${picked.endpoint.url} rejects stream_options; sending without it — its requests will not be costed`);
+              sendUsage = false;
               continue;
             }
             // 429 is the cloud saying "later", not "never": retryable like the Anthropic path's.

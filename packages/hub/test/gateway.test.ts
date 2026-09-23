@@ -479,6 +479,53 @@ describe('usage accounting', () => {
     return new ModelGateway(registry);
   }
 
+  it('drops stream_options for a server that rejects it, once, and keeps serving unpriced', async () => {
+    const bodies: { stream_options?: unknown }[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      const body = req.body as { stream_options?: unknown };
+      bodies.push(body);
+      if ('stream_options' in body) {
+        reply.code(400).send({ error: { message: 'Unrecognized request argument: stream_options' } });
+        return reply;
+      }
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const refusingUrl = `http://127.0.0.1:${(app.server.address() as { port: number }).port}`;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        { tier: 'worker', url: refusingUrl, model: 'mock-model', maxStreams: 2 },
+      ] });
+      const gateway = new ModelGateway(registry);
+
+      // The turn still succeeds — it simply goes unpriced, rather than the endpoint dying on a 400.
+      const first = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(first.content).toBe('ok');
+      expect(first.usage).toBeUndefined();
+      const second = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(second.content).toBe('ok');
+
+      expect(bodies[0].stream_options).toEqual({ include_usage: true });
+      expect('stream_options' in bodies[1]).toBe(false);
+      // Asked plainly from the second request on, and the refusal costs one log line, not one a turn.
+      expect('stream_options' in bodies[2]).toBe(false);
+      expect(bodies).toHaveLength(3);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatch(/rejects stream_options/);
+    } finally {
+      warn.mockRestore();
+      await app.close();
+    }
+  });
+
   it('asks for usage and prices the final chunk, cached prompt tokens included', async () => {
     const server = await usageServer({
       prompt_tokens: 1_000_000, completion_tokens: 1_000_000, total_tokens: 2_000_000,

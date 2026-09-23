@@ -382,10 +382,12 @@ export type TurnEvent =
   | { kind: 'subagent-start'; who: string; name: string; role: string; task: string }
   | { kind: 'subagent-end'; who: string; outcome: string; ms: number }
   | { kind: 'verify'; milestoneId: string; tests: 'pass' | 'fail' | 'skipped'; review: 'approved' | 'changes' | 'skipped'; summary: string }
-  /** What one model call by `who` cost; `usd` is null for a model the hub has no price for. */
+  /**
+   * What one model call by `who` cost; `usd` is null for a model the hub has no price for. A turn's
+   * total is the sum of these — see `TurnRecord.cost`, which is the only place it is stated.
+   */
   | { kind: 'usage'; who: string; usd: number | null; tokens: number }
-  /** `usd`/`tokens` are the turn's own total — the sum of its `usage` events. Absent on old turns. */
-  | { kind: 'turn-end'; outcome: string; ms: number; summary: string; usd?: number; tokens?: number };
+  | { kind: 'turn-end'; outcome: string; ms: number; summary: string };
 
 export interface TurnEventFrame { type: 'turn-event'; slug: string; sessionId: number; at: number; event: TurnEvent }
 

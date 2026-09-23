@@ -306,3 +306,8 @@ and local serving carries on as normal; a project that can only run in the cloud
 with *cloud spend cap reached*. Nothing is reset by hand — the cap lifts itself as the 24-hour
 window slides past the spend. The crossing is logged once and, with the Telegram bot configured,
 sent to you once.
+
+One gap worth knowing: a call that never finishes — a turn you stopped, a turn that hit its time
+limit, a dropped connection — is billed by the provider but recorded by nobody, because the token
+counts only arrive with the last chunk. The hub will not guess them, so the figures here can be a
+little under what the provider charges.

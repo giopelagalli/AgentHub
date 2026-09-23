@@ -38,3 +38,12 @@ per pick rather than cached, so the moment a turn's own spend crosses it the nex
 Crossings are announced once each, by a log line and (when configured) one Telegram alert, rather
 than once per request. A hub with no local node and a reached cap cannot run turns at all — which
 is the point, and the error says so.
+
+**A call that never finishes is never counted.** Token counts arrive only in an OpenAI stream's
+final `usage` chunk, and only from Anthropic's final message; a call aborted by the turn timeout,
+by the owner stopping a turn, or by a mid-stream error reaches neither, so the provider bills for
+work the ledger has no row for. Estimating the tokens from the partial text was rejected — the
+whole feature refuses to guess at a number it can bill against. The cap can therefore undercount
+by up to one in-flight call per stream, which is bounded by `maxStreams` and settles as soon as
+the next call completes. Closing this properly needs the provider's own usage reporting on a
+cancelled request, which neither wire format offers today.

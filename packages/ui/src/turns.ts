@@ -17,7 +17,7 @@ export type TurnEvent =
   | { kind: 'verify'; milestoneId: string; tests: VerifyTests; review: VerifyReview; summary: string }
   /** What one model call by `who` cost; `usd` is null for a model the hub has no price for. */
   | { kind: 'usage'; who: string; usd: number | null; tokens: number }
-  | { kind: 'turn-end'; outcome: string; ms: number; summary: string; usd?: number; tokens?: number };
+  | { kind: 'turn-end'; outcome: string; ms: number; summary: string };
 
 export type VerifyTests = 'pass' | 'fail' | 'skipped';
 export type VerifyReview = 'approved' | 'changes' | 'skipped';

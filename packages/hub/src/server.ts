@@ -801,7 +801,11 @@ export function createHub(opts: HubOptions = {}): Hub {
    * over its own window, whatever `since` asks for — the cap is not a per-project number.
    */
   app.get('/api/usage/summary', async (req, reply) => {
-    const { since: sinceRaw, project } = req.query as { since?: string; project?: string };
+    const { since: sinceRaw, project } = req.query as { since?: unknown; project?: unknown };
+    // Fastify hands a repeated query parameter back as an array; neither the window nor the subject
+    // can be one, so both are checked rather than passed on to the store.
+    if (project !== undefined && typeof project !== 'string') return reply.code(400).send({ error: 'invalid project' });
+    if (sinceRaw !== undefined && typeof sinceRaw !== 'string') return reply.code(400).send({ error: 'invalid since' });
     const now = Date.now();
     let since = now - CLOUD_SPEND_WINDOW_MS;
     if (sinceRaw !== undefined) {

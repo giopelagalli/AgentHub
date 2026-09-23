@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { UsageReport } from '@agenthub/shared';
 import { openDb } from '../src/db.js';
 import { createHub, type Hub } from '../src/server.js';
@@ -143,6 +143,39 @@ describe('GET /api/usage/summary', () => {
     expect((await ask('?since=0')).usd).toBe(101);
     expect((await ask('?since=0')).cap.cloudUsdToday).toBe(2);
     expect((await hub.app.inject({ method: 'GET', url: '/api/usage/summary?since=nope' })).statusCode).toBe(400);
+    // A repeated parameter arrives as an array, which neither field can be.
+    expect((await hub.app.inject({ method: 'GET', url: '/api/usage/summary?project=a&project=b' })).statusCode).toBe(400);
+    expect((await hub.app.inject({ method: 'GET', url: '/api/usage/summary?since=1&since=2' })).statusCode).toBe(400);
+  });
+
+  it('spends nothing in the cloud at a cap of zero', async () => {
+    const savedKey = process.env.FIREWORKS_API_KEY;
+    process.env.FIREWORKS_API_KEY = 'fw-secret';
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // A configured cloud tier, so there is genuinely an endpoint for the cap to take away.
+      hub = createHub({ cloud: { fireworks: { baseUrl: 'http://127.0.0.1:1' } }, maxCloudUsdPerDay: 0 });
+      expect(hub.registry.online().map((n) => n.name)).toContain('cloud-fireworks');
+      expect((await ask()).cap).toEqual({ maxCloudUsdPerDay: 0, cloudUsdToday: 0 });
+      // Nothing spent yet and already at the cap: the cloud is out of rotation from the start.
+      expect(hub.gateway.pick('orchestrator')).toBeNull();
+    } finally {
+      warn.mockRestore();
+      if (savedKey === undefined) delete process.env.FIREWORKS_API_KEY;
+      else process.env.FIREWORKS_API_KEY = savedKey;
+    }
+  });
+
+  it('keeps the cloud in rotation when no cap is set', async () => {
+    const savedKey = process.env.FIREWORKS_API_KEY;
+    process.env.FIREWORKS_API_KEY = 'fw-secret';
+    try {
+      hub = createHub({ cloud: { fireworks: { baseUrl: 'http://127.0.0.1:1' } } });
+      expect(hub.gateway.pick('orchestrator')?.node.name).toBe('cloud-fireworks');
+    } finally {
+      if (savedKey === undefined) delete process.env.FIREWORKS_API_KEY;
+      else process.env.FIREWORKS_API_KEY = savedKey;
+    }
   });
 
   it('reports a null cap when the owner has set none', async () => {

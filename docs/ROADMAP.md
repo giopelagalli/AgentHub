@@ -18,13 +18,16 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   Result on 2026-09-23: m1 and m2 of `pomodoro-cli` verified end to end.
 - Node network, first half: enrollment tokens, per-node bearers, owner on every node, the hub
   serving its installer and source, the installer itself — verified on the owner's MacBook
-  (0016, 0017).
+  (0016, 0017); the source tarball gated by an enrollment or node token; enrollment cannot
+  seize an existing node (review 2026-09-23).
+- Cost accounting and the daily dollar cap: priced usage per request, cost in the picker, header,
+  per turn and per employee, `MAX_CLOUD_USD_PER_DAY` (0019, 0022–0024, 0026).
 - The v2 PRD and plan with the owner's decisions (0012–0015, 0018, 0020, 0021).
 
 ## In progress
 
-- Cost accounting and the daily dollar cap (0019).
-- Dogfooding `pomodoro-cli` (m3 in progress); the PC joining via the installer when it is on.
+- Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
+- The public site on the droplet (`rosenroot.com`, 0025): the owner's droplet, DNS and Caddy steps.
 
 ## Next (in order)
 

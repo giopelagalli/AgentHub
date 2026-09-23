@@ -11,6 +11,7 @@ import { ModelGateway } from '../src/gateway.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
+import { SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 import { docTools, type ToolContext } from '../src/agents/tools.js';
 import { completeMilestoneTool } from '../src/agents/verify.js';
 
@@ -75,6 +76,11 @@ const milestone = async (id: string): Promise<Milestone> => (await bundle.roadma
 
 const APPROVE: ScriptStep = { content: 'Read src/app.js and its test.\nVERDICT: APPROVE\n1. Nothing to change.' };
 const REQUEST_CHANGES: ScriptStep = { content: 'VERDICT: REQUEST_CHANGES\n1. src/app.js: boot() swallows errors; rethrow them.' };
+// One round with more tool calls than the subagent budget allows, and no content: the loop drops the
+// overflow calls and ends 'budget-exhausted' before the reviewer ever produces a report.
+const BUDGET_EXHAUSTED: ScriptStep = {
+  toolCalls: Array.from({ length: SUBAGENT_TOOL_CALLS + 1 }, () => ({ name: 'read_file', arguments: { path: 'src/app.js' } })),
+};
 
 describe('complete_milestone', () => {
   it('marks the milestone done when the tests pass and the reviewer approves, and records both', async () => {
@@ -169,6 +175,15 @@ describe('complete_milestone', () => {
     const result = await complete('m1');
 
     expect(result).toContain('reviewer was cut short (the hub stopped, or the turn hit its time limit) without a report');
+  });
+
+  it('tells the manager there are no findings to act on, not to delegate fixes, when the reviewer exhausts its budget', async () => {
+    const { complete } = await setup([BUDGET_EXHAUSTED]);
+
+    const result = await complete('m1');
+
+    expect(result).toMatch(/NO findings to act on/);
+    expect(result).not.toContain('Fix what is listed');
   });
 
   it('leaves a milestone in progress with no verification available when both checks are skipped', async () => {

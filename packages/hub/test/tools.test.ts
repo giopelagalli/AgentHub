@@ -46,6 +46,10 @@ async function groupGone(pgid: number, timeoutMs = 3000): Promise<boolean> {
   }
 }
 
+/** 400 lines of exactly 99 characters each — 39,999 characters total, past READ_FILE_LIMIT (32,000),
+ *  so a plain read pages at line 320 and a second call with the reported fromLine finishes the file. */
+const bigLines = (): string[] => Array.from({ length: 400 }, (_, i) => `L${i + 1}`.padEnd(99, '.'));
+
 const briefing = (overrides: Partial<Briefing> = {}): Briefing => ({
   slug: 'demo',
   title: 'Demo',
@@ -122,6 +126,36 @@ describe('workspaceTools', () => {
     const out = await call(workspaceTools(), 'read_file', { path: 'x' });
     expect(out.startsWith('error:')).toBe(true);
   });
+
+  it('pages a long file at a line boundary, with a marker naming the fromLine to continue from', async () => {
+    const lines = bigLines();
+    await writeFile(join(bundle.workspace, 'big.txt'), lines.join('\n'), 'utf8');
+
+    const first = await call(workspaceTools(), 'read_file', { path: 'big.txt' });
+    expect(first).toBe(
+      `${lines.slice(0, 320).join('\n')}\n` +
+      `[showing lines 1–320 of 400 (31,999 of 39,999 characters); call read_file again with fromLine: 321 for the rest]`,
+    );
+
+    const second = await call(workspaceTools(), 'read_file', { path: 'big.txt', fromLine: 321 });
+    expect(second).toBe(lines.slice(320, 400).join('\n'));
+  });
+
+  it('slices a file by fromLine and maxLines', async () => {
+    const content = ['one', 'two', 'three', 'four', 'five'].join('\n');
+    await writeFile(join(bundle.workspace, 'lines.txt'), content, 'utf8');
+
+    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', fromLine: 2 })).toBe('two\nthree\nfour\nfive');
+    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', fromLine: 2, maxLines: 2 })).toBe('two\nthree');
+    expect(await call(workspaceTools(), 'read_file', { path: 'lines.txt', maxLines: 1 })).toBe('one');
+  });
+
+  it('errors when fromLine is past the end of the file', async () => {
+    await writeFile(join(bundle.workspace, 'short.txt'), ['one', 'two', 'three'].join('\n'), 'utf8');
+
+    const out = await call(workspaceTools(), 'read_file', { path: 'short.txt', fromLine: 400 });
+    expect(out).toBe('error: fromLine 400 is past the end (3 lines)');
+  });
 });
 
 describe('bundleTools', () => {
@@ -178,6 +212,20 @@ describe('bundleTools', () => {
     expect(out).toContain('prd.md');
     expect(out).not.toContain('workspace');
   });
+
+  it('pages a long bundle file the same way read_file does', async () => {
+    const lines = bigLines();
+    await writeFile(join(bundle.dir, 'prd.md'), lines.join('\n'), 'utf8');
+
+    const first = await call(bundleTools(), 'read_bundle', { path: 'prd.md' });
+    expect(first).toBe(
+      `${lines.slice(0, 320).join('\n')}\n` +
+      `[showing lines 1–320 of 400 (31,999 of 39,999 characters); call read_bundle again with fromLine: 321 for the rest]`,
+    );
+
+    const second = await call(bundleTools(), 'read_bundle', { path: 'prd.md', fromLine: 321 });
+    expect(second).toBe(lines.slice(320, 400).join('\n'));
+  });
 });
 
 describe('hubTools', () => {
@@ -206,9 +254,13 @@ describe('runToolCall', () => {
   });
 
   it('head-keeps a long result and names what it cut', async () => {
-    const content = `${'x'.repeat(9000)}TAIL`;
-    await writeFile(join(bundle.workspace, 'big.txt'), content, 'utf8');
-    const out = await call(workspaceTools(), 'read_file', { path: 'big.txt' });
+    // read_file/read_bundle are selfCapped (they page themselves); any other tool still gets the
+    // generic cut, so a neutral fixture tool stands in for one here.
+    const longTool: Tool = {
+      def: { type: 'tool', name: 'long', description: 'test fixture', parameters: { type: 'object', properties: {}, required: [] } },
+      run: async () => `${'x'.repeat(9000)}TAIL`,
+    };
+    const out = await runToolCall([longTool], { id: 'c', name: 'long', arguments: '{}' }, ctx);
     expect(out.startsWith('x'.repeat(100))).toBe(true);
     expect(out).not.toContain('TAIL');
     expect(out.endsWith('[truncated: showing first 8000 of 9004 characters]')).toBe(true);

@@ -205,9 +205,10 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
     ROLE_BRIEFS[role],
     ``,
     ...(instructions?.trim() ? [`# Your standing instructions`, instructions.trim(), ``] : []),
-    `- Your tools reach the project workspace only: read_file, write_file, list_dir, run_shell.`,
-    `  Do not modify anything outside workspace/ — the project bundle's charter, decision log, task`,
-    `  board and briefings belong to the orchestrator. Report what should change there instead.`,
+    `- Your tools reach the project workspace only: read_file (a longer file pages — it ends with a`,
+    `  marker naming the fromLine to continue from), write_file, list_dir, run_shell. Do not modify`,
+    `  anything outside workspace/ — the project bundle's charter, decision log, task board and`,
+    `  briefings belong to the orchestrator. Report what should change there instead.`,
   ];
   if (role === 'coder') {
     lines.push(

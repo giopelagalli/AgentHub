@@ -192,6 +192,16 @@ service or install.
 
 A node is *offline* when its heartbeats stop; the hub requeues its jobs and routes around it.
 
+The one-command installer is `curl -fsSL <hub>/install.sh | sh -s -- --hub <hub> --token <token>`,
+with the token minted by *Add node* on the Cluster page. It detects the machine, installs Node 22
+if it has to, fetches the daemon from the hub (no clone, no repo access), attaches to an
+OpenAI-compatible server that is already listening or picks the recipe for the hardware class —
+registering compute-only when no recipe is verified for it yet — writes `~/.agenthub/node.yaml`,
+enrolls, and starts the daemon under launchd or systemd. Re-running the same command updates the
+node in place; `--uninstall` reverses it. `--dry-run` prints the whole plan without touching the
+machine, which is the quickest way to see what a given box would become. The flags, the recipe
+table and everything it writes are in `deploy/README-install.md`.
+
 ## The shared browser (Computer)
 
 One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and

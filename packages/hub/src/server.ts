@@ -649,7 +649,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.delete('/api/nodes/:name', async (req, reply) => {
     const { name } = req.params as { name: string };
     if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
-    if (!registry.remove(name)) return reply.code(404).send({ error: 'unknown node' });
+    const node = registry.byName(name);
+    if (!node) return reply.code(404).send({ error: 'unknown node' });
+    // A forced removal (no drain first) must not orphan what the node was running: hand its jobs
+    // back the same way the sweep does for a node that went offline.
+    for (const job of queue.list('running')) if (job.nodeId === node.id) releaseVideoSlot(job, node.name);
+    const { requeued, failed } = queue.requeueForNode(node.id);
+    if (requeued) app.log.info(`requeued ${requeued} jobs from removed node ${name}`);
+    for (const jobId of failed) jobLogs.append(jobId, `[hub] max attempts exceeded after node ${name} was removed`);
+    registry.remove(name);
     removed.set(name, Date.now());
     broadcastState();
     return { ok: true };

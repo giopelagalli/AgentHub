@@ -553,7 +553,8 @@ p {
   color: var(--red);
 }
 
-.status--queued {
+.status--queued,
+.status--draining {
   color: var(--amber);
 }
 

@@ -145,6 +145,14 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     if (Number.isInteger(n) && n >= 1) maxTurnsPerDay = n;
     else log(`[hub] MAX_TURNS_PER_DAY=${env.MAX_TURNS_PER_DAY} is not a whole number of at least 1; ignored`);
   }
+  // The cloud's own kill switch: once the trailing 24h costs this much, cloud endpoints go out of
+  // rotation and local serving carries on. Decimals allowed — a cap is dollars, not turns.
+  let maxCloudUsdPerDay: number | undefined;
+  if (env.MAX_CLOUD_USD_PER_DAY !== undefined) {
+    const n = Number(env.MAX_CLOUD_USD_PER_DAY);
+    if (Number.isFinite(n) && n > 0) maxCloudUsdPerDay = n;
+    else log(`[hub] MAX_CLOUD_USD_PER_DAY=${env.MAX_CLOUD_USD_PER_DAY} is not a positive number of dollars; ignored`);
+  }
   // Local models are slower per step than the default assumes; a bad value is dropped the same way.
   let turnTimeoutMs: number | undefined;
   if (env.TURN_TIMEOUT_MINUTES !== undefined) {
@@ -164,6 +172,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(cloud ? { cloud } : {}),
     ...(autoTurns !== undefined ? { autoTurns } : {}),
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
+    ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
   };
 

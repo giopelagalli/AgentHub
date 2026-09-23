@@ -28,6 +28,8 @@ export interface AlertEvents {
   onJobSettled(cb: (job: Job) => void): void;
   /** A project whose auto-run the hub switched off after repeated failures, with the reason. */
   onAutoRunSuspended(cb: (slug: string, reason: string) => void): void;
+  /** The daily cloud spend cap has just been crossed: what was spent, and the cap it passed. */
+  onCloudCapReached(cb: (usd: number, cap: number) => void): void;
 }
 
 /** A stored clip: where it is, how big, and how to read it — the size decides whether it is sent. */
@@ -78,6 +80,10 @@ export class Alerts {
     });
     events.onAutoRunSuspended((slug, reason) => {
       this.send(`autorun:${slug}`, `⏸ ${slug}: ${reason} — manual turns still run`)
+        .catch((err) => console.error('[alerts] send failed', err));
+    });
+    events.onCloudCapReached((usd, cap) => {
+      this.send('cloud-cap', `💸 cloud spend cap reached: $${usd.toFixed(2)} in the last 24h against a $${cap.toFixed(2)} cap — cloud models are off until it falls below; local serving is unaffected`)
         .catch((err) => console.error('[alerts] send failed', err));
     });
   }

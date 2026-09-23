@@ -289,6 +289,8 @@ export class PrdDrafter {
     const route = routeFor((await bundle.manifest()).modelPolicy, 'orchestrator');
     const result = await this.deps.loop.run({
       kind: 'chat', subject: `${slug}:${kind}`, tier: 'orchestrator',
+      // A `chat` session, but planning spend rather than conversation — the ledger says so.
+      usageKind: 'prd',
       system, user,
       tools: [],
       ctx: { bundle },

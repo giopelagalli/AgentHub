@@ -15,7 +15,9 @@ export type TurnEvent =
   | { kind: 'subagent-start'; who: string; name: string; role: string; task: string }
   | { kind: 'subagent-end'; who: string; outcome: string; ms: number }
   | { kind: 'verify'; milestoneId: string; tests: VerifyTests; review: VerifyReview; summary: string }
-  | { kind: 'turn-end'; outcome: string; ms: number; summary: string };
+  /** What one model call by `who` cost; `usd` is null for a model the hub has no price for. */
+  | { kind: 'usage'; who: string; usd: number | null; tokens: number }
+  | { kind: 'turn-end'; outcome: string; ms: number; summary: string; usd?: number; tokens?: number };
 
 export type VerifyTests = 'pass' | 'fail' | 'skipped';
 export type VerifyReview = 'approved' | 'changes' | 'skipped';
@@ -37,8 +39,12 @@ export interface TurnRecord {
   outcome: string | null;
   summary: string;
   toolCalls: number;
+  /** The turn's own spend — the sum of its `usage` events, manager and subagents alike. */
+  cost: TurnCost;
   events: TimedEvent[];
 }
+
+export interface TurnCost { usd: number; tokens: number }
 
 /** `GET /api/projects/:slug/turns`. */
 export interface TurnsResponse {
@@ -56,7 +62,28 @@ export const MANAGER_AVATAR = 'robot-amber';
 // --- reducer -------------------------------------------------------------------
 
 function blankTurn(sessionId: number, startedAt: number): TurnRecord {
-  return { sessionId, startedAt, endedAt: null, outcome: null, summary: '', toolCalls: 0, events: [] };
+  return { sessionId, startedAt, endedAt: null, outcome: null, summary: '', toolCalls: 0, cost: NO_COST, events: [] };
+}
+
+const NO_COST: TurnCost = { usd: 0, tokens: 0 };
+
+/**
+ * What a turn has cost: the sum of its own `usage` events. One rule everywhere — the hub derives
+ * `cost` the same way — so a turn watched live and the same turn refetched never disagree.
+ */
+export function turnCost(events: TimedEvent[]): TurnCost {
+  return events.reduce(
+    (sum, e) => (e.kind === 'usage' ? { usd: sum.usd + (e.usd ?? 0), tokens: sum.tokens + e.tokens } : sum),
+    NO_COST,
+  );
+}
+
+/** What one agent's own model calls have cost in this turn; 0 when they have made none. */
+export function memberCostUsd(turn: TurnRecord | null, who: string): number {
+  return (turn?.events ?? []).reduce(
+    (sum, e) => (e.kind === 'usage' && e.who === who ? sum + (e.usd ?? 0) : sum),
+    0,
+  );
 }
 
 function byNewest(turns: TurnRecord[]): TurnRecord[] {
@@ -73,6 +100,9 @@ export function applyTurnEvent(turns: TurnRecord[], frame: Omit<TurnFrame, 'slug
   const timed: TimedEvent = { ...frame.event, at: frame.at };
   const next: TurnRecord = { ...base, events: [...base.events, timed] };
   if (timed.kind === 'tool-call') next.toolCalls += 1;
+  if (timed.kind === 'usage') {
+    next.cost = { usd: base.cost.usd + (timed.usd ?? 0), tokens: base.cost.tokens + timed.tokens };
+  }
   if (timed.kind === 'turn-end') {
     next.endedAt = frame.at;
     next.outcome = timed.outcome;
@@ -96,6 +126,7 @@ function mergeTurn(local: TurnRecord | undefined, fetched: TurnRecord): TurnReco
     ...fetched,
     events,
     toolCalls: events.filter((e) => e.kind === 'tool-call').length,
+    cost: turnCost(events),
     endedAt: ended.endedAt,
     outcome: ended.outcome,
     summary: ended.summary || fetched.summary || local.summary,
@@ -141,6 +172,18 @@ export function formatDuration(ms: number): string {
   if (safe < 1000) return `${Math.round(safe)}ms`;
   if (safe < 60_000) return `${(safe / 1000).toFixed(1)}s`;
   return formatElapsed(safe);
+}
+
+/**
+ * `$0.42`, `$12.3`, `<$0.01` for something too small to show, `—` for nothing at all. Fewer
+ * decimals as the number grows: what the owner wants from a big one is its size, not its cents.
+ */
+export function formatUsd(usd: number | null | undefined): string {
+  if (usd === null || usd === undefined || usd <= 0) return '—';
+  if (usd < 0.01) return '<$0.01';
+  if (usd < 10) return `$${usd.toFixed(2)}`;
+  if (usd < 100) return `$${usd.toFixed(1)}`;
+  return `$${Math.round(usd)}`;
 }
 
 /** `4:12`, `1:04:12`: the ticking clock on the Run turn button. */

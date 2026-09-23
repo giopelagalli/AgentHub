@@ -295,8 +295,12 @@ describe('AgentLoop', () => {
     const res = await loop.run({ ...runOpts({ tools: [], onEvent: (e) => events.push(e), onStart: (id) => { started = id; } }), ctx });
 
     expect(started).toBe(res.sessionId);
-    expect(events).toEqual([{ kind: 'text', who: 'subagent', text: 'plain reply' }]);
-    expect(transcript.turnEvents(res.sessionId)).toEqual([{ ...events[0], at: expect.any(Number) }]);
+    // What the model turn said, then what it cost — a local endpoint bills nothing.
+    expect(events).toEqual([
+      { kind: 'text', who: 'subagent', text: 'plain reply' },
+      { kind: 'usage', who: 'subagent', usd: 0, tokens: expect.any(Number) },
+    ]);
+    expect(transcript.turnEvents(res.sessionId)).toEqual(events.map((e) => ({ ...e, at: expect.any(Number) })));
     // The turn events are not mixed into the session's own notes.
     expect(transcript.events(res.sessionId)).toEqual([]);
   });
@@ -314,11 +318,11 @@ describe('AgentLoop', () => {
 
     const res = await loop.run({ ...runOpts({ tools: [...workspaceTools(), boom], memberId: 'coder-1', onEvent: (e) => events.push(e) }), ctx });
 
-    expect(events.map((e) => e.kind)).toEqual(['text', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text']);
+    expect(events.map((e) => e.kind)).toEqual(['text', 'usage', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text', 'usage']);
     expect(events.every((e) => 'who' in e && e.who === 'coder-1')).toBe(true);
-    expect(events[1]).toEqual({ kind: 'tool-call', who: 'coder-1', tool: 'read_file', args: '{"path":"notes.txt"}' });
-    expect(events[2]).toMatchObject({ kind: 'tool-result', tool: 'read_file', ok: true, summary: 'the file body', ms: expect.any(Number) });
-    expect(events[4]).toMatchObject({ kind: 'tool-result', tool: 'boom', ok: false, summary: 'error: kaboom' });
+    expect(events[2]).toEqual({ kind: 'tool-call', who: 'coder-1', tool: 'read_file', args: '{"path":"notes.txt"}' });
+    expect(events[3]).toMatchObject({ kind: 'tool-result', tool: 'read_file', ok: true, summary: 'the file body', ms: expect.any(Number) });
+    expect(events[5]).toMatchObject({ kind: 'tool-result', tool: 'boom', ok: false, summary: 'error: kaboom' });
     expect(transcript.turnEvents(res.sessionId).map((e) => e.kind)).toEqual(events.map((e) => e.kind));
   });
 
@@ -333,7 +337,7 @@ describe('AgentLoop', () => {
     await loop.run({ ...runOpts({ onEvent: (e) => events.push(e) }), ctx });
 
     const text = events[0];
-    const call = events[1];
+    const call = events[2]; // [1] is the turn's usage event
     expect(text.kind === 'text' && text.text.length).toBe(300);
     expect(call.kind === 'tool-call' && call.args.length).toBe(200);
   });

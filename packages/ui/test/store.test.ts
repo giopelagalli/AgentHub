@@ -137,7 +137,7 @@ describe('Store', () => {
       type: 'turns-loaded', slug: 'acme',
       response: {
         running: null,
-        turns: [{ sessionId: 3, startedAt: 1, endedAt: 5, outcome: 'done', summary: 'x', toolCalls: 0, events: [] }],
+        turns: [{ sessionId: 3, startedAt: 1, endedAt: 5, outcome: 'done', summary: 'x', toolCalls: 0, cost: { usd: 0, tokens: 0 }, events: [] }],
         budget: { usedToday: 1, maxPerDay: 6, hubUsedToday: 3, hubMaxPerDay: 40 },
       },
     });

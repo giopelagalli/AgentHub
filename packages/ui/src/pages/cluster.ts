@@ -1,7 +1,8 @@
-import type { Job, NodeInfo } from '@agenthub/shared';
-import { sendJson } from '../api.js';
+import type { Job, NodeInfo, UsageReport } from '@agenthub/shared';
+import { getJson, sendJson } from '../api.js';
 import type { Store, UiState } from '../store.js';
 import { toast } from '../toast.js';
+import { formatUsd } from '../turns.js';
 import { button, el } from './projects.js';
 
 const NODE_COLUMNS = ['Node', 'Status', 'Serving', 'Streams', 'Extras', 'Actions'] as const;
@@ -10,6 +11,17 @@ const JOB_COLUMNS = ['Job', 'Type', 'Status', 'Node', 'Attempts', 'Project'] as 
 /** Column indexes whose cells hold identifiers — names, ids, model strings — and so set in mono. */
 const NODE_MONO = new Set([0, 2, 3]);
 const JOB_MONO = new Set([0, 1, 3, 5]);
+
+/** How often the cloud spend line is re-read while the page is open. */
+const SPEND_REFRESH_MS = 30_000;
+
+/** `Cloud spend: $1.20 in the last 24 h`, and the cap it is running against when there is one. */
+export function cloudSpendText(report: UsageReport | null): string {
+  if (!report) return 'Cloud spend: reading…';
+  const cap = report.cap.maxCloudUsdPerDay;
+  const spent = report.cap.cloudUsdToday;
+  return `Cloud spend: ${spent > 0 ? formatUsd(spent) : '$0.00'} in the last 24 h${cap === null ? '' : ` · cap ${formatUsd(cap)}`}`;
+}
 
 function table(columns: readonly string[]): { node: HTMLTableElement; body: HTMLTableSectionElement } {
   const node = el('table', 'table');
@@ -81,7 +93,9 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   const nodesPane = el('section', 'panel');
   const nodes = table(NODE_COLUMNS);
   const nodesEmpty = el('p', 'empty', 'Waiting for the hub…');
-  nodesPane.append(el('h2', undefined, 'Nodes'), nodes.node, nodesEmpty);
+  // What the cloud half of the cluster has cost, above the machines it was spent on.
+  const spend = el('p', 'cluster__spend', cloudSpendText(null));
+  nodesPane.append(el('h2', undefined, 'Nodes'), spend, nodes.node, nodesEmpty);
 
   const jobsPane = el('section', 'panel');
   const jobs = table(JOB_COLUMNS);
@@ -142,11 +156,22 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
     );
   };
 
+  const loadSpend = (): void => {
+    void getJson<UsageReport>('/api/usage/summary')
+      .then((report) => { spend.textContent = cloudSpendText(report); })
+      .catch(() => { /* leave the last figure up; the tables already show a hub that went quiet */ });
+  };
+  loadSpend();
+  // Spend moves with turns, not with the hub state frames these tables follow, so it has its own
+  // slow refresh rather than a fetch per broadcast.
+  const spendTimer = setInterval(loadSpend, SPEND_REFRESH_MS);
+
   const unsubscribe = store.subscribe(render);
   render(store.getState());
 
   return () => {
     unsubscribe();
+    clearInterval(spendTimer);
     page.remove();
   };
 }

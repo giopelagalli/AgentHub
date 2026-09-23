@@ -1,4 +1,4 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus, type UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
 import { AUTO_RUN_INTERVALS, autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../autorun.js';
@@ -14,7 +14,7 @@ import type { PrdDoc } from '../prd.js';
 import type { RoadmapDoc } from '../roadmap.js';
 import { turnsOf, type Store, type UiState } from '../store.js';
 import { toast } from '../toast.js';
-import { doingCaption, formatClock, openSubagents, runningTurn, type TurnRecord, type TurnsResponse } from '../turns.js';
+import { doingCaption, formatClock, formatUsd, openSubagents, runningTurn, type TurnRecord, type TurnsResponse } from '../turns.js';
 import { mountActivity } from '../views/activity.js';
 import { mountDocs } from '../views/docs.js';
 import type { ViewContext } from '../views/parts.js';
@@ -505,8 +505,32 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     take<DocsIndex>(`/api/projects/${slug}/docs`, (held) => { docs = held; });
   };
 
+  /** Each project's trailing-24h spend, as the header chip shows it; empty until a fetch lands. */
+  const costToday = new Map<string, number>();
+  const costText = (slug: string): string => {
+    const usd = costToday.get(slug);
+    return usd ? `${formatUsd(usd)} today` : '—';
+  };
+
+  /**
+   * What this project has cost in the last 24 hours. Fetched with the turns rather than on its own
+   * schedule — a turn ending is the only thing that moves it — and written into the chip in place,
+   * so a landing fetch never redraws the header under the owner's typing.
+   */
+  const loadCost = (slug: string): void => {
+    void getJson<UsageReport>(`/api/usage/summary?project=${encodeURIComponent(slug)}`)
+      .then((report) => {
+        costToday.set(slug, report.usd);
+        if (store.getState().project !== slug) return;
+        const chip = headBox.querySelector<HTMLElement>('.detail__cost');
+        if (chip) chip.textContent = costText(slug);
+      })
+      .catch(() => { /* the chip stays as it was; the turns list already reports a dead hub */ });
+  };
+
   /** The recent turns, and with them whether one is running right now. Lands in the store. */
   const loadTurns = (slug: string): void => {
+    loadCost(slug);
     void getJson<TurnsResponse>(`/api/projects/${slug}/turns`)
       .then((response) => store.dispatch({ type: 'turns-loaded', slug, response }))
       .catch(() => store.dispatch({ type: 'turns-failed', slug }));
@@ -623,6 +647,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     });
     controls.appendChild(autoRunToggle);
     controls.appendChild(el('span', 'detail__budget', budgetText(turnsOf(store.getState(), project.slug).budget)));
+    controls.appendChild(el('span', 'detail__cost', costText(project.slug)));
 
     const paused = project.status === 'paused';
     const toggle = button(paused ? 'Resume' : 'Pause');

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { TeamRoster } from '@agenthub/shared';
 import {
-  activeWho, activityHint, applyTurnEvent, doingCaption, formatClock, formatDuration, formatElapsed, memberFeed,
-  mergeTurns, openSubagents, runningTurn, timelineModel, toolPhrase, whoView,
+  activeWho, activityHint, applyTurnEvent, doingCaption, formatClock, formatDuration, formatElapsed, formatUsd,
+  memberCostUsd, memberFeed, mergeTurns, openSubagents, runningTurn, timelineModel, toolPhrase, turnCost, whoView,
   type SubagentBlock, type TimedEvent, type TimelineGroup, type TurnEvent, type TurnRecord,
 } from '../src/turns.js';
 
@@ -75,10 +75,62 @@ describe('applyTurnEvent', () => {
   });
 });
 
+describe('formatUsd', () => {
+  it('spends fewer decimals as the number grows, and says when there is nothing to show', () => {
+    expect(formatUsd(0.42)).toBe('$0.42');
+    expect(formatUsd(0.01)).toBe('$0.01'); // the cent where '<$0.01' stops applying
+    expect(formatUsd(12.34)).toBe('$12.3');
+    expect(formatUsd(1234.5)).toBe('$1235');
+  });
+
+  it('never rounds a real cost down to nothing, and never dresses up a zero', () => {
+    expect(formatUsd(0.0004)).toBe('<$0.01');
+    expect(formatUsd(0)).toBe('—');
+    expect(formatUsd(null)).toBe('—');
+    expect(formatUsd(undefined)).toBe('—');
+  });
+});
+
+describe('turn cost', () => {
+  const usage = (who: string, usd: number | null, tokens: number, at: number): TimedEvent =>
+    ({ kind: 'usage', who, usd, tokens, at });
+
+  it('totals a turn from its usage events, and each agent from their own', () => {
+    const events = [
+      usage('manager', 0.01, 1000, T0),
+      usage('coder-1', 0.02, 4000, T0 + 1000),
+      usage('coder-1', 0.03, 6000, T0 + 2000),
+    ];
+    expect(turnCost(events).usd).toBeCloseTo(0.06, 12);
+    expect(turnCost(events).tokens).toBe(11000);
+    const turn: TurnRecord = {
+      sessionId: 1, startedAt: T0, endedAt: null, outcome: null, summary: '',
+      toolCalls: 0, cost: turnCost(events), events,
+    };
+    expect(memberCostUsd(turn, 'coder-1')).toBeCloseTo(0.05, 12);
+    expect(memberCostUsd(turn, 'manager')).toBeCloseTo(0.01, 12);
+    expect(memberCostUsd(turn, 'nobody')).toBe(0);
+    expect(memberCostUsd(null, 'manager')).toBe(0);
+  });
+
+  it('counts the tokens of a model with no price, but none of its dollars', () => {
+    const events = [usage('manager', null, 900, T0), usage('manager', 0.05, 100, T0 + 1)];
+    expect(turnCost(events)).toEqual({ usd: 0.05, tokens: 1000 });
+  });
+
+  it('accumulates as the socket delivers each usage frame', () => {
+    let turns = applyTurnEvent([], { sessionId: 7, at: T0, event: { kind: 'turn-start', who: 'manager' } });
+    turns = applyTurnEvent(turns, { sessionId: 7, at: T0 + 1, event: { kind: 'usage', who: 'manager', usd: 0.25, tokens: 40 } });
+    turns = applyTurnEvent(turns, { sessionId: 7, at: T0 + 2, event: { kind: 'usage', who: 'coder-1', usd: 0.25, tokens: 60 } });
+    expect(turns[0].cost).toEqual({ usd: 0.5, tokens: 100 });
+  });
+});
+
 describe('mergeTurns', () => {
   const fetched = (events: TimedEvent[], ended = false): TurnRecord => ({
     sessionId: 1, startedAt: T0, endedAt: ended ? T0 + 11_000 : null, outcome: ended ? 'done' : null,
-    summary: ended ? 'Milestone 1 done.' : '', toolCalls: events.filter((e) => e.kind === 'tool-call').length, events,
+    summary: ended ? 'Milestone 1 done.' : '', toolCalls: events.filter((e) => e.kind === 'tool-call').length,
+    cost: turnCost(events), events,
   });
   const timed = (events: TurnEvent[], from = T0): TimedEvent[] => events.map((e, i) => ({ ...e, at: from + i * 1000 }));
 

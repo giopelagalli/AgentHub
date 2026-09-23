@@ -14,6 +14,7 @@ import { ProjectBundle } from '../src/projects/bundle.js';
 import { ProjectOrchestrator } from '../src/projects/orchestrator.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
+import { UsageStore } from '../src/usage.js';
 import { workspaceTools } from '../src/agents/tools.js';
 import { ORCHESTRATOR_TOOL_CALLS, SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 
@@ -47,6 +48,10 @@ interface Harness {
   registry: NodeRegistry;
   loop: AgentLoop;
   queue: JobQueue;
+  /** The cost ledger the loop writes to, and the two endpoint urls, for the cost test. */
+  usage: UsageStore;
+  brainUrl: string;
+  workerUrl: string;
   /** Every live event the orchestrator reported, stamped with the turn's session. */
   events: (TurnEvent & { sessionId: number })[];
 }
@@ -67,14 +72,21 @@ async function setup(brainScript: ScriptStep[], workerScript: ScriptStep[] = [],
   });
   const transcript = new Transcript(db);
   const gateway = new ModelGateway(registry);
-  const loop = new AgentLoop({ gateway, transcript });
+  const usage = new UsageStore(db);
+  const loop = new AgentLoop({
+    gateway, transcript,
+    onUsage: (u) => usage.record({
+      ...u.usage, subject: u.subject, sessionId: u.sessionId, kind: u.kind,
+      ...(u.memberId ? { memberId: u.memberId } : {}),
+    }),
+  });
   const queue = new JobQueue(db);
   const events: (TurnEvent & { sessionId: number })[] = [];
   const orchestrator = new ProjectOrchestrator({
     bundle: target, loop, gateway, queue, registry, transcript,
     onEvent: (sessionId, e) => events.push({ ...e, sessionId }),
   });
-  return { orchestrator, transcript, brain, worker, registry, loop, queue, events };
+  return { orchestrator, transcript, brain, worker, registry, loop, queue, usage, brainUrl, workerUrl, events };
 }
 
 const publishStep = (over: Record<string, unknown> = {}): ScriptStep => ({
@@ -274,6 +286,48 @@ describe('ProjectOrchestrator', () => {
   });
 });
 
+describe('turn cost', () => {
+  const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
+
+  it('records what the manager and its subagent spent, and ends the turn with the sum', async () => {
+    const h = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'add the lexer', member: 'coder-1' } }], content: 'delegating' },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [{ content: 'lexer added' }],
+    );
+    await bundle.writeTeam([{ id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-teal', createdAt: 1 }]);
+    // Same two mock servers, re-registered as a priced cloud node: the whole point is real dollars.
+    h.registry.register({
+      name: 'spark', arch: 'arm64',
+      endpoints: [
+        { tier: 'orchestrator', provider: 'fireworks', url: h.brainUrl, model: FLASH, maxStreams: 2 },
+        { tier: 'worker', provider: 'fireworks', url: h.workerUrl, model: FLASH, maxStreams: 2 },
+      ],
+    });
+
+    await h.orchestrator.turn();
+
+    // One ledger row per model call, attributed to the manager's session and the subagent's member.
+    const summary = h.usage.summary({ since: 0 });
+    expect(summary.usd).toBeGreaterThan(0);
+    expect(summary.byModel).toEqual([{ provider: 'fireworks', model: FLASH, usd: summary.usd, tokens: summary.tokens.prompt + summary.tokens.completion }]);
+    expect(summary.bySubject.map((r) => r.subject)).toEqual(['demo']);
+
+    // The turn's own total is exactly the sum of the usage events it saw, its subagent's included.
+    const spent = h.events.filter((e) => e.kind === 'usage');
+    expect(spent.map((e) => ('who' in e ? e.who : ''))).toContain('coder-1');
+    expect(spent.map((e) => ('who' in e ? e.who : ''))).toContain('manager');
+    const end = h.events.find((e) => e.kind === 'turn-end') as (TurnEvent & { kind: 'turn-end' }) | undefined;
+    expect(end?.usd).toBeCloseTo(spent.reduce((n, e) => n + ('usd' in e ? (e.usd ?? 0) : 0), 0), 12);
+    expect(end?.usd).toBeCloseTo(summary.usd, 12);
+    expect(end?.tokens).toBe(spent.reduce((n, e) => n + ('tokens' in e ? e.tokens : 0), 0));
+    expect(end?.tokens).toBe(summary.tokens.prompt + summary.tokens.completion);
+  });
+});
+
 describe('turn events', () => {
   it('brackets the turn, forwards a subagent\'s events with its id, and reports the files it wrote', async () => {
     const { orchestrator, transcript, events } = await setup(
@@ -294,7 +348,9 @@ describe('turn events', () => {
 
     const session = transcript.sessions({ kind: 'orchestrator' })[0];
     expect(events.every((e) => e.sessionId === session.id)).toBe(true);
-    expect(events.map((e) => `${e.kind}:${'who' in e ? e.who : '-'}`)).toEqual([
+    // Cost events ride the same feed — see the usage tests; this one is about the activity in it.
+    const activity = events.filter((e) => e.kind !== 'usage');
+    expect(activity.map((e) => `${e.kind}:${'who' in e ? e.who : '-'}`)).toEqual([
       'turn-start:manager',
       'text:manager',
       'tool-call:manager',
@@ -309,8 +365,8 @@ describe('turn events', () => {
       'text:manager',
       'turn-end:-',
     ]);
-    expect(events[3]).toMatchObject({ kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'add the lexer' });
-    expect(events[11]).toMatchObject({ kind: 'subagent-end', who: 'coder-1', outcome: 'stop', ms: expect.any(Number) });
+    expect(activity[3]).toMatchObject({ kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'add the lexer' });
+    expect(activity[11]).toMatchObject({ kind: 'subagent-end', who: 'coder-1', outcome: 'stop', ms: expect.any(Number) });
     expect(events[events.length - 1]).toMatchObject({ kind: 'turn-end', outcome: 'stop', summary: 'model-written summary', ms: expect.any(Number) });
 
     // The manager learns what changed from the report, not by inspecting the workspace.
@@ -320,7 +376,8 @@ describe('turn events', () => {
     // The whole turn replays from the orchestrator session; the member's session holds its own part.
     expect(transcript.turnEvents(session.id).map((e) => e.kind)).toEqual(events.map((e) => e.kind));
     const member = transcript.sessions({ kind: 'subagent' })[0];
-    expect(transcript.turnEvents(member.id).map((e) => e.kind)).toEqual(['tool-call', 'tool-result', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text']);
+    expect(transcript.turnEvents(member.id).filter((e) => e.kind !== 'usage').map((e) => e.kind))
+      .toEqual(['tool-call', 'tool-result', 'tool-call', 'tool-result', 'tool-call', 'tool-result', 'text']);
   });
 });
 

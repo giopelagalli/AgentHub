@@ -69,6 +69,24 @@ CREATE TABLE IF NOT EXISTS video_slots (
   node_name TEXT PRIMARY KEY,
   job_id INTEGER NOT NULL
 );
+-- One row per model request the gateway served: what it cost and who it was for. \`usd\` is NULL for
+-- a model the hub has no price for (Anthropic, an unpriced id) — the tokens are still recorded.
+CREATE TABLE IF NOT EXISTS usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  subject TEXT NOT NULL,
+  session_id INTEGER,
+  member_id TEXT,
+  kind TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  node TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER NOT NULL,
+  cached_tokens INTEGER NOT NULL,
+  completion_tokens INTEGER NOT NULL,
+  usd REAL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */

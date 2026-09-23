@@ -74,13 +74,18 @@ export class ProjectOrchestrator {
     // it starts, so these two go through the same store and the same sink once that session exists.
     const startedAt = Date.now();
     let sessionId = 0;
+    // The turn's own spend, summed from the `usage` events the loop emits. Every model call in the
+    // turn passes through this sink — the manager's own, and each subagent's, forwarded with its
+    // `who` — so the total needs no time window and no guess about which sessions belonged to it.
+    let usd = 0;
+    let tokens = 0;
     const emit = (e: TurnEvent): void => {
       const at = Date.now();
       transcript.appendTurnEvent(sessionId, e, at);
       onEvent?.(sessionId, e, at);
     };
     const finish = (briefing: Briefing, outcome: string, summary = briefing.summary): Briefing => {
-      emit({ kind: 'turn-end', outcome, ms: Date.now() - startedAt, summary });
+      emit({ kind: 'turn-end', outcome, ms: Date.now() - startedAt, summary, usd, tokens });
       return briefing;
     };
 
@@ -104,7 +109,10 @@ export class ProjectOrchestrator {
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
       onStart: (id) => { sessionId = id; emit({ kind: 'turn-start', who: 'manager' }); },
-      onEvent: (e, at) => onEvent?.(sessionId, e, at),
+      onEvent: (e, at) => {
+        if (e.kind === 'usage') { usd += e.usd ?? 0; tokens += e.tokens; }
+        onEvent?.(sessionId, e, at);
+      },
     });
     const n = ++this.turns;
 

@@ -1,6 +1,7 @@
-import type { ChatMessage, ChatResult, CloudProvider, ModelPolicy, NodeInfo, ServingEndpoint, Tier, ToolCall, ToolDef } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, ChatUsage, CloudProvider, ModelPolicy, NodeInfo, ServingEndpoint, Tier, TokenUsage, ToolCall, ToolDef } from '@agenthub/shared';
 import type { NodeRegistry } from './node-registry.js';
 import { anthropicChat, isRetryableAnthropicError, type AnthropicLike } from './providers/anthropic.js';
+import { costUsd, priceFor } from './providers/fireworks.js';
 
 export interface PickResult { node: NodeInfo; endpoint: ServingEndpoint; }
 
@@ -110,6 +111,23 @@ function toParameterSchema(parameters: Record<string, unknown> | undefined): Rec
   return { ...parameters, type: 'object', properties, required };
 }
 
+/**
+ * The `usage` object an OpenAI-compatible stream's final chunk carries, as token counts. Fireworks
+ * and vLLM both use these names; `prompt_tokens_details.cached_tokens` is absent on a server that
+ * does not report prompt caching, which reads as none cached. Returns undefined for anything that
+ * is not a usage object at all.
+ */
+export function readOpenAiUsage(raw: unknown): TokenUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const u = raw as { prompt_tokens?: unknown; completion_tokens?: unknown; prompt_tokens_details?: { cached_tokens?: unknown } | null };
+  const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+  return {
+    promptTokens: count(u.prompt_tokens),
+    cachedTokens: count(u.prompt_tokens_details?.cached_tokens),
+    completionTokens: count(u.completion_tokens),
+  };
+}
+
 /** The tier-specific slice of a project's policy, or undefined when it has none (i.e. `auto`). */
 export function routeFor(policy: ModelPolicy | undefined, tier: Tier): Route | undefined {
   if (!policy) return undefined;
@@ -145,14 +163,43 @@ export class ModelGateway {
   private modelAllowed: ((ep: ServingEndpoint, model: string) => boolean) | undefined;
   /** Model ids already reported switched off, so a refused override costs one log line, not one per request. */
   private refusedModelsLogged = new Set<string>();
+  /** Whether cloud endpoints may be used at all right now — the hub's daily dollar cap. */
+  private cloudAllowed: (() => boolean) | undefined;
+  /** The cap the warning names; only for the log line, the decision is `cloudAllowed`'s. */
+  private cloudCapUsd: number | undefined;
+  /** Whether the cap is currently crossed, so the warning costs one line per crossing. */
+  private cloudCapped = false;
 
   constructor(
     private registry: NodeRegistry,
-    opts: { now?: () => number; anthropic?: AnthropicLike; modelAllowed?: (ep: ServingEndpoint, model: string) => boolean } = {},
+    opts: {
+      now?: () => number;
+      anthropic?: AnthropicLike;
+      modelAllowed?: (ep: ServingEndpoint, model: string) => boolean;
+      cloudAllowed?: () => boolean;
+      cloudCapUsd?: number;
+    } = {},
   ) {
     this.now = opts.now ?? Date.now;
     this.anthropic = opts.anthropic;
     this.modelAllowed = opts.modelAllowed;
+    this.cloudAllowed = opts.cloudAllowed;
+    this.cloudCapUsd = opts.cloudCapUsd;
+  }
+
+  /**
+   * Whether cloud endpoints are in rotation, logging each crossing once. Read on every `eligible`
+   * call rather than cached, because what it answers depends on spend the hub is still recording.
+   */
+  private cloudOpen(): boolean {
+    if (!this.cloudAllowed) return true;
+    const open = this.cloudAllowed();
+    if (!open && !this.cloudCapped) {
+      const cap = this.cloudCapUsd === undefined ? 'the cap' : `$${this.cloudCapUsd.toFixed(2)}`;
+      console.warn(`[gateway] cloud spend cap reached (${cap} in the last 24h); cloud endpoints are off until it falls below`);
+    }
+    this.cloudCapped = !open;
+    return open;
   }
 
   private key(node: NodeInfo, ep: ServingEndpoint): string { return `${node.name}|${ep.tier}|${ep.url}`; }
@@ -182,13 +229,17 @@ export class ModelGateway {
    * unhealthy, and with the token it needs. Capacity is *not* checked here — `pick` adds that, while
    * `hasOtherHealthyCandidate` deliberately ignores it.
    */
-  private eligible(tier: Tier, route?: Route): { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] {
+  private eligible(tier: Tier, route?: Route, ignoreCap = false): { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] {
     const now = this.now();
+    // The daily dollar cap takes every cloud endpoint out of rotation; local serving is unaffected,
+    // so a hub with a GPU keeps working rather than stopping when the cloud budget runs out.
+    const cloudOpen = ignoreCap || this.cloudOpen();
     const out: { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] = [];
     for (const node of this.registry.online()) {
       if (node.draining) continue; // no new work; a stream already in flight on it just runs its course
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
+        if (!cloudOpen && isCloudEndpoint(endpoint)) continue;
         const key = this.key(node, endpoint);
         if (this.parked.has(key)) continue;
         const until = this.unhealthyUntil.get(key);
@@ -227,13 +278,23 @@ export class ModelGateway {
   }
 
   pick(tier: Tier, route?: Route): PickResult | null {
-    const candidates = this.eligible(tier, route)
+    return this.pickFrom(tier, route, false);
+  }
+
+  private pickFrom(tier: Tier, route: Route | undefined, ignoreCap: boolean): PickResult | null {
+    const candidates = this.eligible(tier, route, ignoreCap)
       .map((c) => ({ pick: { node: c.node, endpoint: c.endpoint }, active: this.active.get(c.key) ?? 0, rank: this.rank(c.endpoint, route) }))
       .filter((c) => c.active < c.pick.endpoint.maxStreams);
     // Hardware the owner already paid for comes first unless the route says otherwise; within a
     // group the least busy endpoint wins, as before.
     candidates.sort((a, b) => (a.rank === b.rank ? a.active - b.active : a.rank - b.rank));
     return candidates[0]?.pick ?? null;
+  }
+
+  /** One request's tokens, priced and attributed to the endpoint that served them. */
+  private priced(node: NodeInfo, endpoint: ServingEndpoint, model: string, tokens: TokenUsage): ChatUsage {
+    const provider = endpoint.provider ?? 'openai';
+    return { ...tokens, usd: costUsd(priceFor(provider, model), tokens), provider, model, node: node.name };
   }
 
   /**
@@ -289,7 +350,12 @@ export class ModelGateway {
     const { onToken, tools, signal, route } = opts;
     for (let attempt = 0; ; attempt++) {
       const picked = this.pick(tier, route);
-      if (!picked) throw new Error(`no capacity for tier: ${tier}`);
+      if (!picked) {
+        // Only when lifting the cap would actually have found an endpoint: a tier nothing serves at
+        // all is still plain "no capacity", which is what it is.
+        const capped = this.cloudCapped && this.pickFrom(tier, route, true) !== null;
+        throw new Error(`no capacity for tier: ${tier}${capped ? ' (cloud spend cap reached)' : ''}`);
+      }
       const key = this.key(picked.node, picked.endpoint);
       // A project that named a model gets it, but only on the cloud it named: a local endpoint
       // serves whatever its node loaded, and asking it for another model would just 404.
@@ -312,12 +378,16 @@ export class ModelGateway {
         if (picked.endpoint.provider === 'anthropic') {
           if (!this.anthropic) { nonRetryable = true; throw new Error(`no anthropic client configured for ${picked.endpoint.url}`); }
           try {
-            return await anthropicChat(this.anthropic, {
+            let tokens: TokenUsage | undefined;
+            const result = await anthropicChat(this.anthropic, {
               model, messages,
               ...(tools ? { tools } : {}),
               onToken: (t) => { streamedAny = true; onToken?.(t); },
+              onUsage: (u) => { tokens = u; },
               ...(signal ? { signal } : {}),
             });
+            // Tokens are recorded; the dollars are not, because there is no Anthropic price table.
+            return { ...result, ...(tokens ? { usage: this.priced(picked.node, picked.endpoint, model, tokens) } : {}) };
           } catch (err) {
             if (!isRetryableAnthropicError(err)) nonRetryable = true;
             throw err;
@@ -340,6 +410,9 @@ export class ModelGateway {
               // requestExtras spreads first so the reserved keys below always win over it.
               ...(picked.endpoint.requestExtras ?? {}),
               model, messages: toOpenAiMessages(messages), stream: true,
+              // Asks the server for a final chunk carrying the request's token counts. Reserved like
+              // the keys around it, so `requestExtras` can never turn cost accounting off.
+              stream_options: { include_usage: true },
               ...(tools ? { tools: toOpenAiTools(tools) } : {}),
               ...(sendPriority ? { priority: picked.endpoint.priority } : {}),
             }),
@@ -362,6 +435,7 @@ export class ModelGateway {
         if (!res.body) { nonRetryable = true; throw new Error(`endpoint error ${res.status} from ${picked.endpoint.url}`); }
         let full = '';
         let buf = '';
+        let tokens: TokenUsage | undefined;
         let finish: ChatResult['finish'] = 'stop';
         const toolCallAcc = new Map<number, { id?: string; name?: string; arguments: string }>();
         const reader = res.body.getReader();
@@ -377,7 +451,11 @@ export class ModelGateway {
             if (!line) continue;
             const data = line.slice(6);
             if (data === '[DONE]') continue;
-            const choice = JSON.parse(data).choices?.[0];
+            const chunk = JSON.parse(data) as { choices?: { delta?: unknown; finish_reason?: unknown }[]; usage?: unknown };
+            // The usage chunk `stream_options.include_usage` asks for: it carries no choices, so it
+            // falls straight through the delta handling below.
+            if (chunk.usage) tokens = readOpenAiUsage(chunk.usage);
+            const choice = chunk.choices?.[0] as { delta?: { content?: unknown; tool_calls?: unknown }; finish_reason?: string } | undefined;
             const delta = choice?.delta;
             if (typeof delta?.content === 'string' && delta.content.length) {
               full += delta.content; streamedAny = true; onToken?.(delta.content);
@@ -400,7 +478,10 @@ export class ModelGateway {
         const toolCalls: ToolCall[] = [...toolCallAcc.entries()]
           .sort((a, b) => a[0] - b[0])
           .map(([, v]) => ({ id: v.id ?? '', name: v.name ?? '', arguments: v.arguments }));
-        return { content: full, toolCalls, finish };
+        return {
+          content: full, toolCalls, finish,
+          ...(tokens ? { usage: this.priced(picked.node, picked.endpoint, model, tokens) } : {}),
+        };
       } catch (err) {
         const aborted = signal?.aborted || (err instanceof Error && err.name === 'AbortError');
         if (attempt === 0 && !streamedAny && !nonRetryable && !aborted && this.hasOtherHealthyCandidate(tier, key, route)) {

@@ -8,13 +8,29 @@ const GLM = 'accounts/fireworks/models/glm-5p3';
 const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
 const KIMI = 'accounts/fireworks/models/kimi-k3';
 
+// KIMI is deliberately left out of `prices`, and Anthropic reports null for its one id: both are
+// models the hub has no price for, which the picker must say out loud rather than pass over.
 const catalog: ModelCatalog = {
   local: [{ node: 'spark', tier: 'worker', model: 'qwen-local' }],
   cloud: [
-    { provider: 'fireworks', models: [GLM, FLASH], disabled: [KIMI], configured: { orchestrator: GLM, worker: FLASH } },
-    { provider: 'anthropic', models: ['claude-opus-4-8'], configured: { orchestrator: 'claude-opus-4-8', worker: 'claude-sonnet-5' } },
+    {
+      provider: 'fireworks', models: [GLM, FLASH], disabled: [KIMI],
+      prices: {
+        [GLM]: { input: 1.40, cachedInput: 0.26, output: 4.40 },
+        [FLASH]: { input: 0.15, cachedInput: 0.03, output: 0.50 },
+      },
+      configured: { orchestrator: GLM, worker: FLASH },
+    },
+    {
+      provider: 'anthropic', models: ['claude-opus-4-8'], prices: { 'claude-opus-4-8': null },
+      configured: { orchestrator: 'claude-opus-4-8', worker: 'claude-sonnet-5' },
+    },
   ],
 };
+
+const GLM_PRICE = ' — $1.40 in / $4.40 out per M';
+const FLASH_PRICE = ' — $0.15 in / $0.50 out per M';
+const UNKNOWN = ' — price unknown';
 
 describe('modelOptions', () => {
   it('offers auto and local only until the catalog arrives', () => {
@@ -30,20 +46,20 @@ describe('modelOptions', () => {
       { value: 'local', label: 'Local only' },
       { value: 'cloud', label: 'Any cloud' },
       { value: 'cloud:fireworks', label: 'Fireworks (default models)' },
-      { value: `cloud:fireworks:${GLM}`, label: 'Fireworks: glm-5p3' },
-      { value: `cloud:fireworks:${FLASH}`, label: 'Fireworks: glm-5p3-flash' },
-      { value: `cloud:fireworks:${KIMI}`, label: 'Fireworks: kimi-k3 (off)', disabled: true },
+      { value: `cloud:fireworks:${GLM}`, label: `Fireworks: glm-5p3${GLM_PRICE}` },
+      { value: `cloud:fireworks:${FLASH}`, label: `Fireworks: glm-5p3-flash${FLASH_PRICE}` },
+      { value: `cloud:fireworks:${KIMI}`, label: `Fireworks: kimi-k3 (off)${UNKNOWN}`, disabled: true },
       { value: 'cloud:anthropic', label: 'Anthropic (default models)' },
-      { value: 'cloud:anthropic:claude-opus-4-8', label: 'Anthropic: claude-opus-4-8' },
+      { value: 'cloud:anthropic:claude-opus-4-8', label: `Anthropic: claude-opus-4-8${UNKNOWN}` },
     ]);
   });
 
   it('gives the worker select the provider\'s models plus a "same model" entry', () => {
     expect(workerOptions(catalog, 'fireworks')).toEqual([
       { value: '', label: 'Worker: same model' },
-      { value: GLM, label: 'Worker: glm-5p3' },
-      { value: FLASH, label: 'Worker: glm-5p3-flash' },
-      { value: KIMI, label: 'Worker: kimi-k3 (off)', disabled: true },
+      { value: GLM, label: `Worker: glm-5p3${GLM_PRICE}` },
+      { value: FLASH, label: `Worker: glm-5p3-flash${FLASH_PRICE}` },
+      { value: KIMI, label: `Worker: kimi-k3 (off)${UNKNOWN}`, disabled: true },
     ]);
     expect(workerOptions(null, 'fireworks')).toHaveLength(1);
   });

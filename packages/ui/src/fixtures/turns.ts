@@ -1,5 +1,5 @@
 import type { Store } from '../store.js';
-import type { TurnEvent, TurnRecord } from '../turns.js';
+import { turnCost, type TurnEvent, type TurnRecord } from '../turns.js';
 
 /**
  * Dev harness only: scripted turn frames for the selected project, so the Activity panel can be
@@ -24,7 +24,9 @@ function finished(sessionId: number, startedAt: number, ms: number, outcome: str
     { kind: 'tool-result', who: 'coder-1', tool: 'write_file', ok: true, summary: 'wrote 84 lines', ms: 18, at: at(9100) },
     { kind: 'tool-call', who: 'coder-1', tool: 'bash', args: 'npm test', at: at(30000) },
     { kind: 'tool-result', who: 'coder-1', tool: 'bash', ok: true, summary: '12 passed', ms: 4200, at: at(34200) },
+    { kind: 'usage', who: 'coder-1', usd: 0.0183, tokens: 41200, at: at(ms - 57000) },
     { kind: 'subagent-end', who: 'coder-1', outcome: 'done', ms: ms - 60000, at: at(ms - 56000) },
+    { kind: 'usage', who: 'manager', usd: 0.0091, tokens: 18400, at: at(ms - 20000) },
     ...(verify
       ? [{ kind: 'verify' as const, milestoneId: 'm1', tests: 'pass' as const, review: 'approved' as const, summary: 'Store round-trips; reviewer approved the shape.', at: at(ms - 30000) }]
       : []),
@@ -32,7 +34,7 @@ function finished(sessionId: number, startedAt: number, ms: number, outcome: str
   ];
   return {
     sessionId, startedAt, endedAt: startedAt + ms, outcome, summary,
-    toolCalls: events.filter((e) => e.kind === 'tool-call').length, events,
+    toolCalls: events.filter((e) => e.kind === 'tool-call').length, cost: turnCost(events), events,
   };
 }
 
@@ -46,6 +48,7 @@ const SCRIPT: TurnEvent[] = [
   { kind: 'tool-result', who: 'manager', tool: 'read_file', ok: true, summary: 'PRD §3: list shows id, title, done marker', ms: 22 },
   { kind: 'tool-call', who: 'manager', tool: 'grep', args: { pattern: 'complete', path: 'lib/' } },
   { kind: 'tool-result', who: 'manager', tool: 'grep', ok: false, summary: 'no matches', ms: 15 },
+  { kind: 'usage', who: 'manager', usd: 0.0064, tokens: 12800 },
   { kind: 'text', who: 'manager', text: 'Nothing implements complete yet. Delegating both commands to Ada with the PRD section as the spec.' },
   { kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'Add `list` and `complete <id>` to the CLI, backed by lib/store.js; tests for both.' },
   { kind: 'tool-call', who: 'coder-1', tool: 'read_file', args: { path: 'lib/store.js' } },

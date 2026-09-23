@@ -98,6 +98,17 @@ describe('optionsFromEnv', () => {
     }
   });
 
+  it('reads MAX_CLOUD_USD_PER_DAY as a positive number of dollars, decimals allowed', () => {
+    expect(optionsFromEnv({}, quiet).options.maxCloudUsdPerDay).toBeUndefined();
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '5' }, quiet).options.maxCloudUsdPerDay).toBe(5);
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '2.50' }, quiet).options.maxCloudUsdPerDay).toBe(2.5);
+    for (const bad of ['0', '-1', 'abc', '']) {
+      const lines: string[] = [];
+      expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: bad }, (l) => lines.push(l)).options.maxCloudUsdPerDay).toBeUndefined();
+      expect(lines.filter((l) => l.includes('MAX_CLOUD_USD_PER_DAY'))).toHaveLength(1);
+    }
+  });
+
   it('reads TURN_TIMEOUT_MINUTES as a whole number of at least 1, in ms, and drops anything else with a log line', () => {
     expect(optionsFromEnv({}, quiet).options.turnTimeoutMs).toBeUndefined();
     expect(optionsFromEnv({ TURN_TIMEOUT_MINUTES: '30' }, quiet).options.turnTimeoutMs).toBe(1_800_000);

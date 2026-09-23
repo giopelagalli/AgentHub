@@ -99,10 +99,35 @@ export type ChatMessage =
   | { role: 'assistant'; content: string | null; tool_calls?: ToolCall[] }
   | { role: 'tool'; tool_call_id: string; content: string };
 
+/** What one model request reported it consumed. `cachedTokens` is a subset of `promptTokens`. */
+export interface TokenUsage {
+  promptTokens: number;
+  cachedTokens: number;
+  completionTokens: number;
+}
+
+/** A request's tokens priced and attributed: what the hub's usage ledger records per model call. */
+export interface ChatUsage extends TokenUsage {
+  /** Null when the hub has no price for this model — the tokens are still recorded. */
+  usd: number | null;
+  provider: string;
+  model: string;
+  node: string;
+}
+
+/** A model's price in USD per million tokens. */
+export interface ModelPrice {
+  input: number;
+  cachedInput: number;
+  output: number;
+}
+
 export interface ChatResult {
   content: string;
   toolCalls: ToolCall[];
   finish: 'stop' | 'tool_calls' | 'length';
+  /** Absent when the endpoint reported no usage (an older local server, an aborted stream). */
+  usage?: ChatUsage;
 }
 
 export interface JobSpec {
@@ -286,6 +311,8 @@ export interface ModelCatalog {
     models: string[];
     /** Ids the hub knows but refuses right now (Fireworks' hard models while FIREWORKS_HARD_MODELS is unset). */
     disabled?: string[];
+    /** Price per model id, `models` and `disabled` alike; null for one the hub has no price for. */
+    prices?: Record<string, ModelPrice | null>;
     configured: { orchestrator: string; worker: string };
   }[];
 }
@@ -355,7 +382,10 @@ export type TurnEvent =
   | { kind: 'subagent-start'; who: string; name: string; role: string; task: string }
   | { kind: 'subagent-end'; who: string; outcome: string; ms: number }
   | { kind: 'verify'; milestoneId: string; tests: 'pass' | 'fail' | 'skipped'; review: 'approved' | 'changes' | 'skipped'; summary: string }
-  | { kind: 'turn-end'; outcome: string; ms: number; summary: string };
+  /** What one model call by `who` cost; `usd` is null for a model the hub has no price for. */
+  | { kind: 'usage'; who: string; usd: number | null; tokens: number }
+  /** `usd`/`tokens` are the turn's own total — the sum of its `usage` events. Absent on old turns. */
+  | { kind: 'turn-end'; outcome: string; ms: number; summary: string; usd?: number; tokens?: number };
 
 export interface TurnEventFrame { type: 'turn-event'; slug: string; sessionId: number; at: number; event: TurnEvent }
 
@@ -368,7 +398,23 @@ export interface TurnRecord {
   summary: string;
   /** The manager's own tool calls — the ones its turn budget counts. */
   toolCalls: number;
+  /** The turn's own spend: the sum of its `usage` events, manager and subagents alike. */
+  cost: { usd: number; tokens: number };
   events: (TurnEvent & { at: number })[];
+}
+
+/** `GET /api/usage/summary`: what the hub spent since a moment, and where it went. */
+export interface UsageSummary {
+  since: number;
+  usd: number;
+  tokens: { prompt: number; cached: number; completion: number };
+  byModel: { provider: string; model: string; usd: number; tokens: number }[];
+  bySubject: { subject: string; usd: number; tokens: number }[];
+}
+
+/** The summary plus where the daily cloud cap stands; `maxCloudUsdPerDay` is null when unset. */
+export interface UsageReport extends UsageSummary {
+  cap: { maxCloudUsdPerDay: number | null; cloudUsdToday: number };
 }
 
 /** Exactly the video payload of PRD §11 / the plan's Global Constraints. */

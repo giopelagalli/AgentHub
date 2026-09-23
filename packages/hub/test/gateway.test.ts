@@ -9,6 +9,8 @@ import { ModelGateway, toOpenAiMessages } from '../src/gateway.js';
 
 // Binds an ephemeral port and closes it immediately, yielding a URL that reliably
 // rejects with ECONNREFUSED — used to simulate an unreachable endpoint.
+const FLASH = 'accounts/fireworks/models/glm-5p3-flash';
+
 async function closedPortUrl(): Promise<string> {
   const srv = createServer();
   await new Promise<void>((resolve) => srv.listen(0, '127.0.0.1', resolve));
@@ -439,6 +441,149 @@ describe('request extras', () => {
       expect(bodies[0].model).toBe('mock-model');
     } finally {
       await app.close();
+    }
+  });
+});
+
+describe('usage accounting', () => {
+  /**
+   * A server that answers one streamed chunk of text and then the `usage` chunk
+   * `stream_options.include_usage` asks for — the shape Fireworks and vLLM both send.
+   */
+  async function usageServer(usage: unknown): Promise<{ url: string; bodies: Record<string, unknown>[]; close(): Promise<void> }> {
+    const bodies: Record<string, unknown>[] = [];
+    const app = Fastify();
+    app.post('/v1/chat/completions', async (req, reply) => {
+      bodies.push(req.body as Record<string, unknown>);
+      reply.raw.writeHead(200, { 'content-type': 'text/event-stream' });
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: null }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      reply.raw.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`);
+      reply.raw.write('data: [DONE]\n\n');
+      reply.raw.end();
+      return reply;
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    return {
+      url: `http://127.0.0.1:${(app.server.address() as { port: number }).port}`,
+      bodies,
+      close: () => app.close(),
+    };
+  }
+
+  function fireworksGateway(endpointUrl: string) {
+    const registry = new NodeRegistry(openDb(':memory:'));
+    registry.register({ name: 'cloud-fireworks', arch: 'cloud', endpoints: [
+      { tier: 'worker', provider: 'fireworks', url: endpointUrl, model: FLASH, maxStreams: 2 },
+    ] });
+    return new ModelGateway(registry);
+  }
+
+  it('asks for usage and prices the final chunk, cached prompt tokens included', async () => {
+    const server = await usageServer({
+      prompt_tokens: 1_000_000, completion_tokens: 1_000_000, total_tokens: 2_000_000,
+      prompt_tokens_details: { cached_tokens: 400_000 },
+    });
+    try {
+      const result = await fireworksGateway(server.url).chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(server.bodies[0].stream_options).toEqual({ include_usage: true });
+      expect(result.usage).toMatchObject({
+        promptTokens: 1_000_000, cachedTokens: 400_000, completionTokens: 1_000_000,
+        provider: 'fireworks', model: FLASH, node: 'cloud-fireworks',
+      });
+      // 0.6M * 0.15 + 0.4M * 0.03 + 1M * 0.50, all per million.
+      expect(result.usage!.usd).toBeCloseTo(0.602, 10);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reads a usage chunk with no cached_tokens as none cached', async () => {
+    const server = await usageServer({ prompt_tokens: 2_000_000, completion_tokens: 0, total_tokens: 2_000_000 });
+    try {
+      const result = await fireworksGateway(server.url).chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(result.usage).toMatchObject({ promptTokens: 2_000_000, cachedTokens: 0, completionTokens: 0 });
+      expect(result.usage!.usd).toBeCloseTo(0.30, 10);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('costs a local endpoint nothing and leaves an unpriced model with null dollars', async () => {
+    const server = await usageServer({ prompt_tokens: 100, completion_tokens: 20 });
+    try {
+      const registry = new NodeRegistry(openDb(':memory:'));
+      registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+        { tier: 'worker', url: server.url, model: 'qwen-local', maxStreams: 2 },
+      ] });
+      registry.register({ name: 'cloud-fireworks', arch: 'cloud', endpoints: [
+        { tier: 'vision', provider: 'fireworks', url: server.url, model: 'accounts/fireworks/models/unknown', maxStreams: 2 },
+      ] });
+      const gateway = new ModelGateway(registry);
+
+      const local = await gateway.chat('worker', [{ role: 'user', content: 'hi' }], {});
+      expect(local.usage).toMatchObject({ provider: 'openai', usd: 0, promptTokens: 100, completionTokens: 20 });
+
+      const unpriced = await gateway.chat('vision', [{ role: 'user', content: 'hi' }], {});
+      expect(unpriced.usage).toMatchObject({ usd: null, promptTokens: 100, completionTokens: 20 });
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe('the cloud spend cap', () => {
+  it('takes cloud endpoints out of rotation, keeps local ones, and warns once per crossing', () => {
+    const registry = new NodeRegistry(openDb(':memory:'));
+    registry.register({ name: 'spark', arch: 'arm64', endpoints: [
+      { tier: 'worker', url, model: 'mock-model', maxStreams: 2 },
+    ] });
+    registry.register({ name: 'cloud-fireworks', arch: 'cloud', endpoints: [
+      { tier: 'worker', provider: 'fireworks', url, model: FLASH, maxStreams: 2 },
+      { tier: 'orchestrator', provider: 'fireworks', url, model: FLASH, maxStreams: 2 },
+    ] });
+    let capped = false;
+    const gateway = new ModelGateway(registry, { cloudAllowed: () => !capped, cloudCapUsd: 5 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(gateway.pick('orchestrator')?.node.name).toBe('cloud-fireworks');
+
+      capped = true;
+      // Local serving is untouched; the cloud-only tier has nothing left to offer.
+      expect(gateway.pick('worker')?.node.name).toBe('spark');
+      expect(gateway.pick('orchestrator')).toBeNull();
+      gateway.pick('orchestrator');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toBe(
+        '[gateway] cloud spend cap reached ($5.00 in the last 24h); cloud endpoints are off until it falls below',
+      );
+
+      // Falling back below the cap puts them in again, and a later crossing warns again.
+      capped = false;
+      expect(gateway.pick('orchestrator')?.node.name).toBe('cloud-fireworks');
+      capped = true;
+      expect(gateway.pick('orchestrator')).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(2);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says the cap is why a turn found no capacity, but only when it actually is', async () => {
+    const registry = new NodeRegistry(openDb(':memory:'));
+    registry.register({ name: 'cloud-fireworks', arch: 'cloud', endpoints: [
+      { tier: 'orchestrator', provider: 'fireworks', url, model: FLASH, maxStreams: 2 },
+    ] });
+    const gateway = new ModelGateway(registry, { cloudAllowed: () => false, cloudCapUsd: 5 });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(gateway.chat('orchestrator', [{ role: 'user', content: 'x' }]))
+        .rejects.toThrow('no capacity for tier: orchestrator (cloud spend cap reached)');
+      // Nothing serves the vision tier at all, so the cap is not the reason and is not blamed for it.
+      await expect(gateway.chat('vision', [{ role: 'user', content: 'x' }]))
+        .rejects.toThrow(/^no capacity for tier: vision$/);
+    } finally {
+      warn.mockRestore();
     }
   });
 });

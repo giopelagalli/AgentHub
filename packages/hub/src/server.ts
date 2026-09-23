@@ -182,6 +182,8 @@ export interface HubOptions {
   autoTurns?: boolean;
   /** The hub-wide cap on turns per trailing 24h (`MAX_TURNS_PER_DAY`); defaults to 24. */
   maxTurnsPerDay?: number;
+  /** Aborts a turn that runs longer than this (`TURN_TIMEOUT_MINUTES`); defaults to 45 minutes. */
+  turnTimeoutMs?: number;
   assistant?: AssistantOptions;
   browser?: BrowserOptions;
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
@@ -324,6 +326,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.tickIntervalMs ? { tickIntervalMs: opts.tickIntervalMs } : {}),
     ...(opts.autoTurns !== undefined ? { autoTurns: opts.autoTurns } : {}),
     ...(opts.maxTurnsPerDay !== undefined ? { maxTurnsPerDay: opts.maxTurnsPerDay } : {}),
+    ...(opts.turnTimeoutMs !== undefined ? { turnTimeoutMs: opts.turnTimeoutMs } : {}),
   });
   const master = new MasterOrchestrator({ service: projects, loop });
   // One chat per hub; the bundle is resolved per message through the service's cache.

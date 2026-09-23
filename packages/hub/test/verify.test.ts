@@ -160,6 +160,17 @@ describe('complete_milestone', () => {
     expect(await complete('m1')).toContain('review: changes');
   });
 
+  it('tells the manager the reviewer was cut short, not that it failed, when its run is aborted', async () => {
+    const { complete, ctx } = await setup();
+    const controller = new AbortController();
+    controller.abort();
+    ctx.signal = controller.signal;
+
+    const result = await complete('m1');
+
+    expect(result).toContain('reviewer was cut short (the hub stopped, or the turn hit its time limit) without a report');
+  });
+
   it('leaves a milestone in progress with no verification available when both checks are skipped', async () => {
     await bundle.writeTeam((await bundle.team()).filter((m) => m.role !== 'reviewer'));
     const { complete, transcript } = await setup();

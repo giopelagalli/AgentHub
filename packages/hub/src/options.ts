@@ -145,6 +145,13 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     if (Number.isInteger(n) && n >= 1) maxTurnsPerDay = n;
     else log(`[hub] MAX_TURNS_PER_DAY=${env.MAX_TURNS_PER_DAY} is not a whole number of at least 1; ignored`);
   }
+  // Local models are slower per step than the default assumes; a bad value is dropped the same way.
+  let turnTimeoutMs: number | undefined;
+  if (env.TURN_TIMEOUT_MINUTES !== undefined) {
+    const n = Number(env.TURN_TIMEOUT_MINUTES);
+    if (Number.isInteger(n) && n >= 1) turnTimeoutMs = n * 60_000;
+    else log(`[hub] TURN_TIMEOUT_MINUTES=${env.TURN_TIMEOUT_MINUTES} is not a whole number of at least 1; ignored`);
+  }
 
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
@@ -157,6 +164,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(cloud ? { cloud } : {}),
     ...(autoTurns !== undefined ? { autoTurns } : {}),
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
+    ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
   };
 
   return {

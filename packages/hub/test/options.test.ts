@@ -97,4 +97,14 @@ describe('optionsFromEnv', () => {
       expect(lines.filter((l) => l.includes('MAX_TURNS_PER_DAY'))).toHaveLength(1);
     }
   });
+
+  it('reads TURN_TIMEOUT_MINUTES as a whole number of at least 1, in ms, and drops anything else with a log line', () => {
+    expect(optionsFromEnv({}, quiet).options.turnTimeoutMs).toBeUndefined();
+    expect(optionsFromEnv({ TURN_TIMEOUT_MINUTES: '30' }, quiet).options.turnTimeoutMs).toBe(1_800_000);
+    for (const bad of ['0', 'abc']) {
+      const lines: string[] = [];
+      expect(optionsFromEnv({ TURN_TIMEOUT_MINUTES: bad }, (l) => lines.push(l)).options.turnTimeoutMs).toBeUndefined();
+      expect(lines.filter((l) => l.includes('TURN_TIMEOUT_MINUTES'))).toHaveLength(1);
+    }
+  });
 });

@@ -95,14 +95,14 @@ the workspace, picks the current milestone, and delegates. Concretely:
    committed under `briefings/` and shown on the Activity button.
 
 Limits that shape a turn: the manager has 40 tool calls, an employee 25; a turn is cut off at
-20 minutes. Expect one milestone per turn; a big milestone can take two.
+45 minutes (`TURN_TIMEOUT_MINUTES`). Expect one milestone per turn; a big milestone can take two.
 
 **Activity** is the live feed of all of this: who is acting, each tool call folded with its
 result and timing, employees' work nested under their task, the verification result, the
 briefing. Reloading mid-turn recovers the feed. Rows in red are errors.
 
-When a turn's summary says it **was cut short**, the hub stopped (a restart) or the 20-minute
-limit hit — the model did not fail. **Hit its tool-call budget** means the manager ran out of
+When a turn's summary says it **was cut short**, the hub stopped (a restart) or the 45-minute
+(`TURN_TIMEOUT_MINUTES`) limit hit — the model did not fail. **Hit its tool-call budget** means the manager ran out of
 calls before reporting; the next turn starts from the last briefing and the workspace digest, so
 nothing is lost, but that milestone probably needs a tighter spec or a split.
 
@@ -219,6 +219,7 @@ Two systemd *user* units, installed from `deploy/spark/`:
 | `DAEMON_TOKEN` | Shared secret every node daemon presents |
 | `FIREWORKS_API_KEY` | Enables the `cloud-fireworks` node; `FIREWORKS_HARD_MODELS=1` unlocks the expensive tier |
 | `MAX_TURNS_PER_DAY`, `AUTO_TURNS` | The hub-wide cap (default 24) and the scheduler kill switch (`0`) |
+| `TURN_TIMEOUT_MINUTES` | How long a turn may run before it is cut short (default 45) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | The hub's own Telegram alerts (optional; JD is separate) |
 
 Backups: `DATA_ROOT` is the whole state. Every project folder is a git repo, so `git log` inside
@@ -235,7 +236,7 @@ Backups: `DATA_ROOT` is the whole state. Every project folder is a git repo, so 
 | Turn fails with `endpoint error 400 … Priority scheduling is not enabled` | vLLM lacks `--scheduling-policy priority` | Harmless: the hub drops the field and retries; to fix for real, set `EXTRA_VLLM_ARGS` in the recipe's `.env` and restart `sparkmodel` |
 | `endpoint error 401/412` from Fireworks | Bad key / spending limit reached | Fix the key or the limit at app.fireworks.ai; local turns keep working |
 | Run turn refused, "cap … reached" | Daily budget spent | Wait for the window, or raise `MAX_TURNS_PER_DAY` and restart |
-| Briefing: "cut short" | Hub restarted or 20-minute limit | Run the turn again; it resumes from the last briefing |
+| Briefing: "cut short" | Hub restarted or 45-minute (`TURN_TIMEOUT_MINUTES`) limit | Run the turn again; it resumes from the last briefing |
 | Briefing: "hit its tool-call budget" | The milestone was too big for one turn | Split it in the Roadmap, or run again |
 | Auto-run suspended | Three consecutive errors | Find the error in Activity, fix it, click Auto-run to re-enable |
 

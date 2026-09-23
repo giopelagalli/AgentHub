@@ -93,7 +93,12 @@ async function runReview(deps: SubagentDeps, ctx: ToolContext, bundle: ProjectBu
   const task = reviewTask(milestone, prdHeadings(await bundle.prd()), files);
   const res = await runSubagent(deps, ctx, { role: 'reviewer', member: reviewer, task, tools: REVIEWER_TOOLS });
   const report = res.text.trim();
-  if (!report) return { status: 'changes', who: reviewer.name, findings: `reviewer ended (${res.outcome}) without a report` };
+  if (!report) {
+    const findings = res.outcome === 'aborted'
+      ? 'reviewer was cut short (the hub stopped, or the turn hit its time limit) without a report'
+      : `reviewer ended (${res.outcome}) without a report`;
+    return { status: 'changes', who: reviewer.name, findings };
+  }
   return { status: parseVerdict(report), who: reviewer.name, findings: truncateResult(report, REVIEW_REPORT_LIMIT) };
 }
 

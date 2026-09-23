@@ -15,7 +15,7 @@ import { isPrdScaffold } from './prd.js';
 import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
 
 const DEFAULT_TICK_MS = 15 * 60_000;
-const DEFAULT_TURN_TIMEOUT_MS = 20 * 60_000;
+const DEFAULT_TURN_TIMEOUT_MS = 45 * 60_000;
 const DEFAULT_STOP_GRACE_MS = 5000;
 /** The hub-wide turn cap, across every project and whoever triggers the turn. */
 export const DEFAULT_MAX_TURNS_PER_DAY = 24;
@@ -43,7 +43,7 @@ export interface ProjectServiceDeps {
   /** Receives every live event of every project's turns, keyed by slug and orchestrator session. */
   onEvent?: (slug: string, sessionId: number, e: TurnEvent, at: number) => void;
   tickIntervalMs?: number;
-  /** Aborts a turn that runs longer than this. Defaults to 20 minutes. */
+  /** Aborts a turn that runs longer than this. Defaults to 45 minutes. */
   turnTimeoutMs?: number;
   /** The scheduler's kill switch: `false` and `start()` never sets its timer. Defaults to true. */
   autoTurns?: boolean;

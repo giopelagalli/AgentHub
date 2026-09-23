@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { loadConfig } from '../src/config.js';
@@ -430,6 +431,85 @@ describe('node daemon', () => {
       expect(hub.registry.byName('tokenless-node')).toBeNull();
     } finally {
       vi.unstubAllEnvs();
+    }
+  }, 10000);
+
+  it('retries registration past an unreachable hub (ECONNREFUSED), then registers and comes up', async () => {
+    const port = await getEphemeralPort(); // nothing listening here yet — fetch fails ECONNREFUSED
+    let stub: HttpServer | undefined;
+    let registerHits = 0;
+
+    // Brings the stub hub up on the reserved port, standing in for the real hub starting a beat late.
+    const bringUpHub = () => new Promise<void>((resolve) => {
+      stub = createHttpServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/api/nodes/register') {
+          registerHits++;
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{}');
+          return;
+        }
+        res.writeHead(204); // heartbeat/claim: treated as "nothing to do" by both callers
+        res.end();
+      });
+      stub.listen(port, '127.0.0.1', resolve);
+    });
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: retry-node', '  arch: arm64',
+      `hub: http://127.0.0.1:${port}`,
+      'jobTypes: ["shell-task"]',
+      `workspaceRoot: ${join(dir, 'workspace')}`,
+      'claimIntervalMs: 50',
+    ].join('\n'));
+
+    // Fakes the backoff timer so the test doesn't actually wait out the real delays; the hub comes up
+    // during the second backoff, so the third attempt is the one that lands.
+    let sleepCalls = 0;
+    const sleep = async (_ms: number): Promise<void> => {
+      sleepCalls++;
+      if (sleepCalls === 2) await bringUpHub();
+    };
+
+    try {
+      daemon = new Daemon(loadConfig(cfgPath), { sleep });
+      await daemon.start();
+
+      expect(sleepCalls).toBe(2);
+      expect(registerHits).toBe(1);
+    } finally {
+      if (stub) await new Promise((r) => stub!.close(r));
+    }
+  }, 10000);
+
+  it('does not retry a final registration failure (401)', async () => {
+    let registerHits = 0;
+    const stub = createHttpServer((req, res) => {
+      if (req.method === 'POST' && req.url === '/api/nodes/register') registerHits++;
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => stub.listen(0, '127.0.0.1', resolve));
+    const port = (stub.address() as { port: number }).port;
+
+    const dir = tmpDir();
+    const cfgPath = join(dir, 'daemon.yaml');
+    writeFileSync(cfgPath, [
+      'node:', '  name: no-retry-node', '  arch: arm64',
+      `hub: http://127.0.0.1:${port}`,
+      'jobTypes: ["shell-task"]',
+    ].join('\n'));
+
+    let sleepCalls = 0;
+    try {
+      daemon = new Daemon(loadConfig(cfgPath), { sleep: async () => { sleepCalls++; } });
+      await expect(daemon.start()).rejects.toThrow(/hub registration failed: 401/);
+
+      expect(registerHits).toBe(1);
+      expect(sleepCalls).toBe(0);
+    } finally {
+      await new Promise((r) => stub.close(r));
     }
   }, 10000);
 

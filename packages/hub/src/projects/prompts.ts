@@ -1,4 +1,5 @@
 import { PRD_SECTIONS, TEAM_ROLES, type Milestone, type TeamMember, type TeamRole } from '@agenthub/shared';
+import { BRIEFING_RESERVE, ORCHESTRATOR_TOOL_CALLS } from '../agents/budgets.js';
 import type { Briefing } from './schema.js';
 
 // A subagent's role and a roster member's role are the same thing: the roster is who the
@@ -121,6 +122,8 @@ function planningSection(planning: PlanningContext): string[] {
     `- Never ask an employee to verify a language or runtime identifier — that a function, module or`,
     `  property name exists, is spelled right, or wasn't mangled in transport. It wasn't; trust the`,
     `  platform and give them the actual task.`,
+    `- You have ${ORCHESTRATOR_TOOL_CALLS} tool calls per turn; when told you have ${BRIEFING_RESERVE} left, publish`,
+    `  the briefing instead of starting anything new.`,
     ``,
   ];
 }

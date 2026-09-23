@@ -12,6 +12,7 @@ import { ProjectBundle } from '../src/projects/bundle.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { workspaceTools, type Tool, type ToolContext } from '../src/agents/tools.js';
+import { BRIEFING_RESERVE, ORCHESTRATOR_TOOL_CALLS } from '../src/agents/budgets.js';
 
 let root: string;
 let bundle: ProjectBundle;
@@ -108,6 +109,40 @@ describe('AgentLoop', () => {
     expect(messages.some((m) => m.role === 'tool' && m.content === 'error: tool budget exhausted')).toBe(true);
     expect(messages.some((m) => m.role === 'system' && m.content.includes('budget'))).toBe(false);
     expect(transcript.events(res.sessionId)[0].content).toContain('budget-exhausted');
+  });
+
+  it('warns an orchestrator run once, with room to spare, as its tool-call budget runs low', async () => {
+    // 37 single-tool-call turns, so there are trailing requests after the warning to check it isn't
+    // repeated on, plus a final content-only reply so the run ends cleanly (well under the 40 budget).
+    const script: ScriptStep[] = [...Array.from({ length: 37 }, () => readNotes), { content: 'wrapping up' }];
+    const { loop, mock, ctx } = await setup(script);
+
+    const res = await loop.run({ ...runOpts({ kind: 'orchestrator', maxToolCalls: ORCHESTRATOR_TOOL_CALLS }), ctx });
+
+    expect(res).toMatchObject({ outcome: 'stop', toolCalls: 37, text: 'wrapping up' });
+    expect(mock.requests).toHaveLength(38); // one request per tool call, plus the final content-only reply
+
+    const warningText = `You have ${BRIEFING_RESERVE} tool calls left in this turn. Stop starting new work: finish what is in flight, then call publish_briefing now.`;
+    type Sent = { role: string; content: string | null };
+
+    // It lands as the last message on the request sent right after the 35th tool result (5 left)...
+    const afterCall35 = mock.requests[35].messages as Sent[];
+    expect(afterCall35.at(-1)).toEqual({ role: 'user', content: warningText });
+    // ...stays in every later request's history too...
+    expect(mock.requests.slice(35).every((r) => (r.messages as Sent[]).some((m) => m.content === warningText))).toBe(true);
+    // ...but was only ever inserted once: the fullest request carries exactly one copy of it.
+    const final = mock.requests.at(-1)!.messages as Sent[];
+    expect(final.filter((m) => m.content === warningText)).toHaveLength(1);
+  });
+
+  it('never warns a non-orchestrator run, however low its tool-call budget gets', async () => {
+    const script: ScriptStep[] = [...Array.from({ length: 5 }, () => readNotes), { content: 'done' }];
+    const { loop, mock, ctx } = await setup(script);
+
+    const res = await loop.run({ ...runOpts({ maxToolCalls: 5 }), ctx });
+
+    expect(res).toMatchObject({ outcome: 'stop', toolCalls: 5 });
+    expect(mock.requests.some((r) => (r.messages as { content: string | null }[]).some((m) => m.content?.includes('tool calls left in this turn')))).toBe(false);
   });
 
   it('turns a throwing tool into an error result and keeps going', async () => {

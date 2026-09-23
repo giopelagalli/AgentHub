@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { TeamRoster } from '@agenthub/shared';
 import {
-  activeWho, activityHint, applyTurnEvent, doingCaption, formatClock, formatDuration, formatElapsed, mergeTurns,
-  openSubagents, runningTurn, timelineModel, toolPhrase, whoView,
+  activeWho, activityHint, applyTurnEvent, doingCaption, formatClock, formatDuration, formatElapsed, memberFeed,
+  mergeTurns, openSubagents, runningTurn, timelineModel, toolPhrase, whoView,
   type SubagentBlock, type TimedEvent, type TimelineGroup, type TurnEvent, type TurnRecord,
 } from '../src/turns.js';
 
@@ -210,6 +210,63 @@ describe('timelineModel', () => {
     const items = timelineModel(play([], 1, script)[0].events);
     expect(items.map((i) => i.kind)).toEqual(['subagent', 'group']);
     expect((items[1] as TimelineGroup).rows[0].kind).toBe('end');
+  });
+});
+
+describe('memberFeed', () => {
+  const turn = play([], 1, SCRIPT)[0];
+
+  it('gives a member their own rows in order, with the task they were handed around them', () => {
+    expect(memberFeed(turn, 'coder-1')).toEqual([
+      { kind: 'task-start', key: 4, at: T0 + 4000, role: 'coder', task: 'Write the store' },
+      { kind: 'tool', key: 5, at: T0 + 5000, tool: 'write_file', subject: 'lib/store.js', result: 'wrote 84 lines', ok: true, ms: 18 },
+      { kind: 'tool', key: 7, at: T0 + 7000, tool: 'bash', subject: 'npm test', result: '1 failed', ok: false, ms: 3100 },
+      { kind: 'task-end', key: 4, at: T0 + 4000 + 212_000, outcome: 'done', ms: 212_000 },
+    ]);
+  });
+
+  it('leaves the manager theirs alone: no one else’s rows, and no turn or verify rows', () => {
+    expect(memberFeed(turn, 'manager')).toEqual([
+      { kind: 'text', key: 1, at: T0 + 1000, text: 'Reading the roadmap.' },
+      { kind: 'tool', key: 2, at: T0 + 2000, tool: 'read_file', subject: 'docs/roadmap.md', result: '3 milestones', ok: true, ms: 40 },
+    ]);
+  });
+
+  it('is empty for a turn nobody has started, and for a who the turn never names', () => {
+    expect(memberFeed(null, 'coder-1')).toEqual([]);
+    expect(memberFeed(turn, 'ghost-9')).toEqual([]);
+  });
+
+  it('shows a call still running as unanswered, and its task as still open', () => {
+    const rows = memberFeed(play([], 1, SCRIPT.slice(0, 6))[0], 'coder-1');
+    expect(rows.map((r) => r.kind)).toEqual(['task-start', 'tool']);
+    expect(rows[1]).toMatchObject({ tool: 'write_file', result: '', ok: null, ms: null });
+  });
+
+  it('keeps one line of a result, and the one argument worth naming out of the args', () => {
+    const script: TurnEvent[] = [
+      { kind: 'tool-call', who: 'manager', tool: 'run_shell', args: { command: 'npm test', cwd: '/repo' } },
+      { kind: 'tool-result', who: 'manager', tool: 'run_shell', ok: false, summary: '\n1 failed\nexpected true, got undefined\n', ms: 90 },
+      { kind: 'text', who: 'manager', text: 'Fixing the flag.' },
+    ];
+    expect(memberFeed(play([], 1, script)[0], 'manager')).toMatchObject([
+      { kind: 'tool', tool: 'run_shell', subject: 'npm test', result: '1 failed', ok: false, ms: 90 },
+      { kind: 'text', text: 'Fixing the flag.' },
+    ]);
+  });
+
+  it('leaves a subagent’s own subagent on that one’s card, and picks the member up after it', () => {
+    const script: TurnEvent[] = [
+      { kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder', task: 'outer' },
+      { kind: 'subagent-start', who: 'reviewer-1', name: 'Vex', role: 'reviewer', task: 'inner' },
+      { kind: 'tool-call', who: 'reviewer-1', tool: 'bash', args: 'ls -la' },
+      { kind: 'subagent-end', who: 'reviewer-1', outcome: 'approved', ms: 5 },
+      { kind: 'text', who: 'coder-1', text: 'back' },
+      { kind: 'subagent-end', who: 'coder-1', outcome: 'done', ms: 9 },
+    ];
+    const played = play([], 1, script)[0];
+    expect(memberFeed(played, 'coder-1').map((r) => r.kind)).toEqual(['task-start', 'text', 'task-end']);
+    expect(memberFeed(played, 'reviewer-1').map((r) => r.kind)).toEqual(['task-start', 'tool', 'task-end']);
   });
 });
 

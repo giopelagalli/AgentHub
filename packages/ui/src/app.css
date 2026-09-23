@@ -1733,29 +1733,196 @@ button.card__open:hover {
   border-radius: var(--radius);
 }
 
-.chat__activity {
+/* --- now: one agent, live -------------------------------------------------- */
+
+/* The live section at the top of an agent's drawer: what they are on right now, and the rows of
+   the running turn as they land. Same register as the Activity timeline — small type, one rule
+   per row, monospace held back for the tool names — in a 400px column. */
+.now {
+  flex: none;
   padding: 12px 0;
   margin-top: 8px;
   border-bottom: 1px solid var(--line);
 }
 
-.chat__activity-line {
+.now__title {
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-mute);
+}
+
+.now__status {
   display: flex;
   gap: 8px;
-  align-items: center;
-  margin: 0 0 6px;
+  align-items: baseline;
+  min-width: 0;
   font-size: 12px;
   color: var(--text-dim);
 }
 
 /* The status dot leads this line; it must not be shoved to the far right. */
-.chat__activity-line .dot {
+.now__status .dot {
+  align-self: center;
   margin-left: 0;
 }
 
-.chat__activity-excerpt {
-  display: block;
+.now__state {
+  flex: none;
+  font-weight: 500;
   color: var(--text);
+}
+
+.now__doing {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The state and what follows it read as one sentence: Working · npm test. */
+.now__doing::before {
+  margin-right: 5px;
+  color: var(--text-mute);
+  content: '·';
+}
+
+.now__elapsed {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.now__last {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Carries `tl__rows`, so the feed hangs from the same hairline the timeline's rows do. The right
+   padding keeps the durations clear of the scrollbar a long turn brings. */
+.now__feed {
+  max-height: 30vh;
+  padding-right: 8px;
+  margin-top: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* A tool call and its result on one line, as in the timeline — but flat: the drawer is too
+   narrow to open one up, and the Activity panel is where the whole args live. */
+.now__tool {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 3px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Every row in this feed is theirs, so the name column needs less of the width than it does in
+   the timeline, where a run of calls lines up under a chip — and in the last of the room it
+   gives that up too, rather than push the row into a sideways scroll. */
+.now__tool .tl__toolname {
+  flex: 0 1 auto;
+  min-width: 7ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* In this much narrower column the file being written is worth more than the line about it,
+   so the subject takes the slack and the result gives way first. */
+.now__tool .tl__args {
+  flex: 1 1 auto;
+}
+
+.now__tool .tl__result {
+  flex: 0 6 auto;
+}
+
+/* What they said. It carries `tl__text`, and adds only the quotation marks that set it apart
+   from the tool lines around it. */
+.now__said::before {
+  content: '“';
+}
+
+.now__said::after {
+  content: '”';
+}
+
+/* The task they were handed, opening and closing the run of rows between. */
+.now__mark {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 6px 0 2px;
+  font-size: 12px;
+}
+
+.now__mark--end {
+  padding: 2px 0 6px;
+}
+
+.now__markverb {
+  flex: none;
+  color: var(--text-mute);
+}
+
+.now__marktext {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now__empty {
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+/* The drawer is a narrow column on a phone, too narrow to hold a row on one line. The tool sits
+   over the path it was given, the duration beside that path, and the result line — the part that
+   reads much the same row after row — gives way entirely. */
+@media (max-width: 560px) {
+  .now__tool {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 6px;
+  }
+
+  .now__tool .tl__toolname {
+    grid-column: 2 / -1;
+    min-width: 0;
+  }
+
+  .now__tool .tl__args {
+    grid-column: 2;
+  }
+
+  .now__tool .tl__ms {
+    grid-column: 3;
+    margin-left: 0;
+  }
+
+  .now__tool .tl__result {
+    display: none;
+  }
+}
+
+.chat__activity {
+  padding: 12px 0;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--line);
 }
 
 .chat__activity-details summary {

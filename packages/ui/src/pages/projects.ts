@@ -561,13 +561,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       openDrawer((into) => openMasterPanel(into));
       return;
     }
-    // The manager's "What they're doing" is the project's latest briefing; an employee's is their
-    // roster entry (already loaded) plus their latest work session.
+    // The Now section reads the running turn straight out of the store, under the same `who` the
+    // turn events carry. The idle line behind it is the project's latest briefing for the manager,
+    // and the member's latest work session for an employee.
     const member = card.kind === 'employee' ? roster?.members.find((m) => m.id === card.id) : undefined;
+    const now = { store, slug, who: card.id };
     const activity: ChatActivity | undefined = card.kind === 'manager'
-      ? { kind: 'manager', briefingUrl: `/api/projects/${slug}` }
+      ? { kind: 'manager', briefingUrl: `/api/projects/${slug}`, now }
       : member
-        ? { kind: 'employee', member, activityUrl: `/api/projects/${slug}/team/${card.id}/activity` }
+        ? {
+          kind: 'employee',
+          member,
+          activityUrl: `/api/projects/${slug}/team/${card.id}/activity`,
+          now: { ...now, meta: `${member.sessionsCount} session${member.sessionsCount === 1 ? '' : 's'}` },
+        }
         : undefined;
     openDrawer((into) => openChat(into, {
       name: card.name,

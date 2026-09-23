@@ -313,6 +313,8 @@ export interface ToolRow {
   at: number;
   tool: string;
   args: string;
+  /** The one argument worth naming on a line too narrow for all of them; '' when there is none. */
+  subject: string;
   ok: boolean | null;
   summary: string;
   ms: number | null;
@@ -396,7 +398,8 @@ export function timelineModel(events: TimedEvent[]): TimelineItem[] {
       case 'tool-call':
         push(event.who, {
           kind: 'tool', key, who: event.who, at: event.at,
-          tool: event.tool, args: argsText(event.args), ok: null, summary: '', ms: null,
+          tool: event.tool, args: argsText(event.args), subject: subjectOf(event.args),
+          ok: null, summary: '', ms: null,
         });
         break;
       case 'tool-result': {
@@ -409,7 +412,7 @@ export function timelineModel(events: TimedEvent[]): TimelineItem[] {
           // A result whose call we never saw (a socket that came up mid-turn): still worth a row.
           push(event.who, {
             kind: 'tool', key, who: event.who, at: event.at,
-            tool: event.tool, args: '', ok: event.ok, summary: event.summary, ms: event.ms,
+            tool: event.tool, args: '', subject: '', ok: event.ok, summary: event.summary, ms: event.ms,
           });
         }
         break;
@@ -450,4 +453,61 @@ export function timelineModel(events: TimedEvent[]): TimelineItem[] {
   });
 
   return root.items;
+}
+
+// --- one member's feed ---------------------------------------------------------
+
+/**
+ * One row of what a single agent is doing, as the Now section of their card draws it: a tool call
+ * folded with its result, something they said, or the task they were handed opening and closing.
+ */
+export type FeedRow =
+  | { kind: 'tool'; key: number; at: number; tool: string; subject: string; result: string; ok: boolean | null; ms: number | null }
+  | { kind: 'text'; key: number; at: number; text: string }
+  | { kind: 'task-start'; key: number; at: number; role: string; task: string }
+  | { kind: 'task-end'; key: number; at: number; outcome: string; ms: number };
+
+/** The first line with anything on it — all a one-line row has room for. */
+function firstLine(text: string): string {
+  return text.split('\n').find((line) => line.trim())?.trim() ?? '';
+}
+
+/**
+ * What `who` did in this turn, oldest first. Read off the same timeline the Activity panel draws,
+ * filtered to this one agent: the tool and text rows of their own groups, and the markers around a
+ * task delegated to them. What their own subagents did belongs on those subagents' cards, not here.
+ */
+export function memberFeed(turn: TurnRecord | null, who: string): FeedRow[] {
+  const rows: FeedRow[] = [];
+
+  const walk = (items: TimelineItem[]): void => {
+    for (const item of items) {
+      if (item.kind === 'group') {
+        if (item.who !== who) continue;
+        for (const row of item.rows) {
+          if (row.kind === 'tool') {
+            rows.push({
+              kind: 'tool', key: row.key, at: row.at, tool: row.tool, subject: row.subject,
+              result: firstLine(row.summary), ok: row.ok, ms: row.ms,
+            });
+          } else if (row.kind === 'text') {
+            rows.push({ kind: 'text', key: row.key, at: row.at, text: row.text });
+          }
+        }
+        continue;
+      }
+      // A block of theirs brackets its own rows; one of someone else's is still walked into,
+      // since the rows after it in this turn may be theirs again.
+      const theirs = item.who === who;
+      if (theirs) rows.push({ kind: 'task-start', key: item.key, at: item.at, role: item.role, task: item.task });
+      walk(item.items);
+      if (theirs && item.outcome !== null) {
+        const ms = item.ms ?? 0;
+        rows.push({ kind: 'task-end', key: item.key, at: item.at + ms, outcome: item.outcome, ms });
+      }
+    }
+  };
+
+  if (turn) walk(timelineModel(turn.events));
+  return rows;
 }

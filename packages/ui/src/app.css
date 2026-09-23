@@ -1550,6 +1550,49 @@ button.card__open:hover {
   padding: 20px 24px;
 }
 
+/* The Nodes panel's title row: heading left, Add node right. */
+.cluster__head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.cluster__head h2 {
+  margin-bottom: 0;
+  margin-right: auto;
+}
+
+/* The install command an enrollment token belongs to, shown until the owner navigates away. */
+.addnode {
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.addnode__row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.addnode__cmd {
+  flex: 1;
+  min-width: 0;
+}
+
+.addnode__note,
+.addnode__expiry {
+  margin-top: 8px;
+  color: var(--text-dim);
+}
+
+.addnode__expiry {
+  color: var(--text-mute);
+}
+
 /* --- help ------------------------------------------------------------------ */
 
 .help {

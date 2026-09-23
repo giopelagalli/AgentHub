@@ -4,12 +4,34 @@ import type { Store, UiState } from '../store.js';
 import { toast } from '../toast.js';
 import { button, el } from './projects.js';
 
-const NODE_COLUMNS = ['Node', 'Status', 'Serving', 'Streams', 'Extras', 'Actions'] as const;
+const NODE_COLUMNS = ['Node', 'Owner', 'Status', 'Serving', 'Streams', 'Extras', 'Actions'] as const;
 const JOB_COLUMNS = ['Job', 'Type', 'Status', 'Node', 'Attempts', 'Project'] as const;
 
 /** Column indexes whose cells hold identifiers — names, ids, model strings — and so set in mono. */
-const NODE_MONO = new Set([0, 2, 3]);
+const NODE_MONO = new Set([0, 1, 3, 4]);
 const JOB_MONO = new Set([0, 1, 3, 5]);
+/** The node column carrying the status word: it gets the status colour instead of mono. */
+const NODE_STATUS_AT = 2;
+
+/** What `POST /api/nodes/enrollment-tokens` answers with; the hub builds the command, not the page. */
+interface NodeEnrollment {
+  token: string;
+  expiresAt: number;
+  command: string;
+}
+
+/** The line under the install command, saying how long it stays good for. */
+export function enrollmentExpiry(expiresAt: number, now: number): string {
+  const minutes = Math.floor((expiresAt - now) / 60_000);
+  if (minutes <= 0) return 'This command has expired — press Add node for a fresh one.';
+  if (minutes < 60) return `Expires in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  const hours = Math.round(minutes / 60);
+  return `Expires in ${hours} hour${hours === 1 ? '' : 's'}.`;
+}
+
+/** What the owner is being asked to do with the command, in one line (PRD FR-D1). */
+export const ADD_NODE_NOTE =
+  'Run this on the machine to add. It installs the node daemon, enrolls it under your account, and starts it.';
 
 function table(columns: readonly string[]): { node: HTMLTableElement; body: HTMLTableSectionElement } {
   const node = el('table', 'table');
@@ -74,6 +96,56 @@ function jobRow(job: Job): string[] {
   ];
 }
 
+/**
+ * The *Add node* panel: one button that mints a one-time enrollment token and shows the command it
+ * belongs to. The command is the hub's — it knows the URL the new machine has to call back on —
+ * so this only displays it and puts it on the clipboard.
+ */
+function addNodePanel(): { head: HTMLElement; panel: HTMLElement } {
+  const head = el('div', 'cluster__head');
+  const add = button('Add node', 'btn btn--primary');
+  head.append(el('h2', undefined, 'Nodes'), add);
+
+  const panel = el('div', 'addnode');
+  panel.hidden = true;
+  const command = el('input', 'input mono addnode__cmd');
+  command.readOnly = true;
+  const copy = button('Copy');
+  const expiry = el('p', 'addnode__expiry');
+  const row = el('div', 'addnode__row');
+  row.append(command, copy);
+  panel.append(row, el('p', 'addnode__note', ADD_NODE_NOTE), expiry);
+
+  add.addEventListener('click', () => {
+    add.disabled = true;
+    void sendJson<NodeEnrollment>('/api/nodes/enrollment-tokens')
+      .then((enrollment) => {
+        if (!enrollment) return;
+        command.value = enrollment.command;
+        expiry.textContent = enrollmentExpiry(enrollment.expiresAt, Date.now());
+        copy.textContent = 'Copy';
+        panel.hidden = false;
+        command.select();
+      })
+      .catch((error: unknown) => toast(`Could not mint an enrollment token: ${String(error)}`, 'error'))
+      .finally(() => { add.disabled = false; });
+  });
+
+  copy.addEventListener('click', () => {
+    // There is no clipboard API outside a secure context, and writing can be refused even where
+    // there is one. Either way the command is selected instead, so the button never does nothing.
+    const selectInstead = () => {
+      command.select();
+      toast('Could not reach the clipboard — the command is selected, copy it by hand.', 'error');
+    };
+    const written = navigator.clipboard?.writeText(command.value);
+    if (!written) return selectInstead();
+    void written.then(() => { copy.textContent = 'Copied'; }).catch(selectInstead);
+  });
+
+  return { head, panel };
+}
+
 /** Nodes and jobs, straight off the hub state — so the WS keeps both tables live. */
 export function mountCluster(host: HTMLElement, store: Store): () => void {
   const page = el('div', 'cluster');
@@ -81,7 +153,8 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   const nodesPane = el('section', 'panel');
   const nodes = table(NODE_COLUMNS);
   const nodesEmpty = el('p', 'empty', 'Waiting for the hub…');
-  nodesPane.append(el('h2', undefined, 'Nodes'), nodes.node, nodesEmpty);
+  const addNode = addNodePanel();
+  nodesPane.append(addNode.head, addNode.panel, nodes.node, nodesEmpty);
 
   const jobsPane = el('section', 'panel');
   const jobs = table(JOB_COLUMNS);
@@ -120,11 +193,14 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
     nodes.body.parentElement?.classList.toggle('table--empty', nodeRows.length === 0);
     for (const node of nodeRows) {
       const row = nodes.body.insertRow();
-      const values = [node.name, node.draining ? 'draining' : node.status, serving(node), streamsFor(node, streams), extras(node)];
+      const values = [
+        node.name, node.owner, node.draining ? 'draining' : node.status,
+        serving(node), streamsFor(node, streams), extras(node),
+      ];
       values.forEach((value, index) => {
         const cell = row.insertCell();
         cell.textContent = value;
-        if (index === 1) cell.className = `status status--${value}`;
+        if (index === NODE_STATUS_AT) cell.className = `status status--${value}`;
         else if (NODE_MONO.has(index)) cell.className = 'mono';
       });
       const actionsCell = row.insertCell();

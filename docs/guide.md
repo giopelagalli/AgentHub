@@ -162,11 +162,28 @@ model server, it attaches to the vLLM that `sparkmodel.service` already runs on 
 it answers, and registers both tiers with `priority: 10` and small stream caps (2 orchestrator,
 3 worker) because the KV cache is shared with JD.
 
-Adding a node today: install Node 22, clone the repo, write a config from the examples in
-`configs/` (`amd.yaml` for the 7900 XTX, `macbook.yaml`, `macmini.yaml` for the browser node),
-set `DAEMON_TOKEN` to the hub's, run `npx tsx packages/node-daemon/src/main.ts <config>` under a
-service. The per-machine playbooks are in `deploy/`. A one-command installer is still on the
-roadmap (`docs/plan-agenthub-v2.md`, Phase D).
+**Adding a node.** Press **Add node** above the table. The hub mints a one-time token — good for
+24 hours, usable once — and shows the command it belongs to:
+
+```
+curl -fsSL http://<hub>/install.sh | sh -s -- --hub http://<hub> --token <token>
+```
+
+Copy it, run it on the machine you're adding, and you're done: it installs the node daemon, fetches
+the hub's own source (the machine never needs repo access), enrolls the node under your account,
+and starts it under systemd or launchd. The node appears in the table within a minute. Re-running
+the command on a machine that's already a node updates it in place and rotates its token.
+
+Each node gets its own bearer token, which is why the **Owner** column exists: a node's token works
+only for that node — it can register, heartbeat and report on its own jobs, and nothing else. The
+hub stores only a hash of it, so the plaintext exists once, in the reply to the installer. **Remove**
+deletes the token along with the node, so a removed daemon cannot come back on its own.
+
+The manual way is still there as a fallback: install Node 22, clone the repo, write a config from
+the examples in `configs/` (`amd.yaml` for the 7900 XTX, `macbook.yaml`, `macmini.yaml` for the
+browser node), set `DAEMON_TOKEN` to the hub's shared token, and run
+`npx tsx packages/node-daemon/src/main.ts <config>` under a service; the per-machine playbooks are
+in `deploy/`. `DAEMON_TOKEN` remains the admin's break-glass and works for every node.
 
 Cluster's **Drain** button stops new jobs, turns and browser leases from landing on a node while
 whatever it's already running finishes, and **Undrain** reverses it. **Remove** forgets the node

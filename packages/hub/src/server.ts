@@ -1,13 +1,19 @@
+import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
-import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
+import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
+import {
+  ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
+} from './enrollment.js';
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
@@ -102,6 +108,26 @@ const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
  * actually exited; short enough that a deliberate re-install minutes later just works.
  */
 const REMOVED_LOCKOUT_MS = 60_000;
+
+/**
+ * The repository this hub is running out of — the hub runs from source (`tsx packages/hub/src`), so
+ * the package's own location fixes it, the same way `main.ts` resolves the UI build. Both installer
+ * routes read from here: the script on disk, and an archive of this very checkout.
+ */
+const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+
+/**
+ * What goes into the source tarball a joining node downloads instead of cloning the repo. Every
+ * workspace the root `package.json` globs has to be in it or `npm ci` refuses the lockfile as out of
+ * sync — which is why packages nothing on a node imports (`ui`, `mocks`) are listed too.
+ */
+const SOURCE_ARCHIVE_PATHS = [
+  'package.json', 'package-lock.json', 'tsconfig.base.json',
+  'packages/shared', 'packages/node-daemon', 'packages/mocks', 'packages/hub', 'packages/ui',
+  'configs/README.md', 'deploy',
+];
+/** The whole repository is a few MB; execFile's 1MB default would truncate the archive into garbage. */
+const SOURCE_ARCHIVE_MAX_BYTES = 128 * 1024 * 1024;
 
 /**
  * The owner's model choice, checked against the curated catalog: a model id the hub doesn't know is
@@ -244,6 +270,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const db = openDb(dbPath);
   const registry = new NodeRegistry(db, { staleMs: opts.staleMs });
+  const enrollmentTokens = new EnrollmentTokens(db);
   const queue = new JobQueue(db);
   const jobLogs = new JobLogs(db);
   // No serving process, no daemon, no heartbeat of its own: the cloud node exists only in the
@@ -407,6 +434,41 @@ export function createHub(opts: HubOptions = {}): Hub {
   // never completes. Without `auth` the hook does not exist at all and the hub stays open.
   const auth = opts.auth ? new Auth(opts.auth) : null;
   const loginThrottle = new LoginThrottle(opts.auth?.now);
+  // Enrollment is guessable in exactly the way login is — a 32-hex token instead of a password — so
+  // it gets the same per-client lockout, on its own counter: a machine fumbling its token must not
+  // lock the owner out of the UI, or the reverse.
+  const enrollThrottle = new LoginThrottle(opts.auth?.now);
+
+  /** The node a `Bearer` names, when it is a per-node token rather than the shared daemon one. */
+  const nodeByBearer = (authorization: string | undefined): NodeInfo | null => {
+    if (!authorization?.startsWith('Bearer ')) return null;
+    const token = authorization.slice('Bearer '.length);
+    return token ? registry.byTokenHash(hashToken(token)) : null;
+  };
+
+  /**
+   * Requests a per-node token got through `onRequest` on, still owing the second half of the check.
+   * A WeakMap rather than a request decorator so the entry cannot outlive the request or need a
+   * module augmentation to be typed.
+   */
+  const speakingFor = new WeakMap<FastifyRequest, NodeInfo>();
+
+  /**
+   * Whether the node holding the token is the node this request is about. Every daemon route names
+   * its node somewhere (`auth.ts`'s `DAEMON_ROUTES`); `/api/jobs/:id/log` names none, so the job's
+   * runner of record stands in — the same fencing `complete`, `fail` and `artifact` already apply.
+   */
+  const subjectIsHolder = (req: FastifyRequest, subject: NodeSubject, holder: NodeInfo): boolean => {
+    if (subject.from === 'job') {
+      const id = Number((req.params as Record<string, unknown>)[subject.key]);
+      const job = Number.isInteger(id) ? queue.get(id) : null;
+      return !!job && job.nodeId === holder.id;
+    }
+    const source = subject.from === 'param' ? req.params : subject.from === 'query' ? req.query : req.body;
+    const named = (source as Record<string, unknown> | undefined)?.[subject.key];
+    return typeof named === 'string' && named === holder.name;
+  };
+
   if (auth) {
     app.addHook('onRequest', async (req, reply) => {
       // Two rejections that precede the policy: a path that is not valid percent-encoding, and one
@@ -428,13 +490,38 @@ export function createHub(opts: HubOptions = {}): Hub {
       const access = routeAccess(req.method, route);
       if (access === 'none' || access === 'open') return;
       if (auth.ownerOk(req.headers.cookie)) return;
-      if (access === 'daemon' && auth.bearerOk(req.headers.authorization)) return;
+      if (access === 'daemon') {
+        // The shared DAEMON_TOKEN stays the admin's break-glass: it speaks for every node, and for
+        // the ones that registered before enrollment existed it is the only credential there is.
+        if (auth.bearerOk(req.headers.authorization)) return;
+        // A per-node token gets in here but is only half-checked: which node it may speak for
+        // depends on the body, which Fastify has not parsed yet. The preHandler below finishes it.
+        const holder = nodeByBearer(req.headers.authorization);
+        if (holder) {
+          speakingFor.set(req, holder);
+          return;
+        }
+      }
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
       // half-dead and hold `app.close()` open forever. Only the one route it owns, so an ordinary
       // request carrying an `Upgrade` header is not hung up on.
       if (route === '/ws' && req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
       return reply.code(401).send({ error: 'unauthorized' });
+    });
+
+    // The second half of the per-node token check, here rather than in `onRequest` because it is the
+    // first hook that runs with a parsed body. It fires only for a request a node token let through,
+    // so nothing else pays for it: node A may heartbeat, register, claim and report as itself, and
+    // is a plain 401 the moment it names node B.
+    app.addHook('preHandler', async (req, reply) => {
+      const holder = speakingFor.get(req);
+      if (!holder) return;
+      const subject = daemonRouteSubject(req.method, req.routeOptions?.url);
+      if (!subject || !subjectIsHolder(req, subject, holder)) {
+        console.warn(`[auth] node token for ${holder.name} refused on ${req.method} ${req.routeOptions?.url}`);
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
     });
   }
   // Once a switch is under way this hub's data root is being copied elsewhere: anything that writes
@@ -680,6 +767,77 @@ export function createHub(opts: HubOptions = {}): Hub {
     return { ok: true };
   });
 
+  /**
+   * Mints the one-time token behind the Cluster page's *Add node* (PRD FR-D1). The owner's route:
+   * the reply carries the plaintext token, which exists nowhere else — the hub keeps only its hash.
+   * `command` is assembled here rather than in the UI so the hub, which knows how it is reached, is
+   * the one that decides the URL the new machine will be told to call back on.
+   */
+  app.post('/api/nodes/enrollment-tokens', async (req, reply) => {
+    const body = req.body as Partial<{ name: string }> | undefined;
+    if (body?.name !== undefined && typeof body.name !== 'string') {
+      return reply.code(400).send({ error: 'invalid name' });
+    }
+    const suggested = body?.name || undefined;
+    const { token, expiresAt } = enrollmentTokens.mint(ADMIN_USER, suggested);
+    const hubUrl = hubUrlFrom(req);
+    return { token, expiresAt, command: installCommand(hubUrl, token) };
+  });
+
+  /**
+   * The open route the installer calls with the token it was given (PRD FR-D1). It is the one place
+   * an unauthenticated caller can create state, so: throttled per client exactly like login, the
+   * token spent before anything else is decided, and the only name it gets to choose checked against
+   * `NODE_NAME_RE` before it becomes a URL path segment.
+   *
+   * The plaintext node token is in this reply and nowhere else, ever again.
+   */
+  app.post('/api/nodes/enroll', async (req, reply) => {
+    const client = req.ip;
+    if (enrollThrottle.blocked(client)) {
+      console.warn(`[enroll] throttled enrollment from ${client}`);
+      return reply.code(429).send({ error: 'too many attempts' });
+    }
+    const body = req.body as Partial<{ token: string; name: string; arch: string; hardware: unknown }> | undefined;
+    if (!body || typeof body.token !== 'string' || !body.token) {
+      return reply.code(400).send({ error: 'invalid enrollment request' });
+    }
+    if (typeof body.name !== 'string' || !NODE_NAME_RE.test(body.name)) {
+      return reply.code(400).send({ error: 'invalid node name' });
+    }
+    if (typeof body.arch !== 'string' || !body.arch) return reply.code(400).send({ error: 'invalid arch' });
+    if (body.hardware !== undefined && (typeof body.hardware !== 'object' || body.hardware === null || Array.isArray(body.hardware))) {
+      return reply.code(400).send({ error: 'invalid hardware' });
+    }
+    const { name, arch } = body;
+    // Spent first, and spent whatever happens next: checking the name before the token would let an
+    // unauthenticated caller map the fleet by watching which names answer 409.
+    const minted = enrollmentTokens.consume(body.token);
+    if (!minted) {
+      const count = enrollThrottle.fail(client);
+      console.warn(`[enroll] rejected enrollment token from ${client} (${count})`);
+      return reply.code(401).send({ error: 'invalid or expired enrollment token' });
+    }
+    enrollThrottle.succeed(client);
+    // The synthetic cloud nodes are the hub's own rows; handing one a bearer would let the holder
+    // register a machine in their place.
+    if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
+    const existing = registry.byName(name);
+    if (existing && existing.owner !== minted.createdBy) return reply.code(409).send({ error: 'name taken' });
+    // A node the same owner already has is a re-install: the row keeps everything it registered and
+    // only its credential is replaced, so the old token stops working the moment the new one exists.
+    const nodeToken = newNodeToken();
+    registry.enroll({
+      name, arch, owner: minted.createdBy, tokenHash: hashToken(nodeToken),
+      ...(body.hardware ? { hardware: body.hardware as Record<string, unknown> } : {}),
+    });
+    // Enrolling is a deliberate act carrying a one-time token — far stronger evidence than the
+    // register that the lockout exists to refuse — so re-adding a just-removed node works at once.
+    removed.delete(name);
+    broadcastState();
+    return { name, nodeToken };
+  });
+
   app.get('/api/nodes', async () => {
     sweepAndRequeue();
     return registry.all();
@@ -707,10 +865,57 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { requeued, failed } = queue.requeueForNode(node.id);
     if (requeued) app.log.info(`requeued ${requeued} jobs from removed node ${name}`);
     for (const jobId of failed) jobLogs.append(jobId, `[hub] max attempts exceeded after node ${name} was removed`);
+    // Deleting the row takes the node's token hash with it, which is the revocation: a removed
+    // daemon still holding its bearer authenticates as nobody and cannot register itself back.
     registry.remove(name);
     removed.set(name, Date.now());
     broadcastState();
     return { ok: true };
+  });
+
+  // --- installer ----------------------------------------------------------------
+  //
+  // Both routes are outside `/api/`, so `routeAccess` classifies them `none` and they answer before
+  // any login — which is the point: the machine running them has no credential yet beyond the
+  // enrollment token in its command line.
+
+  /** The installer itself, straight off this checkout. Written by hand, not generated. */
+  app.get('/install.sh', async (_req, reply) => {
+    try {
+      const script = await readFile(join(repoRoot, 'deploy', 'install.sh'));
+      return reply.type('text/x-shellscript').send(script);
+    } catch {
+      return reply.code(404).send({ error: 'installer not found' });
+    }
+  });
+
+  /**
+   * The hub's own source, so a node never needs repo access (PRD FR-D2). Built once on the first
+   * request and kept: the contents are pinned to HEAD, so nothing short of a hub restart after a
+   * deploy can change what it should contain. The HEAD sha is the ETag; no conditional handling is
+   * wired up, because an installer that sends `If-None-Match` and gets a 304 has no tarball.
+   */
+  let sourceArchive: Promise<{ sha: string; body: Buffer }> | null = null;
+  const buildSourceArchive = async (): Promise<{ sha: string; body: Buffer }> => {
+    const run = promisify(execFile);
+    const { stdout: head } = await run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
+    const { stdout } = await run('git', ['archive', '--format=tgz', 'HEAD', '--', ...SOURCE_ARCHIVE_PATHS],
+      { cwd: repoRoot, encoding: 'buffer', maxBuffer: SOURCE_ARCHIVE_MAX_BYTES });
+    return { sha: String(head).trim(), body: stdout as unknown as Buffer };
+  };
+
+  app.get('/install/agenthub-src.tgz', async (_req, reply) => {
+    sourceArchive ??= buildSourceArchive();
+    try {
+      const { sha, body } = await sourceArchive;
+      return reply.type('application/gzip').header('etag', sha).send(body);
+    } catch (err) {
+      // A deployment that isn't a checkout has no source to serve, and a failed build must not
+      // poison the cache — the next request tries again.
+      sourceArchive = null;
+      app.log.error(`source archive unavailable: ${(err as Error).message}`);
+      return reply.code(404).send({ error: 'not a git checkout' });
+    }
   });
 
   /**

@@ -48,7 +48,7 @@ describe('formatBriefing', () => {
 
 describe('formatNodes', () => {
   const node = (overrides: Partial<NodeInfo> = {}): NodeInfo => ({
-    id: 1, name: 'spark', arch: 'arm64', status: 'online', lastHeartbeat: 1000,
+    id: 1, name: 'spark', arch: 'arm64', status: 'online', lastHeartbeat: 1000, owner: 'admin',
     endpoints: [{ tier: 'orchestrator', url: 'http://x', model: 'm', maxStreams: 4 }],
     jobTypes: ['llm-session'],
     ...overrides,

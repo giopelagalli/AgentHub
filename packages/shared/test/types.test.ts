@@ -31,7 +31,7 @@ describe('shared types', () => {
     const reg: NodeRegistration = { name: 'spark', arch: 'arm64', endpoints: [] };
     const regWithTypes: NodeRegistration = { ...reg, jobTypes: ['shell-task'] };
     const info: NodeInfo = {
-      ...regWithTypes, jobTypes: ['shell-task'], id: 1, status: 'online', lastHeartbeat: 0,
+      ...regWithTypes, jobTypes: ['shell-task'], id: 1, status: 'online', lastHeartbeat: 0, owner: 'admin',
     };
     expect(reg.jobTypes).toBeUndefined();
     expect(info.jobTypes).toEqual(['shell-task']);

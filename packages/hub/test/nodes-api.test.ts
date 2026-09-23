@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { NodeInfo } from '@agenthub/shared';
 import { createHub, type Hub } from '../src/server.js';
 import type { AnthropicLike } from '../src/providers/anthropic.js';
 
@@ -96,5 +97,18 @@ describe('remove', () => {
     const res = await register('still-fine');
     expect(res.statusCode).toBe(200);
     expect((await hub.app.inject({ method: 'POST', url: '/api/nodes/still-fine/heartbeat' })).statusCode).toBe(200);
+  });
+});
+
+describe('ownership', () => {
+  it('gives a node that only registers the admin as its owner, and shows no credential', async () => {
+    await register('spark');
+    const listed = (await hub.app.inject({ method: 'GET', url: '/api/nodes' })).json() as NodeInfo[];
+    expect(listed).toHaveLength(1);
+    expect(listed[0]!.owner).toBe('admin');
+    // It traded no enrollment token, so it has neither an enrolment time nor a token of its own.
+    expect(listed[0]!.enrolledAt).toBeUndefined();
+    expect(listed[0]).not.toHaveProperty('tokenHash');
+    expect(hub.db.prepare(`SELECT token_hash FROM nodes WHERE name='spark'`).get()).toEqual({ token_hash: null });
   });
 });

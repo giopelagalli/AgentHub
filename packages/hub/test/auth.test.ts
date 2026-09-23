@@ -1,6 +1,6 @@
 import { connect } from 'node:net';
 import { describe, it, expect, afterAll } from 'vitest';
-import { routeAccess, safeEqual, SESSION_COOKIE } from '../src/auth.js';
+import { daemonRouteSubject, routeAccess, safeEqual, SESSION_COOKIE } from '../src/auth.js';
 import { createHub, type Hub } from '../src/server.js';
 
 const PASSWORD = 'let-me-in';
@@ -61,6 +61,29 @@ describe('auth policy', () => {
     expect(routeAccess('GET', '/api/login')).toBe('owner');
     // No route matched, or a route nobody has classified: denied by default.
     expect(routeAccess('GET', undefined)).toBe('owner');
+  });
+
+  it('opens enrolment and the installer, which run before anyone can have a session', () => {
+    expect(routeAccess('POST', '/api/nodes/enroll')).toBe('open');
+    // Outside /api/, so unguarded like the static UI.
+    expect(routeAccess('GET', '/install.sh')).toBe('none');
+    expect(routeAccess('GET', '/install/agenthub-src.tgz')).toBe('none');
+    // Minting one is the owner's, and it is not something a daemon bearer may do either.
+    expect(routeAccess('POST', '/api/nodes/enrollment-tokens')).toBe('owner');
+  });
+
+  it('says where every daemon route names the node it speaks for', () => {
+    expect(daemonRouteSubject('POST', '/api/nodes/register')).toEqual({ from: 'body', key: 'name' });
+    expect(daemonRouteSubject('POST', '/api/nodes/:name/heartbeat')).toEqual({ from: 'param', key: 'name' });
+    expect(daemonRouteSubject('POST', '/api/jobs/claim')).toEqual({ from: 'body', key: 'node' });
+    expect(daemonRouteSubject('POST', '/api/jobs/:id/complete')).toEqual({ from: 'body', key: 'node' });
+    expect(daemonRouteSubject('POST', '/api/jobs/:id/fail')).toEqual({ from: 'body', key: 'node' });
+    expect(daemonRouteSubject('POST', '/api/jobs/:id/artifact')).toEqual({ from: 'query', key: 'node' });
+    // The one route that names no node: its subject is the job's runner of record.
+    expect(daemonRouteSubject('POST', '/api/jobs/:id/log')).toEqual({ from: 'job', key: 'id' });
+    // Not a daemon route, so no subject — and no per-node token can reach it.
+    expect(daemonRouteSubject('GET', '/api/state')).toBeUndefined();
+    expect(daemonRouteSubject('GET', undefined)).toBeUndefined();
   });
 
   it('lets the daemon token reach node-registration and job-report routes only', () => {

@@ -19,7 +19,7 @@ export interface MockOpenAI extends FastifyInstance {
 interface WireToolCall { id?: unknown; type?: unknown; function?: { name?: unknown; arguments?: unknown } }
 interface WireMessage { role: string; content?: string | null; tool_calls?: WireToolCall[]; tool_call_id?: unknown; }
 interface WireTool { type?: unknown; function?: { name?: unknown; parameters?: unknown } }
-interface ChatBody { model: string; stream?: boolean; messages: WireMessage[]; tools?: WireTool[]; }
+interface ChatBody { model: string; stream?: boolean; messages: WireMessage[]; tools?: WireTool[]; stream_options?: { include_usage?: unknown }; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -29,6 +29,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * silently accept — see the gateway.ts `toOpenAiMessages`/`toOpenAiTools` boundary this guards.
  */
 function validationError(body: ChatBody): string | null {
+  if (body.stream_options !== undefined
+    && (typeof body.stream_options !== 'object' || body.stream_options === null || typeof body.stream_options.include_usage !== 'boolean')) {
+    return `invalid stream_options, expected {include_usage: boolean}: ${JSON.stringify(body.stream_options)}`;
+  }
   for (const t of body.tools ?? []) {
     if (t.type !== 'function' || typeof t.function?.name !== 'string' || t.function.parameters === undefined) {
       return `invalid tools entry, expected {type:'function', function:{name, parameters}}: ${JSON.stringify(t)}`;
@@ -49,6 +53,24 @@ function validationError(body: ChatBody): string | null {
     }
   }
   return null;
+}
+
+/** Something plausible to count: whitespace-separated words, which is what the stream emits anyway. */
+function countWords(text: string): number {
+  return (text.match(/\S+/g) ?? []).length;
+}
+
+/**
+ * The final chunk `stream_options: { include_usage: true }` asks for: no choices, a `usage` object.
+ * Counts are words in, words out — plausible numbers, not a tokenizer.
+ */
+function usageChunk(body: ChatBody, completion: string): string {
+  const promptTokens = body.messages.reduce((n, m) => n + countWords(m.content ?? ''), 0);
+  const completionTokens = countWords(completion);
+  return `data: ${JSON.stringify({
+    id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [],
+    usage: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: promptTokens + completionTokens },
+  })}\n\n`;
 }
 
 // Splits a JSON string into at least 2 fragments (to exercise streamed-argument
@@ -110,6 +132,9 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
       }
       const finalChunk = { id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] };
       reply.raw.write(`data: ${JSON.stringify(finalChunk)}\n\n`);
+      if (body.stream_options?.include_usage) {
+        reply.raw.write(usageChunk(body, [step.content ?? '', ...toolCalls.map((tc) => tc.arguments)].join(' ')));
+      }
       reply.raw.write('data: [DONE]\n\n');
       reply.raw.end();
       return reply;
@@ -136,6 +161,7 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
       const chunk = { id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: { content: tok }, finish_reason: null }] };
       reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
     }
+    if (body.stream_options?.include_usage) reply.raw.write(usageChunk(body, full));
     reply.raw.write('data: [DONE]\n\n');
     reply.raw.end();
     return reply;

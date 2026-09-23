@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatResult, Tier, TurnEvent } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, ChatUsage, Tier, TurnEvent } from '@agenthub/shared';
 import type { ModelGateway, Route } from '../gateway.js';
 import { runToolCall, type Tool, type ToolContext } from './tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from './transcript.js';
@@ -17,6 +17,16 @@ export function clip(text: string, limit: number): string {
   return line.length <= limit ? line : `${line.slice(0, limit - 1)}\u2026`;
 }
 
+/** One model call's cost, with everything the ledger needs to attribute it. */
+export interface LoopUsage {
+  sessionId: number;
+  /** The run's `usageKind`, else its session kind. */
+  kind: string;
+  subject: string;
+  memberId?: string;
+  usage: ChatUsage;
+}
+
 export interface AgentRunOptions {
   kind: SessionKind;
   subject: string;
@@ -31,6 +41,11 @@ export interface AgentRunOptions {
   tools: Tool[];
   /** The project roster member this run belongs to; tags the session so the team API can find it. */
   memberId?: string;
+  /**
+   * What this run is called in the cost ledger, when that differs from its session kind — the PRD
+   * drafter runs as a `chat` session but its spend is planning, not conversation.
+   */
+  usageKind?: string;
   /**
    * The `who` this run's own events carry, overriding the default derived from `memberId`/`kind`.
    * A roster-less subagent (no `memberId`) is still attributed to its role — `spawn_subagent` passes
@@ -77,7 +92,11 @@ export interface AgentRunResult {
  * Every message is persisted to the transcript under one session id.
  */
 export class AgentLoop {
-  constructor(private deps: { gateway: ModelGateway; transcript: Transcript }) {}
+  /**
+   * `onUsage` is where every model call in the hub is reported: each run's chats go through here, so
+   * one hook covers turns, subagents, chats, the PRD drafter and the owner's assistant alike.
+   */
+  constructor(private deps: { gateway: ModelGateway; transcript: Transcript; onUsage?: (u: LoopUsage) => void }) {}
 
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
@@ -150,6 +169,23 @@ export class AgentLoop {
       messages.push(assistant);
       transcript.append(sessionId, assistant);
       if (result.content.trim()) emit({ kind: 'text', who, text: clip(result.content, EVENT_TEXT_LIMIT) });
+
+      // What that model turn cost, landing with the turn it paid for — and before the run can end,
+      // so a run that stops right here is still accounted for. The event carries `who`, which is
+      // what lets a project turn total its own and its subagents' spend from the same feed.
+      if (result.usage) {
+        this.deps.onUsage?.({
+          sessionId,
+          kind: opts.usageKind ?? opts.kind,
+          subject: opts.subject,
+          ...(opts.memberId ? { memberId: opts.memberId } : {}),
+          usage: result.usage,
+        });
+        emit({
+          kind: 'usage', who, usd: result.usage.usd,
+          tokens: result.usage.promptTokens + result.usage.completionTokens,
+        });
+      }
 
       if (result.toolCalls.length === 0) return finish('stop');
 

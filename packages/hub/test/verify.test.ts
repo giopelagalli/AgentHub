@@ -98,6 +98,7 @@ describe('complete_milestone', () => {
     expect(events).toEqual([
       expect.objectContaining({ kind: 'subagent-start', who: 'reviewer-1', name: 'Vex', role: 'reviewer' }),
       { kind: 'text', who: 'reviewer-1', text: expect.stringContaining('VERDICT: APPROVE') },
+      { kind: 'usage', who: 'reviewer-1', usd: 0, tokens: expect.any(Number) },
       expect.objectContaining({ kind: 'subagent-end', who: 'reviewer-1', outcome: 'stop' }),
       { kind: 'verify', milestoneId: 'm1', tests: 'pass', review: 'approved', summary: expect.stringContaining('tests: pass') },
     ]);

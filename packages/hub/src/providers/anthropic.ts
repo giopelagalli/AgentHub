@@ -1,5 +1,5 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import type { ChatMessage, ChatResult, ToolCall, ToolDef } from '@agenthub/shared';
+import type { ChatMessage, ChatResult, TokenUsage, ToolCall, ToolDef } from '@agenthub/shared';
 
 /** Tier defaults for the synthetic cloud node (see `HubOptions.cloud`). */
 export const DEFAULT_ORCHESTRATOR_MODEL = 'claude-opus-4-8';
@@ -29,6 +29,12 @@ export interface AnthropicChatParams {
   tools?: ToolDef[];
   onToken?: (t: string) => void;
   signal?: AbortSignal;
+  /**
+   * Receives the final message's token counts. A callback rather than a field on `ChatResult`
+   * because pricing and attribution (which node, which provider) are the gateway's business, not
+   * this module's — and a refusal returns early, so there is only one place that reports them.
+   */
+  onUsage?: (usage: TokenUsage) => void;
 }
 
 /**
@@ -112,7 +118,7 @@ export function isRetryableAnthropicError(err: unknown): boolean {
  * the gateway's failover can see it.
  */
 export async function anthropicChat(client: AnthropicLike, params: AnthropicChatParams): Promise<ChatResult> {
-  const { model, messages, tools, onToken, signal } = params;
+  const { model, messages, tools, onToken, onUsage, signal } = params;
   const { system, messages: mapped } = toAnthropicMessages(messages);
   const stream = client.messages.stream({
     model,
@@ -126,6 +132,15 @@ export async function anthropicChat(client: AnthropicLike, params: AnthropicChat
   if (onToken) stream.on('text', (delta) => { if (delta.length) onToken(delta); });
 
   const final = await stream.finalMessage();
+  // Guarded rather than assumed: a proxy (or a test double) that answers without a usage block must
+  // cost the caller its accounting, not its turn.
+  if (onUsage && final.usage) {
+    onUsage({
+      promptTokens: final.usage.input_tokens,
+      cachedTokens: final.usage.cache_read_input_tokens ?? 0,
+      completionTokens: final.usage.output_tokens,
+    });
+  }
   let content = '';
   const toolCalls: ToolCall[] = [];
   for (const block of final.content) {

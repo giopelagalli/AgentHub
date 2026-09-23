@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -22,8 +22,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL, type AnthropicLike } from './providers/anthropic.js';
 import {
   DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL, DEFAULT_FIREWORKS_WORKER_MODEL,
-  FIREWORKS_API_KEY_ENV, FIREWORKS_BASE_URL, fireworksModels,
+  FIREWORKS_API_KEY_ENV, FIREWORKS_BASE_URL, fireworksModels, priceFor,
 } from './providers/fireworks.js';
+import { UsageStore } from './usage.js';
 import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resources.js';
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
@@ -65,7 +66,7 @@ export interface AssistantHandle {
 
 export interface Hub {
   app: FastifyInstance; db: Db; registry: NodeRegistry; queue: JobQueue; gateway: ModelGateway;
-  runtime: AgentRuntime; transcript: Transcript; projects: ProjectService; master: MasterOrchestrator;
+  runtime: AgentRuntime; transcript: Transcript; usage: UsageStore; projects: ProjectService; master: MasterOrchestrator;
   leases: LeaseManager; browser: BrowserProxy; resources: ResourceManager;
   /** Resolves once the assistant is wired; rejects when no `assistant` option was given. */
   assistant(): Promise<AssistantHandle>;
@@ -98,6 +99,8 @@ const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
 const TEAM_LAST_MESSAGE_LIMIT = 200;
 /** How many past orchestrator turns `/turns` replays. */
 const TURNS_LIMIT = 20;
+/** The trailing window the cloud spend cap — and every "today" cost the UI shows — is measured over. */
+export const CLOUD_SPEND_WINDOW_MS = 24 * 60 * 60_000;
 /** What a project's auto-run starts as when the owner enables it without saying more. */
 const DEFAULT_AUTO_RUN = { everyMinutes: 60, maxTurnsPerDay: 6 };
 /** Cap on the messages `/team/:id/activity` returns — the tail, which is what "doing now" means. */
@@ -208,6 +211,12 @@ export interface HubOptions {
   autoTurns?: boolean;
   /** The hub-wide cap on turns per trailing 24h (`MAX_TURNS_PER_DAY`); defaults to 24. */
   maxTurnsPerDay?: number;
+  /**
+   * Dollars of cloud spend allowed per trailing 24h (`MAX_CLOUD_USD_PER_DAY`). Once reached, the
+   * gateway stops offering cloud endpoints until the window slides; local serving is unaffected.
+   * Absent means no cap.
+   */
+  maxCloudUsdPerDay?: number;
   /** Aborts a turn that runs longer than this (`TURN_TIMEOUT_MINUTES`); defaults to 45 minutes. */
   turnTimeoutMs?: number;
   assistant?: AssistantOptions;
@@ -314,18 +323,45 @@ export function createHub(opts: HubOptions = {}): Hub {
     return true;
   };
   const fireworksDisabled = new Set(fireworksModelSet?.disabled ?? []);
+  // The cost ledger exists before the gateway, because the gateway's cloud cap reads from it.
+  const usage = new UsageStore(db);
+  const cloudCap = opts.maxCloudUsdPerDay;
+  const cloudCapListeners: ((usd: number, cap: number) => void)[] = [];
+  /** Whether the cap was already crossed last time we looked, so a crossing is announced once. */
+  let cloudCapCrossed = false;
+  const cloudAllowed = (): boolean => {
+    if (cloudCap === undefined) return true;
+    const spent = usage.cloudUsdSince(Date.now() - CLOUD_SPEND_WINDOW_MS);
+    const reached = spent >= cloudCap;
+    if (reached && !cloudCapCrossed) for (const listener of cloudCapListeners) listener(spent, cloudCap);
+    cloudCapCrossed = reached;
+    return !reached;
+  };
   const gateway = new ModelGateway(registry, {
     ...(anthropic ? { anthropic } : {}),
     ...(fireworks
       ? { modelAllowed: (ep: ServingEndpoint, model: string) => ep.provider !== 'fireworks' || !fireworksDisabled.has(model) }
       : {}),
+    ...(cloudCap !== undefined ? { cloudAllowed, cloudCapUsd: cloudCap } : {}),
   });
   const runtime = new AgentRuntime(db, gateway);
   const transcript = new Transcript(db);
   // A hub that died mid-turn never closed its orchestrator session: without this it stays open
   // forever, and `/turns` (and the roster's "working" status) would report a dead turn as running.
   transcript.endOpenSessions('orchestrator', 'aborted');
-  const loop = new AgentLoop({ gateway, transcript });
+  // Every model call in the hub runs through this loop, so one hook fills the whole ledger. The
+  // subject a run carries is `<slug>:<who>` for chats and the drafter; the ledger keeps the slug,
+  // so a project's spend is one row group however it was spent.
+  const loop = new AgentLoop({
+    gateway, transcript,
+    onUsage: (u) => usage.record({
+      ...u.usage,
+      subject: u.subject.split(':')[0],
+      sessionId: u.sessionId,
+      kind: u.kind,
+      ...(u.memberId ? { memberId: u.memberId } : {}),
+    }),
+  });
   const browserNow = opts.browser?.now ? { now: opts.browser.now } : {};
   const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow });
   const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
@@ -629,6 +665,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     onBriefing: (cb) => { projects.onBriefing(cb); },
     onJobSettled: (cb) => { jobSettledListeners.push(cb); },
     onAutoRunSuspended: (cb) => { projects.onAutoRunSuspended(cb); },
+    onCloudCapReached: (cb) => { cloudCapListeners.push(cb); },
   };
 
   /**
@@ -928,10 +965,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
   });
 
+  /** Every id's price, null where the hub has none — so the picker can say "price unknown". */
+  const pricesFor = (provider: CloudProvider, models: string[]): Record<string, ModelPrice | null> =>
+    Object.fromEntries(models.map((model) => [model, priceFor(provider, model)]));
+
   /**
    * Everything the owner can point a project at. The local half is whatever is serving right now;
    * the cloud half is per configured provider, and Fireworks' list is the curated, tiered one —
-   * `disabled` names the hard models the hub knows but currently refuses.
+   * `disabled` names the hard models the hub knows but currently refuses, each with its price.
    */
   const modelCatalog = (): ModelCatalog => {
     const local: ModelCatalog['local'] = [];
@@ -946,13 +987,15 @@ export function createHub(opts: HubOptions = {}): Hub {
         orchestrator: cloud.orchestratorModel ?? DEFAULT_ORCHESTRATOR_MODEL,
         worker: cloud.workerModel ?? DEFAULT_WORKER_MODEL,
       };
-      cloudRows.push({ provider: 'anthropic', models: [...new Set([configured.orchestrator, configured.worker])].sort(), configured });
+      const models = [...new Set([configured.orchestrator, configured.worker])].sort();
+      cloudRows.push({ provider: 'anthropic', models, prices: pricesFor('anthropic', models), configured });
     }
     if (fireworks && fireworksModelSet) {
       cloudRows.push({
         provider: 'fireworks',
         models: fireworksModelSet.enabled,
         disabled: fireworksModelSet.disabled,
+        prices: pricesFor('fireworks', [...fireworksModelSet.enabled, ...fireworksModelSet.disabled]),
         configured: {
           orchestrator: fireworks.orchestratorModel ?? DEFAULT_FIREWORKS_ORCHESTRATOR_MODEL,
           worker: fireworks.workerModel ?? DEFAULT_FIREWORKS_WORKER_MODEL,
@@ -965,6 +1008,34 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/models', async () => {
     sweepAndRequeue();
     return modelCatalog();
+  });
+
+  /**
+   * What the hub has spent: over the trailing 24h by default, or since `?since=<epoch ms>`, and
+   * narrowed to one project with `?project=<slug>`. `cap` always reports the hub-wide cloud spend
+   * over its own window, whatever `since` asks for — the cap is not a per-project number.
+   */
+  app.get('/api/usage/summary', async (req, reply) => {
+    const { since: sinceRaw, project } = req.query as { since?: unknown; project?: unknown };
+    // Fastify hands a repeated query parameter back as an array; neither the window nor the subject
+    // can be one, so both are checked rather than passed on to the store.
+    if (project !== undefined && typeof project !== 'string') return reply.code(400).send({ error: 'invalid project' });
+    if (sinceRaw !== undefined && typeof sinceRaw !== 'string') return reply.code(400).send({ error: 'invalid since' });
+    const now = Date.now();
+    let since = now - CLOUD_SPEND_WINDOW_MS;
+    if (sinceRaw !== undefined) {
+      const parsed = Number(sinceRaw);
+      if (!Number.isFinite(parsed) || parsed < 0) return reply.code(400).send({ error: 'invalid since' });
+      since = parsed;
+    }
+    const report: UsageReport = {
+      ...usage.summary({ since, ...(project ? { subject: project } : {}) }),
+      cap: {
+        maxCloudUsdPerDay: cloudCap ?? null,
+        cloudUsdToday: usage.cloudUsdSince(now - CLOUD_SPEND_WINDOW_MS),
+      },
+    };
+    return report;
   });
 
   app.get('/api/state', async () => {
@@ -1295,6 +1366,12 @@ export function createHub(opts: HubOptions = {}): Hub {
       outcome: end?.outcome ?? session.outcome,
       summary: end?.summary ?? '',
       toolCalls: events.filter((e) => e.kind === 'tool-call' && e.who === 'manager').length,
+      // Summed from the turn's own events rather than read off `turn-end`, so a turn still running
+      // reports what it has spent so far and an old turn with no totals on its end event still adds up.
+      cost: events.reduce(
+        (sum, e) => (e.kind === 'usage' ? { usd: sum.usd + (e.usd ?? 0), tokens: sum.tokens + e.tokens } : sum),
+        { usd: 0, tokens: 0 },
+      ),
       events,
     };
   };
@@ -1931,7 +2008,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
 
   const hub: Hub = {
-    app, db, registry, queue, gateway, runtime, transcript, projects, master, leases, browser, resources,
+    app, db, registry, queue, gateway, runtime, transcript, usage, projects, master, leases, browser, resources,
     assistant() {
       if (!assistantReady) return Promise.reject(new Error('assistant not configured'));
       return assistantReady;

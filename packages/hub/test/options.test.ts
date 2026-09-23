@@ -98,6 +98,21 @@ describe('optionsFromEnv', () => {
     }
   });
 
+  it('reads MAX_CLOUD_USD_PER_DAY as dollars, decimals allowed, and 0 as "no cloud spend"', () => {
+    expect(optionsFromEnv({}, quiet).options.maxCloudUsdPerDay).toBeUndefined();
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '5' }, quiet).options.maxCloudUsdPerDay).toBe(5);
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '2.50' }, quiet).options.maxCloudUsdPerDay).toBe(2.5);
+    // A cap of zero is a real setting — spend nothing in the cloud — not a missing one.
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '0' }, quiet).options.maxCloudUsdPerDay).toBe(0);
+    // Left blank it is simply unset, and costs no log line; anything unreadable is dropped loudly.
+    expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: '' }, quiet).options.maxCloudUsdPerDay).toBeUndefined();
+    for (const bad of ['-1', 'abc']) {
+      const lines: string[] = [];
+      expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: bad }, (l) => lines.push(l)).options.maxCloudUsdPerDay).toBeUndefined();
+      expect(lines.filter((l) => l.includes('MAX_CLOUD_USD_PER_DAY'))).toHaveLength(1);
+    }
+  });
+
   it('reads TURN_TIMEOUT_MINUTES as a whole number of at least 1, in ms, and drops anything else with a log line', () => {
     expect(optionsFromEnv({}, quiet).options.turnTimeoutMs).toBeUndefined();
     expect(optionsFromEnv({ TURN_TIMEOUT_MINUTES: '30' }, quiet).options.turnTimeoutMs).toBe(1_800_000);

@@ -20,7 +20,7 @@ tests.
 **`packages/hub`** — the one long-running process. Fastify + SQLite. Owns the API, the UI
 bundle, the WebSocket, the queue, the gateway, the projects, the assistant, Telegram, and now
 enrollment and usage. Everything else talks to it; it talks to nodes only through what they
-register (0003). Enrollment and usage accounting are new; usage is not yet merged.
+register (0003).
 
 **`packages/node-daemon`** — one process per machine. Registers what the machine can do
 (serving entries spawned or attached, 0005; shell jobs; a browser; a profile set; the hub itself
@@ -42,8 +42,8 @@ node they are about so a node token cannot act for another node (0016). Login th
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
 marks unhealthy endpoints, sends per-endpoint `priority` and `requestExtras` (0006, 0008),
-refuses switched-off models (0002). It is the only place a model is ever called. (The cloud
-spend cap, 0019, is in progress and not yet here.)
+refuses switched-off models and cloud past the spend cap (0002, 0019, 0024). It is the only place
+a model is ever called, and it prices each request as it finishes.
 
 **`providers/`** — `anthropic.ts` (SDK streaming) and `fireworks.ts` (base URL, the curated
 model list with `hard` flags and prices, the key env). No I/O beyond what the gateway asks.
@@ -54,6 +54,18 @@ with fencing and requeue-on-offline. SQLite because one hub, tens of projects, a
 
 **`enrollment.ts`** — one-time enrollment tokens, hashing, the install command; the hub serves
 `/install.sh` and a `git archive` of its own source so nodes never need repo access (0016).
+
+**`usage.ts`** — the cost ledger. `UsageStore` holds one row per model request the gateway
+served: when, for which project and session, by which roster member, on which provider, node and
+model, and its prompt, cached and completion tokens with the dollars they came to. The gateway
+prices each request as it finishes (`priceFor`/`costUsd` in `providers/fireworks.ts`, the only
+price table the hub has, 0026) and returns it as `ChatResult.usage`; `AgentLoop` attributes it and
+records it, which is what makes the ledger complete — every model call in the hub runs through
+that loop (0022). `usd` is NULL for a model without a price, so tokens are never lost to a missing
+price; local serving records $0. Two things read the ledger: `GET /api/usage/summary` (totals by
+model and by subject for the UI) and `cloudUsdSince`, which the daily cap
+(`MAX_CLOUD_USD_PER_DAY`) compares against to decide whether cloud endpoints are offered at all
+(0024). A turn's own cost is the sum of the `usage` events in its feed, exact while it runs (0023).
 
 **`agents/`** — `loop.ts` (the tool-use loop: transcripts, budgets, the briefing nudge),
 `tools.ts` (workspace tools with paging, bundle tools, `spawn_subagent`, shell containment),

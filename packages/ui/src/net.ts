@@ -5,7 +5,7 @@ import { toast } from './toast.js';
 import type { TurnEvent } from './turns.js';
 
 const TURN_EVENT_KINDS = new Set<TurnEvent['kind']>([
-  'turn-start', 'text', 'tool-call', 'tool-result', 'subagent-start', 'subagent-end', 'verify', 'turn-end',
+  'turn-start', 'text', 'tool-call', 'tool-result', 'subagent-start', 'subagent-end', 'verify', 'usage', 'turn-end',
 ]);
 
 /** True for anything shaped like one of the turn events — the panel tolerates loose fields. */

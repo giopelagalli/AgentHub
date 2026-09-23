@@ -1,4 +1,4 @@
-import type { CloudProvider, ModelCatalog, ModelPolicy } from '@agenthub/shared';
+import type { CloudProvider, ModelCatalog, ModelPolicy, ModelPrice } from '@agenthub/shared';
 
 /**
  * The model picker's vocabulary: the `<select>` option list built from `GET /api/models`, the
@@ -24,6 +24,25 @@ export function providerLabel(provider: CloudProvider): string {
   return provider.charAt(0).toUpperCase() + provider.slice(1);
 }
 
+/** Dollars per million tokens, to the cent — or to the tenth of a cent when it is smaller than one. */
+function perMillion(usd: number): string {
+  return `$${usd < 0.01 ? usd.toFixed(3) : usd.toFixed(2)}`;
+}
+
+/**
+ * What one model costs, as the picker says it. A model the hub has no price for says so rather than
+ * saying nothing: an unpriced choice is a choice the owner cannot see the bill for.
+ */
+export function priceLabel(price: ModelPrice | null | undefined): string {
+  if (!price) return ' — price unknown';
+  return ` — ${perMillion(price.input)} in / ${perMillion(price.output)} out per M`;
+}
+
+/** The price a catalog row holds for one of its model ids; null when it holds none. */
+function priceOf(row: ModelCatalog['cloud'][number], model: string): ModelPrice | null {
+  return row.prices?.[model] ?? null;
+}
+
 /** Every choice the owner has: the two local-first modes, then each configured cloud's models. */
 export function modelOptions(catalog: ModelCatalog | null): ModelOption[] {
   const options: ModelOption[] = [
@@ -36,10 +55,14 @@ export function modelOptions(catalog: ModelCatalog | null): ModelOption[] {
     const name = providerLabel(row.provider);
     options.push({ value: `cloud:${row.provider}`, label: `${name} (default models)` });
     for (const model of row.models) {
-      options.push({ value: `cloud:${row.provider}:${model}`, label: `${name}: ${shortModel(model)}` });
+      options.push({ value: `cloud:${row.provider}:${model}`, label: `${name}: ${shortModel(model)}${priceLabel(priceOf(row, model))}` });
     }
     for (const model of row.disabled ?? []) {
-      options.push({ value: `cloud:${row.provider}:${model}`, label: `${name}: ${shortModel(model)} (off)`, disabled: true });
+      options.push({
+        value: `cloud:${row.provider}:${model}`,
+        label: `${name}: ${shortModel(model)} (off)${priceLabel(priceOf(row, model))}`,
+        disabled: true,
+      });
     }
   }
   return options;
@@ -55,8 +78,12 @@ export function workerOptions(catalog: ModelCatalog | null, provider: CloudProvi
   const row = catalog?.cloud.find((c) => c.provider === provider);
   return [
     { value: SAME_AS_ORCHESTRATOR, label: 'Worker: same model' },
-    ...(row?.models ?? []).map((model) => ({ value: model, label: `Worker: ${shortModel(model)}` })),
-    ...(row?.disabled ?? []).map((model) => ({ value: model, label: `Worker: ${shortModel(model)} (off)`, disabled: true })),
+    ...(row?.models ?? []).map((model) => ({
+      value: model, label: `Worker: ${shortModel(model)}${priceLabel(row ? priceOf(row, model) : null)}`,
+    })),
+    ...(row?.disabled ?? []).map((model) => ({
+      value: model, label: `Worker: ${shortModel(model)} (off)${priceLabel(row ? priceOf(row, model) : null)}`, disabled: true,
+    })),
   ];
 }
 

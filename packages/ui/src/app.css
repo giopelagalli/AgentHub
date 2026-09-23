@@ -496,6 +496,13 @@ p {
   color: var(--text-mute);
 }
 
+/* What this project has cost in the last 24 hours, beside the turns left. */
+.detail__cost {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
 .dot {
   flex: none;
   width: 7px;
@@ -1593,6 +1600,14 @@ button.card__open:hover {
   color: var(--text-mute);
 }
 
+/* What the cloud half of the cluster has cost, above the nodes table. */
+.cluster__spend {
+  margin: -4px 0 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
 /* --- help ------------------------------------------------------------------ */
 
 .help {
@@ -1829,6 +1844,14 @@ button.card__open:hover {
   margin-right: 5px;
   color: var(--text-mute);
   content: '·';
+}
+
+/* What this agent's own model calls have cost in the running turn. */
+.now__spend {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-mute);
 }
 
 .now__elapsed {
@@ -2305,6 +2328,11 @@ button.card__open:hover {
   gap: 10px;
   font-size: 11px;
   color: var(--text-mute);
+}
+
+/* What the turn cost, in its meta row; absent on a turn that cost nothing. */
+.turn__cost {
+  font-family: var(--mono);
 }
 
 /* The feed. */

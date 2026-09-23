@@ -4,7 +4,7 @@ import { avatarSvg } from '../avatars.js';
 import { button, el } from '../dom.js';
 import { turnsOf, type Store, type UiState } from '../store.js';
 import {
-  activeWho, doingCaption, formatDuration, formatElapsed, formatTime, runningTurn, timelineModel, truncate, turnDuration, whoView,
+  activeWho, doingCaption, formatDuration, formatElapsed, formatTime, formatUsd, runningTurn, timelineModel, truncate, turnDuration, whoView,
   type SubagentBlock, type TimelineGroup, type TimelineItem, type TimelineRow, type TurnRecord, type TurnsResponse,
 } from '../turns.js';
 import type { ViewContext } from './parts.js';
@@ -128,6 +128,8 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
       el('span', undefined, running ? 'running' : (turn.outcome ?? 'ended')),
       el('span', undefined, `${turn.toolCalls} tool call${turn.toolCalls === 1 ? '' : 's'}`),
     );
+    // Only a turn that actually cost something says so; a free local turn stays uncluttered.
+    if (turn.cost.usd > 0) meta.appendChild(el('span', 'turn__cost', formatUsd(turn.cost.usd)));
     item.appendChild(meta);
     item.addEventListener('click', () => select(turn.sessionId, true));
     return item;
@@ -136,7 +138,7 @@ export function mountActivity(host: HTMLElement, ctx: ViewContext, deps: Activit
   const renderList = (state: UiState): void => {
     const held = slugTurns(state);
     const roster = deps.roster();
-    const sig = [held.state, selectedId, ...held.turns.map((t) => `${t.sessionId}:${t.events.length}:${t.endedAt}`)].join('|');
+    const sig = [held.state, selectedId, ...held.turns.map((t) => `${t.sessionId}:${t.events.length}:${t.endedAt}:${t.cost.usd}`)].join('|');
     if (sig === lastListSig) return;
     lastListSig = sig;
 

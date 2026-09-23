@@ -4,6 +4,7 @@ import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
 import type { AnthropicLike } from '../src/providers/anthropic.js';
+import { priceFor } from '../src/providers/fireworks.js';
 import { createHub, CLOUD_FIREWORKS_NODE_NAME, type Hub } from '../src/server.js';
 
 const KEY_ENV = 'FIREWORKS_API_KEY';
@@ -184,6 +185,8 @@ describe('GET /api/models', () => {
         provider: 'fireworks',
         models: [FLASH, DEEPSEEK],
         disabled: [GLM, KIMI],
+        // Every id the row names carries its price, enabled and disabled alike.
+        prices: Object.fromEntries([FLASH, DEEPSEEK, GLM, KIMI].map((id) => [id, priceFor('fireworks', id)])),
         configured: { orchestrator: FLASH, worker: FLASH },
       }],
     });
@@ -204,7 +207,8 @@ describe('GET /api/models', () => {
     const unusedClient = { messages: { stream: () => { throw new Error('unused'); } } } as unknown as AnthropicLike;
     hub = createHub({ cloud: { anthropic: { client: unusedClient } } });
     expect((await hub.app.inject({ method: 'GET', url: '/api/models' })).json().cloud).toEqual([
-      { provider: 'anthropic', models: ['claude-opus-4-8', 'claude-sonnet-5'], configured: { orchestrator: 'claude-opus-4-8', worker: 'claude-sonnet-5' } },
+      // Anthropic has no price table, so every id reports null and the picker says "price unknown".
+      { provider: 'anthropic', models: ['claude-opus-4-8', 'claude-sonnet-5'], prices: { 'claude-opus-4-8': null, 'claude-sonnet-5': null }, configured: { orchestrator: 'claude-opus-4-8', worker: 'claude-sonnet-5' } },
     ]);
     await hub.stop();
 

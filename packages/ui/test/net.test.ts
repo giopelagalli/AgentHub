@@ -168,4 +168,17 @@ describe('handleWsMessage', () => {
     handleWsMessage(store, JSON.stringify({ type: 'turn-event', slug: 'acme', sessionId: 1, event: { kind: 'text', who: 'manager', text: 'x' } }));
     expect(turnsOf(store.getState(), 'acme').turns[0].events).toHaveLength(1);
   });
+
+  it('lets a usage frame through, so a running turn is priced as it goes', () => {
+    const store = new Store();
+    handleWsMessage(store, JSON.stringify({
+      type: 'turn-event', slug: 'acme', sessionId: 1, at: 10,
+      event: { kind: 'usage', who: 'manager', usd: 0.25, tokens: 40 },
+    }));
+    handleWsMessage(store, JSON.stringify({
+      type: 'turn-event', slug: 'acme', sessionId: 1, at: 11,
+      event: { kind: 'usage', who: 'coder-1', usd: 0.25, tokens: 60 },
+    }));
+    expect(turnsOf(store.getState(), 'acme').turns[0].cost).toEqual({ usd: 0.5, tokens: 100 });
+  });
 });

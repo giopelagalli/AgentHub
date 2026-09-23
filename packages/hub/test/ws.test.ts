@@ -105,7 +105,8 @@ describe('hub websocket', () => {
     await fetch(`${base}/api/projects/demo/turn`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     await ended;
 
-    expect(frames.map((f) => f.event.kind)).toEqual(['turn-start', 'text', 'turn-end']);
+    // The cost of each model turn streams with the rest, so the UI can price a turn as it runs.
+    expect(frames.map((f) => f.event.kind)).toEqual(['turn-start', 'text', 'usage', 'turn-end']);
     expect(frames[0]).toMatchObject({ type: 'turn-event', slug: 'demo', sessionId: expect.any(Number), at: expect.any(Number), event: { kind: 'turn-start', who: 'manager' } });
     expect(frames.every((f) => f.sessionId === frames[0].sessionId)).toBe(true);
     ws.close();

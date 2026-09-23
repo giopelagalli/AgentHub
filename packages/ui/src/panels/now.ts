@@ -1,7 +1,7 @@
 import { el } from '../dom.js';
 import { turnsOf, type Store, type UiState } from '../store.js';
 import {
-  formatDuration, formatElapsed, memberFeed, runningTurn, truncate,
+  formatDuration, formatElapsed, formatUsd, memberCostUsd, memberFeed, runningTurn, truncate,
   type FeedRow, type TurnRecord,
 } from '../turns.js';
 
@@ -62,7 +62,8 @@ export function mountNow(deps: NowDeps): NowHandle {
   const state = el('span', 'now__state');
   const doing = el('span', 'now__doing');
   const elapsed = el('span', 'now__elapsed');
-  status.append(dot, state, doing, elapsed);
+  const spend = el('span', 'now__spend');
+  status.append(dot, state, doing, spend, elapsed);
   const lastLine = el('p', 'now__last');
   // `tl__rows` is the timeline's hairline-and-gap rhythm; the feed only adds its own scroll.
   const feed = el('div', 'tl__rows now__feed');
@@ -143,6 +144,10 @@ export function mountNow(deps: NowDeps): NowHandle {
       delete elapsed.dataset.elapsed;
       elapsed.textContent = '';
     }
+    // Their own model calls in this turn, not the turn's total: this card is about them.
+    const usd = memberCostUsd(turn, deps.who);
+    spend.textContent = usd > 0 ? ` · ${formatUsd(usd)} this turn` : '';
+    spend.hidden = !spend.textContent;
     // Two lines of it at drawer width: enough to place the turn, not enough to bury the feed.
     lastLine.textContent = !working && lastTurnLine ? `Last turn: ${truncate(lastTurnLine, 120)}` : '';
     lastLine.hidden = !lastLine.textContent;

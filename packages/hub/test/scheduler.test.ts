@@ -353,6 +353,7 @@ function fakeEvents(): AlertEvents & { emitNodeOffline(n: NodeInfo, requeued: nu
     onBriefing: (cb) => briefingCbs.push(cb),
     onJobSettled: (cb) => jobCbs.push(cb),
     onAutoRunSuspended: () => {},
+    onCloudCapReached: () => {},
     emitNodeOffline: (n, requeued) => nodeCbs.forEach((cb) => cb(n, requeued)),
     emitBriefing: (b) => briefingCbs.forEach((cb) => cb(b)),
     emitJobSettled: (j) => jobCbs.forEach((cb) => cb(j)),

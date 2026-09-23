@@ -71,10 +71,17 @@ describe('GET /api/projects/:slug/turns', () => {
       outcome: 'stop', summary: 'wired the frobnicator', toolCalls: 2,
     });
     expect(live.turns[0].events.map((e) => e.kind)).toEqual([
-      'turn-start', 'text', 'tool-call', 'subagent-start', 'text', 'subagent-end', 'tool-result',
-      'tool-call', 'tool-result', 'text', 'turn-end',
+      'turn-start', 'text', 'usage', 'tool-call', 'subagent-start', 'text', 'usage', 'subagent-end',
+      'tool-result', 'usage', 'tool-call', 'tool-result', 'text', 'usage', 'turn-end',
     ]);
     expect(live.turns[0].events.every((e) => typeof e.at === 'number')).toBe(true);
+    // The turn's cost is the sum of its own usage events — free here, since the mock serves locally.
+    const spent = live.turns[0].events.filter((e) => e.kind === 'usage');
+    expect(live.turns[0].cost).toEqual({
+      usd: 0,
+      tokens: spent.reduce((n, e) => n + ('tokens' in e ? e.tokens : 0), 0),
+    });
+    expect(live.turns[0].cost.tokens).toBeGreaterThan(0);
 
     // Restart: a fresh hub over the same database and bundles sees the same turn.
     await first.stop();

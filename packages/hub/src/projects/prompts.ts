@@ -114,6 +114,9 @@ function planningSection(planning: PlanningContext): string[] {
     `  complete_milestone(id): that runs the project's tests and has the reviewer read what changed,`,
     `  and marks the milestone done only when both pass. When it comes back with findings, fix them`,
     `  (delegate the fixes) and call it again. set_milestone_status cannot mark a milestone done.`,
+    `- Never ask an employee to verify a language or runtime identifier — that a function, module or`,
+    `  property name exists, is spelled right, or wasn't mangled in transport. It wasn't; trust the`,
+    `  platform and give them the actual task.`,
     ``,
   ];
 }
@@ -202,6 +205,14 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
     `  Do not modify anything outside workspace/ — the project bundle's charter, decision log, task`,
     `  board and briefings belong to the orchestrator. Report what should change there instead.`,
   ];
+  if (role === 'coder') {
+    lines.push(
+      `- Trust the platform: standard library and runtime names are exactly as you already know them —`,
+      `  console.error, process.exitCode, node:fs, JSON.parse and the rest are not case-mangled or`,
+      `  renamed in transport. Never write a probe script to verify a name or spelling; if you're`,
+      `  unsure whether something works, run the real code once instead.`,
+    );
+  }
   if (role === 'researcher' && extraTools.length) {
     lines.push(
       `- You also have the external tools ${extraTools.join(', ')}. They are the only calls that`,

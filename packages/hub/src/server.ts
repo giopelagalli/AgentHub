@@ -3,7 +3,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, routeAccess, type AuthOptions } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -102,6 +102,53 @@ const TEAM_ACTIVITY_MESSAGE_LIMIT = 200;
  * actually exited; short enough that a deliberate re-install minutes later just works.
  */
 const REMOVED_LOCKOUT_MS = 60_000;
+
+/**
+ * The owner's model choice, checked against the curated catalog: a model id the hub doesn't know is
+ * a 400 rather than a policy that fails on the next turn, and a hard model the hub knows but refuses
+ * is a distinct 400 naming the switch. The provider's own configured ids always pass — they are what
+ * the tier uses today. Shared by the project's own model route and a team member's override, so the
+ * same model is refused (or accepted) the same way from either one.
+ */
+function validateModelPolicy(body: Partial<ModelPolicy>, catalog: ModelCatalog): { policy: ModelPolicy } | { error: string } {
+  if (!PREFERENCES.includes(body.prefer as ModelPolicy['prefer'])) {
+    return { error: 'invalid prefer' };
+  }
+  if (body.provider !== undefined && !CLOUD_PROVIDERS.includes(body.provider)) {
+    return { error: 'invalid provider' };
+  }
+  for (const field of ['orchestratorModel', 'workerModel'] as const) {
+    const value = body[field];
+    if (value !== undefined && (typeof value !== 'string' || !value)) {
+      return { error: `invalid ${field}` };
+    }
+  }
+  if (body.provider) {
+    const row = catalog.cloud.find((c) => c.provider === body.provider);
+    if (!row) return { error: `provider not configured: ${body.provider}` };
+    for (const field of ['orchestratorModel', 'workerModel'] as const) {
+      const value = body[field];
+      if (value && (row.disabled ?? []).includes(value)) {
+        return { error: `model switched off: ${value} (set FIREWORKS_HARD_MODELS=1)` };
+      }
+    }
+    const known = new Set([...row.models, row.configured.orchestrator, row.configured.worker]);
+    for (const field of ['orchestratorModel', 'workerModel'] as const) {
+      const value = body[field];
+      if (value && !known.has(value)) return { error: `unknown model: ${value}` };
+    }
+  } else if (body.orchestratorModel || body.workerModel) {
+    return { error: 'a model override needs a provider' };
+  }
+  return {
+    policy: {
+      prefer: body.prefer as ModelPolicy['prefer'],
+      ...(body.provider ? { provider: body.provider } : {}),
+      ...(body.orchestratorModel ? { orchestratorModel: body.orchestratorModel } : {}),
+      ...(body.workerModel ? { workerModel: body.workerModel } : {}),
+    },
+  };
+}
 
 export interface AssistantOptions {
   /** Root of the git-versioned memory bundle (MEMORY.md, notes/, planner/). */
@@ -962,52 +1009,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     return manifest;
   });
 
-  /**
-   * The owner's model choice for one project. A named provider is checked against the curated
-   * model catalog: a model id the hub doesn't know is a 400 rather than a policy that fails on the
-   * next turn, and a hard model the hub knows but refuses is a distinct 400 naming the switch.
-   * The provider's own configured ids always pass — they are what the tier uses today.
-   */
+  /** The owner's model choice for one project — see `validateModelPolicy` for the acceptance rules. */
   app.post('/api/projects/:slug/model', async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const body = (req.body ?? {}) as Partial<ModelPolicy>;
-    if (!PREFERENCES.includes(body.prefer as ModelPolicy['prefer'])) {
-      return reply.code(400).send({ error: 'invalid prefer' });
-    }
-    if (body.provider !== undefined && !CLOUD_PROVIDERS.includes(body.provider)) {
-      return reply.code(400).send({ error: 'invalid provider' });
-    }
-    for (const field of ['orchestratorModel', 'workerModel'] as const) {
-      const value = body[field];
-      if (value !== undefined && (typeof value !== 'string' || !value)) {
-        return reply.code(400).send({ error: `invalid ${field}` });
-      }
-    }
-    // Cheap, I/O-free checks above; a bad slug 404s here, before the catalog lookup below.
+    const validated = validateModelPolicy(body, modelCatalog());
+    if ('error' in validated) return reply.code(400).send({ error: validated.error });
     if (!(await resolveProject(slug, reply))) return reply;
-    if (body.provider) {
-      const row = modelCatalog().cloud.find((c) => c.provider === body.provider);
-      if (!row) return reply.code(400).send({ error: `provider not configured: ${body.provider}` });
-      for (const field of ['orchestratorModel', 'workerModel'] as const) {
-        const value = body[field];
-        if (value && (row.disabled ?? []).includes(value)) {
-          return reply.code(400).send({ error: `model switched off: ${value} (set FIREWORKS_HARD_MODELS=1)` });
-        }
-      }
-      const known = new Set([...row.models, row.configured.orchestrator, row.configured.worker]);
-      for (const field of ['orchestratorModel', 'workerModel'] as const) {
-        const value = body[field];
-        if (value && !known.has(value)) return reply.code(400).send({ error: `unknown model: ${value}` });
-      }
-    } else if (body.orchestratorModel || body.workerModel) {
-      return reply.code(400).send({ error: 'a model override needs a provider' });
-    }
-    const manifest = await projects.setModelPolicy(slug, {
-      prefer: body.prefer as ModelPolicy['prefer'],
-      ...(body.provider ? { provider: body.provider } : {}),
-      ...(body.orchestratorModel ? { orchestratorModel: body.orchestratorModel } : {}),
-      ...(body.workerModel ? { workerModel: body.workerModel } : {}),
-    });
+    const manifest = await projects.setModelPolicy(slug, validated.policy);
     await refreshProjects();
     return manifest;
   });
@@ -1154,6 +1163,31 @@ export function createHub(opts: HubOptions = {}): Hub {
     await bundle.commit(`owner: remove team member ${id}`);
     await refreshProjects();
     return reply.code(204).send();
+  });
+
+  /**
+   * A per-employee override of the project's model policy (`TeamMember.model`) — `model: null`
+   * clears it back to the project default. Accepts exactly what `POST .../model` does, via
+   * `validateModelPolicy`.
+   */
+  app.patch('/api/projects/:slug/team/:id', async (req, reply) => {
+    const { slug, id } = req.params as { slug: string; id: string };
+    const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null }>;
+    if (body.model === undefined) return reply.code(400).send({ error: 'invalid model' });
+    const validated = body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
+    if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const members = await bundle.team();
+    const member = members.find((m) => m.id === id);
+    if (!member) return reply.code(404).send({ error: 'unknown member' });
+    const updated: TeamMember = { ...member };
+    if (validated) updated.model = validated.policy;
+    else delete updated.model;
+    await bundle.writeTeam(members.map((m) => (m.id === id ? updated : m)));
+    await bundle.commit(`owner: set ${member.name}'s model`);
+    await refreshProjects();
+    return updated;
   });
 
   app.get('/api/projects/:slug/team/:id/activity', async (req, reply) => {

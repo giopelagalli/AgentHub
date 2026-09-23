@@ -45,6 +45,11 @@ export function modelOptions(catalog: ModelCatalog | null): ModelOption[] {
   return options;
 }
 
+/** An employee's model picker: everything `modelOptions` offers, plus leaving it at the project's own choice. */
+export function memberModelOptions(catalog: ModelCatalog | null): ModelOption[] {
+  return [{ value: '', label: 'Project default' }, ...modelOptions(catalog)];
+}
+
 /** The provider's models, for the optional "Worker model" select. */
 export function workerOptions(catalog: ModelCatalog | null, provider: CloudProvider): ModelOption[] {
   const row = catalog?.cloud.find((c) => c.provider === provider);

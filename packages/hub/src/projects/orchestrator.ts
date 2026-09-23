@@ -63,11 +63,12 @@ export class ProjectOrchestrator {
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
-    // The owner's model choice for this project, resolved per tier: the turn itself runs on the
-    // orchestrator tier, and everything it delegates runs on the worker one.
+    // The owner's model choice for this project. The turn itself runs on the orchestrator tier,
+    // resolved here; what it delegates runs on the worker tier, resolved per member inside
+    // `runSubagent` — a member's own `model` overrides this policy, so the raw policy travels
+    // rather than a route already pinned to the project's own choice.
     const orchestratorRoute = routeFor(manifest.modelPolicy, 'orchestrator');
-    const workerRoute = routeFor(manifest.modelPolicy, 'worker');
-    const delegation = { loop, subject: manifest.slug, onBusy, ...(workerRoute ? { route: workerRoute } : {}) };
+    const delegation = { loop, subject: manifest.slug, onBusy, ...(manifest.modelPolicy ? { modelPolicy: manifest.modelPolicy } : {}) };
 
     // The turn's own bracketing events. The loop persists what happens inside it under the session
     // it starts, so these two go through the same store and the same sink once that session exists.

@@ -1,6 +1,6 @@
 import { readdir, readFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { JobResult, JobType, MilestoneStatus, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
+import type { JobResult, JobType, MilestoneStatus, ModelPolicy, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
@@ -13,7 +13,7 @@ import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import { SUBAGENT_TOOL_CALLS } from './budgets.js';
 import { clip, type AgentLoop, type AgentRunResult } from './loop.js';
-import type { Route } from '../gateway.js';
+import { routeFor } from '../gateway.js';
 
 const TOOL_RESULT_LIMIT = 8000;
 const SHELL_TIMEOUT_MS = 60_000;
@@ -689,8 +689,11 @@ const SUBAGENT_RESULT_LIMIT = 4000;
 export interface SubagentDeps {
   loop: AgentLoop;
   subject: string;
-  /** The project's model policy resolved for the worker tier; absent, the gateway's own ordering. */
-  route?: Route;
+  /**
+   * The project's model policy — `runSubagent` resolves it for the worker tier, letting a member's
+   * own `model` override it. Absent (on both), the gateway's own ordering.
+   */
+  modelPolicy?: ModelPolicy;
   /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
 }
@@ -727,6 +730,9 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
   const tools = run.tools ?? [...workspaceTools({ onWrite: (p) => { if (!written.includes(p)) written.push(p); } }), ...(run.extras ?? [])];
   ctx.onEvent?.({ kind: 'subagent-start', who, name: member?.name ?? role, role, task: clip(run.task, EVENT_TASK_LIMIT) });
   const startedAt = Date.now();
+  // A member's own model override wins over the project's; falling back to it is what makes an
+  // unoverridden employee run on the project's policy same as before.
+  const route = routeFor(member?.model ?? deps.modelPolicy, 'worker');
   const res = await deps.loop.run({
     kind: 'subagent',
     subject: deps.subject,
@@ -736,7 +742,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
     tools,
     who,
     ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
-    ...(deps.route ? { route: deps.route } : {}),
+    ...(route ? { route } : {}),
     // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
     ctx: { bundle: ctx.bundle },
     maxToolCalls: SUBAGENT_TOOL_CALLS,

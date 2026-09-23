@@ -28,6 +28,8 @@ export interface ChatTarget {
   pendingBase?: string;
   /** The "What they're doing" section; omitted for the assistant, which isn't on any roster. */
   activity?: ChatActivity;
+  /** A prebuilt control shown above the log — an employee's model override, currently the only one. */
+  modelField?: HTMLElement;
   /**
    * Called once a reply has finished streaming. The document views use it to re-read the PRD,
    * roadmap or docs the agent has just edited; an aborted send (the drawer closed) doesn't fire.
@@ -99,7 +101,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   form.append(input, send);
 
   const head = drawerHeader(target.name, target.subtitle, () => dispose());
-  panel.append(...(target.activity ? [head, activityBox, log, form] : [head, log, form]));
+  panel.append(head, ...(target.modelField ? [target.modelField] : []), ...(target.activity ? [activityBox] : []), log, form);
 
   /** Within a few pixels of the end, so a reader who scrolled back stays there. */
   const atBottom = (): boolean => log.scrollHeight - log.scrollTop - log.clientHeight < 8;

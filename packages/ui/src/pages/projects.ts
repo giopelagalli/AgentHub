@@ -1,11 +1,11 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamRoster, type TeamStatus } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
 import { AUTO_RUN_INTERVALS, autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../autorun.js';
 import { avatarSvg } from '../avatars.js';
 import type { DocsIndex } from '../docs.js';
 import { button, el } from '../dom.js';
-import { modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../models.js';
+import { memberModelOptions, modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../models.js';
 import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
 import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
@@ -174,6 +174,37 @@ export function modelPicker(
   return wrap;
 }
 
+/**
+ * An employee's model override, shown above their chat log: "Project default" plus everything
+ * `modelPicker` offers, posted to their own roster entry (`PATCH .../team/:id`) rather than the
+ * project's. `null` on change clears it back to the project default.
+ */
+function memberModelField(slug: string, member: TeamMemberView, catalog: ModelCatalog | null): HTMLElement {
+  const field = el('label', 'field');
+  field.append(el('span', 'field__label', 'Model'));
+  const select = el('select', 'select');
+  for (const option of memberModelOptions(catalog)) {
+    const item = document.createElement('option');
+    item.value = option.value;
+    item.textContent = option.label;
+    if (option.disabled) item.disabled = true;
+    select.appendChild(item);
+  }
+  const current = member.model ? valueFromPolicy(member.model) : '';
+  select.value = current;
+  select.addEventListener('change', () => {
+    const next = select.value ? policyFromValue(select.value) : null;
+    void sendJson(`/api/projects/${slug}/team/${member.id}`, { model: next }, 'PATCH')
+      .then(() => toast(`${member.name} now runs on ${next ? policyPillText(next) : 'the project default'}.`))
+      .catch((error: unknown) => {
+        toast(`Could not set ${member.name}'s model: ${String(error)}`, 'error');
+        select.value = current;
+      });
+  });
+  field.appendChild(select);
+  return field;
+}
+
 /** One org-chart card. Employees carry a remove button; the owner card isn't clickable. */
 function orgCardNode(
   card: OrgCard, doing: string | null, rosterStatus: TeamStatus | null,
@@ -194,6 +225,7 @@ function orgCardNode(
   const text = el('span', 'card__text');
   text.append(el('span', 'card__name', card.name), el('span', 'card__role', card.role));
   if (card.reportsTo) text.appendChild(el('span', 'card__reports', `reports to: ${card.reportsTo}`));
+  if (card.model) text.appendChild(el('span', 'pill pill--models', policyPillText(card.model)));
   // What the member is on right now, from the running turn; the line stays in the DOM (empty)
   // so an event can fill it in place without a re-render.
   if (card.kind === 'manager' || card.kind === 'employee') {
@@ -543,6 +575,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       endpoint: `/api/projects/${slug}/chat/${card.id}/messages`,
       historyEndpoint: `/api/projects/${slug}/chat/${card.id}`,
       ...(activity ? { activity } : {}),
+      ...(member ? { modelField: memberModelField(slug, member, catalog) } : {}),
     }));
   };
 

@@ -5,6 +5,7 @@ import type { Milestone, MilestoneVerification } from '@agenthub/shared';
 import { runShellTask } from '@agenthub/shared/shell';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { patchMilestone } from '../projects/roadmap.js';
+import { SUBAGENT_TOOL_CALLS } from './budgets.js';
 import { runSubagent, truncateResult, workspaceTools, type SubagentDeps, type Tool, type ToolContext } from './tools.js';
 
 const VERIFY_TIMEOUT_MS = 120_000;
@@ -20,7 +21,9 @@ type TestStatus = MilestoneVerification['tests'];
 type ReviewStatus = MilestoneVerification['review'];
 
 interface TestRun { status: TestStatus; label: string; tail: string }
-interface Review { status: ReviewStatus; who: string; findings: string }
+/** `reported` is false when `findings` is a stand-in explanation rather than the reviewer's own text
+ *  — the manager must not read it as something to act on. */
+interface Review { status: ReviewStatus; who: string; findings: string; reported: boolean }
 
 /**
  * The command that verifies this project, in `workspace/`: the manifest's `verifyCmd` when the
@@ -70,6 +73,8 @@ function reviewTask(milestone: Milestone, headings: string[], files: string[]): 
     ``,
     `Read the changed code and its tests with read_file. Judge whether the milestone actually delivers what it says,`,
     `whether the code is correct, and whether the tests cover it.`,
+    `read_file returns a file whole up to 32k characters; a longer file ends with a marker telling you the fromLine to`,
+    `continue from — page through it rather than re-reading from the top.`,
     `End your report with a line that is exactly \`VERDICT: APPROVE\` or \`VERDICT: REQUEST_CHANGES\`, followed by`,
     `numbered concrete findings — for each: the file, what is wrong, and what to change. Approve only when there`,
     `is nothing that must change.`,
@@ -88,18 +93,22 @@ const REVIEWER_TOOLS: Tool[] = workspaceTools().filter((t) => t.def.name === 're
 
 async function runReview(deps: SubagentDeps, ctx: ToolContext, bundle: ProjectBundle, milestone: Milestone): Promise<Review> {
   const reviewer = (await bundle.team()).find((m) => m.role === 'reviewer');
-  if (!reviewer) return { status: 'skipped', who: 'no reviewer on the roster', findings: '' };
+  if (!reviewer) return { status: 'skipped', who: 'no reviewer on the roster', findings: '', reported: false };
   const files = await bundle.changedWorkspaceFiles(milestone.startedCommit);
   const task = reviewTask(milestone, prdHeadings(await bundle.prd()), files);
   const res = await runSubagent(deps, ctx, { role: 'reviewer', member: reviewer, task, tools: REVIEWER_TOOLS });
   const report = res.text.trim();
   if (!report) {
-    const findings = res.outcome === 'aborted'
-      ? 'reviewer was cut short (the hub stopped, or the turn hit its time limit) without a report'
-      : `reviewer ended (${res.outcome}) without a report`;
-    return { status: 'changes', who: reviewer.name, findings };
+    const findings = res.outcome === 'budget-exhausted'
+      ? `reviewer ran out of tool calls before reporting (${SUBAGENT_TOOL_CALLS} calls) — there are NO findings to act ` +
+        `on; do not delegate fixes. Call complete_milestone again next turn.`
+      : res.outcome === 'aborted'
+        ? 'reviewer was cut short (the hub stopped, or the turn hit its time limit) without a report — there are NO ' +
+          'findings to act on; do not delegate fixes.'
+        : `reviewer ended (${res.outcome}) without a report — there are NO findings to act on; do not delegate fixes.`;
+    return { status: 'changes', who: reviewer.name, findings, reported: false };
   }
-  return { status: parseVerdict(report), who: reviewer.name, findings: truncateResult(report, REVIEW_REPORT_LIMIT) };
+  return { status: parseVerdict(report), who: reviewer.name, findings: truncateResult(report, REVIEW_REPORT_LIMIT), reported: true };
 }
 
 /**
@@ -129,7 +138,7 @@ export function completeMilestoneTool(deps: SubagentDeps): Tool {
       const tests = await runTests(bundle, ctx);
       // Failing tests are a verdict already; the reviewer's time is spent on code that at least runs.
       const review: Review = tests.status === 'fail'
-        ? { status: 'skipped', who: 'not run: tests failed', findings: '' }
+        ? { status: 'skipped', who: 'not run: tests failed', findings: '', reported: false }
         : await runReview(deps, ctx, bundle, milestone);
       // Done needs at least one positive signal (tests passed, or the reviewer approved) and no
       // negative one — two skipped checks (no test command, no reviewer on the roster) is not
@@ -158,7 +167,9 @@ export function completeMilestoneTool(deps: SubagentDeps): Tool {
         `milestone ${id} stays in-progress — ${summary}`,
         ...(tests.status === 'fail' ? [`test output (last ${TEST_TAIL_LINES} lines):`, tests.tail || '(no output)'] : []),
         ...(review.status === 'changes' ? [`reviewer findings (${review.who}):`, review.findings] : []),
-        `Fix what is listed (delegate it), then call complete_milestone("${id}") again.`,
+        review.status === 'changes' && !review.reported
+          ? 'The reviewer did not finish; nothing to fix from this round. Call complete_milestone again (next turn if this one is nearly out of budget).'
+          : `Fix what is listed (delegate it), then call complete_milestone("${id}") again.`,
       ].join('\n');
     },
   };

@@ -16,6 +16,9 @@ import { clip, type AgentLoop, type AgentRunResult } from './loop.js';
 import { routeFor } from '../gateway.js';
 
 const TOOL_RESULT_LIMIT = 8000;
+/** Per-tool cap for read_file/read_bundle — larger than TOOL_RESULT_LIMIT because source files and
+ *  bundle documents routinely run past 8k; they page at a line boundary instead of losing the rest. */
+const READ_FILE_LIMIT = 32_000;
 const SHELL_TIMEOUT_MS = 60_000;
 /** How much of a delegated task a `subagent-start` event carries. */
 const EVENT_TASK_LIMIT = 200;
@@ -42,6 +45,10 @@ export interface Tool {
   /** Leaves the owner's own machines (posting, emailing). Such a tool must propose through the
    *  ConfirmationGate rather than act, so nothing reaches the outside world unconfirmed. */
   outward?: boolean;
+  /** This tool already bounds its own result to a sensible size and shape (read_file/read_bundle
+   *  page at a line boundary with a continuation marker) — runToolCall must not re-cut it with the
+   *  generic TOOL_RESULT_LIMIT, which would land mid-marker. */
+  selfCapped?: boolean;
   /** Returns the tool result text; throwing is fine — `runToolCall` renders it as `error: ...`. */
   run(args: unknown, ctx: ToolContext): Promise<string>;
 }
@@ -60,7 +67,8 @@ export async function runToolCall(tools: Tool[], call: ToolCall, ctx: ToolContex
     return `error: invalid arguments JSON: ${(e as Error).message}`;
   }
   try {
-    return truncateResult(await tool.run(args, ctx), TOOL_RESULT_LIMIT);
+    const result = await tool.run(args, ctx);
+    return tool.selfCapped ? result : truncateResult(result, TOOL_RESULT_LIMIT);
   } catch (e) {
     return `error: ${(e as Error).message}`;
   }
@@ -74,6 +82,37 @@ export async function runToolCall(tools: Tool[], call: ToolCall, ctx: ToolContex
 export function truncateResult(text: string, limit: number): string {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n[truncated: showing first ${limit} of ${text.length} characters]`;
+}
+
+/**
+ * 1-based `fromLine`/`maxLines` slice of `text` for read_file/read_bundle: a file comes back whole
+ * up to READ_FILE_LIMIT characters, and a longer one is cut at the last line that still fits, ending
+ * with a marker naming the exact `fromLine` to continue from — unlike `truncateResult`'s flat
+ * character cut, a line boundary keeps every returned line intact.
+ */
+function pageLines(text: string, fromLine: number, maxLines: number | undefined, toolName: string): string {
+  const lines = text.split('\n');
+  if (fromLine < 1) throw new Error('fromLine must be at least 1');
+  if (fromLine > lines.length) throw new Error(`fromLine ${fromLine} is past the end (${lines.length} lines)`);
+  const end = maxLines !== undefined ? Math.min(lines.length, fromLine - 1 + maxLines) : lines.length;
+  const slice = lines.slice(fromLine - 1, end);
+  const whole = slice.join('\n');
+  if (whole.length <= READ_FILE_LIMIT) return whole;
+
+  // Keep whole lines up to the cap; the first line always makes it in, even alone over the cap.
+  const shown: string[] = [];
+  let shownLen = 0;
+  for (const line of slice) {
+    const add = line.length + (shown.length ? 1 : 0);
+    if (shown.length && shownLen + add > READ_FILE_LIMIT) break;
+    shown.push(line);
+    shownLen += add;
+  }
+  const shownText = shown.join('\n');
+  const endLine = fromLine + shown.length - 1;
+  return `${shownText}\n[showing lines ${fromLine}–${endLine} of ${lines.length} ` +
+    `(${shownText.length.toLocaleString('en-US')} of ${text.length.toLocaleString('en-US')} characters); ` +
+    `call ${toolName} again with fromLine: ${endLine + 1} for the rest]`;
 }
 
 // --- argument helpers -------------------------------------------------------
@@ -92,6 +131,13 @@ function optStr(args: unknown, key: string): string | undefined {
   const v = fields(args)[key];
   if (v === undefined || v === null) return undefined;
   if (typeof v !== 'string') throw new Error(`${key} must be a string`);
+  return v;
+}
+
+function optNum(args: unknown, key: string): number | undefined {
+  const v = fields(args)[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'number' || !Number.isInteger(v)) throw new Error(`${key} must be an integer`);
   return v;
 }
 
@@ -203,10 +249,24 @@ export function workspaceTools(opts: WorkspaceToolOptions = {}): Tool[] {
   return [
     {
       def: {
-        type: 'tool', name: 'read_file', description: 'Read a UTF-8 file from the project workspace.',
-        parameters: { type: 'object', properties: { path: strProp('Path relative to the workspace root.') }, required: ['path'] },
+        type: 'tool', name: 'read_file',
+        description: 'Read a UTF-8 file from the project workspace, whole up to 32,000 characters. A longer file is cut ' +
+          'at a line boundary and ends with a marker naming the fromLine to continue from.',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: strProp('Path relative to the workspace root.'),
+            fromLine: { type: 'number', description: '1-based line to start reading from; defaults to 1.' },
+            maxLines: { type: 'number', description: 'Maximum number of lines to return; defaults to the rest of the file.' },
+          },
+          required: ['path'],
+        },
       },
-      run: async (args, ctx) => readFile(inWorkspace(ctx, str(args, 'path')), 'utf8'),
+      selfCapped: true,
+      run: async (args, ctx) => {
+        const text = await readFile(inWorkspace(ctx, str(args, 'path')), 'utf8');
+        return pageLines(text, optNum(args, 'fromLine') ?? 1, optNum(args, 'maxLines'), 'read_file');
+      },
     },
     {
       def: {
@@ -333,10 +393,23 @@ export function bundleTools(): Tool[] {
       def: {
         type: 'tool', name: 'read_bundle',
         description: 'Read one of the project bundle\'s own files: prd.md, roadmap.yaml, tasks.yaml, manifest.yaml, project.md, ' +
-          'decisions.log.md, team.yaml, or a page under docs/ or skills/. The workspace is not reachable from here — read_file covers that.',
-        parameters: { type: 'object', properties: { path: strProp('Bundle-relative path, e.g. "prd.md" or "docs/index.md".') }, required: ['path'] },
+          'decisions.log.md, team.yaml, or a page under docs/ or skills/, whole up to 32,000 characters — a longer one pages ' +
+          'the same way read_file does. The workspace is not reachable from here — read_file covers that.',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: strProp('Bundle-relative path, e.g. "prd.md" or "docs/index.md".'),
+            fromLine: { type: 'number', description: '1-based line to start reading from; defaults to 1.' },
+            maxLines: { type: 'number', description: 'Maximum number of lines to return; defaults to the rest of the file.' },
+          },
+          required: ['path'],
+        },
       },
-      run: async (args, ctx) => needBundle(ctx).readBundleFile(str(args, 'path')),
+      selfCapped: true,
+      run: async (args, ctx) => {
+        const text = await needBundle(ctx).readBundleFile(str(args, 'path'));
+        return pageLines(text, optNum(args, 'fromLine') ?? 1, optNum(args, 'maxLines'), 'read_bundle');
+      },
     },
     {
       def: {

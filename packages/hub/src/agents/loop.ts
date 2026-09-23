@@ -2,6 +2,7 @@ import type { ChatMessage, ChatResult, Tier, TurnEvent } from '@agenthub/shared'
 import type { ModelGateway, Route } from '../gateway.js';
 import { runToolCall, type Tool, type ToolContext } from './tools.js';
 import type { SessionKind, SessionOutcome, Transcript } from './transcript.js';
+import { BRIEFING_RESERVE } from './budgets.js';
 
 /** What an `outward` tool must return: a `ConfirmationGate` proposal id, never a done-it result. */
 const OUTWARD_RESULT_RE = /^pending confirmation /;
@@ -105,6 +106,8 @@ export class AgentLoop {
     let text = '';
     let truncated = false;
     let lastTool: string | undefined;
+    /** Set once the manager has been told its tool-call budget is running low (see below). */
+    let briefingWarned = false;
 
     const finish = (outcome: SessionOutcome): AgentRunResult => {
       transcript.endSession(sessionId, outcome);
@@ -171,6 +174,19 @@ export class AgentLoop {
           summary: clip(output, EVENT_SUMMARY_LIMIT), ms: Date.now() - startedAt,
         });
         answer(call, output);
+
+        // The manager (only) is nudged once, right as its room to wrap up gets tight, so a turn that
+        // would otherwise keep delegating until the budget check above cuts it off instead leaves time
+        // to call publish_briefing.
+        if (opts.kind === 'orchestrator' && !briefingWarned && opts.maxToolCalls - toolCalls <= BRIEFING_RESERVE) {
+          briefingWarned = true;
+          const warn: ChatMessage = {
+            role: 'user',
+            content: `You have ${BRIEFING_RESERVE} tool calls left in this turn. Stop starting new work: finish what is in flight, then call publish_briefing now.`,
+          };
+          messages.push(warn);
+          transcript.append(sessionId, warn);
+        }
       }
     }
   }

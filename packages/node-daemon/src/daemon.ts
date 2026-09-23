@@ -28,6 +28,12 @@ const REDISCOVER_AFTER_FAILURES = 3;
 /** Bounds the health probe each rediscovery candidate gets. */
 const REDISCOVER_PROBE_MS = 3000;
 
+/** Total time start() may spend retrying hub registration before giving up on it. */
+const REGISTER_RETRY_MS = 60_000;
+/** Backoff between registration attempts: the first four gaps, then a steady cadence until the budget above runs out. */
+const REGISTER_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000];
+const REGISTER_RETRY_STEADY_MS = 10_000;
+
 /**
  * Reads (and so releases) a response nobody cares about. Undici keeps the connection — and the
  * socket behind it — alive until a body is consumed or cancelled, which is what used to leave the
@@ -44,6 +50,8 @@ export interface DaemonDeps {
   createBrowserDriver?: (cfg: BrowserConfig) => Promise<BrowserDriver>;
   /** Called instead of `process.exit(0)` when the hub reports this node was removed (heartbeat 410). */
   onRemoved?: () => void;
+  /** Overrides the real timer behind registration retry backoff, so a test can run it in milliseconds. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export class Daemon {
@@ -221,15 +229,46 @@ export class Daemon {
     return readFileSync(path, 'utf8');
   }
 
+  /** One registration attempt: ok, or a failure carrying both a short reason (for the retry log) and the error to throw if this was the last try. */
+  private async attemptRegister(): Promise<{ ok: true } | { ok: false; status?: number; reason: string; error: Error }> {
+    try {
+      const res = await fetch(`${this.hubUrl}/api/nodes/register`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
+      });
+      await drain(res);
+      if (res.ok) return { ok: true };
+      return { ok: false, status: res.status, reason: `${res.status}`, error: new Error(`hub registration failed: ${res.status}`) };
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message, error: err as Error };
+    }
+  }
+
+  /**
+   * Registers with the hub, retrying with backoff (1s, 2s, 4s, 8s, then every 10s) for up to
+   * REGISTER_RETRY_MS total — covers systemd starting this daemon a second or two before the hub
+   * itself is listening, which used to exit the daemon and force a 15s systemd restart. A 410 (this
+   * node was removed) or a 401/403 (bad token) is final and thrown immediately, never retried.
+   */
+  private async registerWithRetry(): Promise<void> {
+    const sleep = this.deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    let elapsed = 0;
+    for (let attempt = 0; ; attempt++) {
+      const result = await this.attemptRegister();
+      if (result.ok) return;
+      if (result.status === 410 || result.status === 401 || result.status === 403) throw result.error;
+      const delay = REGISTER_RETRY_DELAYS_MS[attempt] ?? REGISTER_RETRY_STEADY_MS;
+      if (elapsed + delay > REGISTER_RETRY_MS) throw result.error;
+      console.error(`[daemon] hub not reachable yet (${result.reason}); retrying in ${delay / 1000}s`);
+      await sleep(delay);
+      elapsed += delay;
+    }
+  }
+
   async start(): Promise<void> {
     await this.supervisor.startAll();
     if (this.cfg.browser?.enabled) await this.startBrowserServer(this.cfg.browser);
     if (this.cfg.profiles || this.cfg.controlNode) await this.startControlServer();
-    const res = await fetch(`${this.hubUrl}/api/nodes/register`, {
-      method: 'POST', headers: { 'content-type': 'application/json', ...this.authHeaders }, body: JSON.stringify(this.registration()),
-    });
-    await drain(res);
-    if (!res.ok) throw new Error(`hub registration failed: ${res.status}`);
+    await this.registerWithRetry();
     const interval = this.cfg.heartbeatMs ?? 5000;
     this.timer = setInterval(() => {
       fetch(`${this.hubUrl}/api/nodes/${this.cfg.node.name}/heartbeat`, { method: 'POST', headers: this.authHeaders })

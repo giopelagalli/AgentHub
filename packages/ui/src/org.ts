@@ -1,4 +1,4 @@
-import type { TeamRoster, TeamStatus } from '@agenthub/shared';
+import type { ModelPolicy, TeamRoster, TeamStatus } from '@agenthub/shared';
 
 /** What a card is, which decides what clicking it opens. */
 export type OrgKind = 'owner' | 'assistant' | 'master' | 'manager' | 'employee';
@@ -15,6 +15,8 @@ export interface OrgCard {
   avatar: string | null;
   /** null where the hub reports no working/idle state for this card. */
   status: TeamStatus | null;
+  /** An employee's per-member model override, when they have one — absent on every other card. */
+  model?: ModelPolicy;
 }
 
 export interface OrgTier {
@@ -62,6 +64,7 @@ export function orgChartModel(
     reportsTo: 'Manager',
     avatar: member.avatar,
     status: working(member.id, member.status),
+    ...(member.model ? { model: member.model } : {}),
   }));
 
   return [

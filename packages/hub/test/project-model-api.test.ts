@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
-import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
+import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { createHub, type Hub } from '../src/server.js';
 
 const KEY_ENV = 'FIREWORKS_API_KEY';
@@ -65,6 +65,10 @@ const app = (): Hub['app'] => {
 
 function setPolicy(payload: Record<string, unknown>): Promise<LightMyRequestResponse> {
   return app().inject({ method: 'POST', url: '/api/projects/demo/model', payload });
+}
+
+function patchMember(id: string, payload: Record<string, unknown>): Promise<LightMyRequestResponse> {
+  return app().inject({ method: 'PATCH', url: `/api/projects/demo/team/${id}`, payload });
 }
 
 describe('POST /api/projects/:slug/model', () => {
@@ -140,6 +144,55 @@ describe('POST /api/projects/:slug/model', () => {
   });
 });
 
+describe('PATCH /api/projects/:slug/team/:id', () => {
+  it('stores the override on the member and the roster shows it; null clears it', async () => {
+    await setup();
+    const res = await patchMember('coder-1', { model: { prefer: 'cloud', provider: 'fireworks', workerModel: FLASH } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().model).toEqual({ prefer: 'cloud', provider: 'fireworks', workerModel: FLASH });
+
+    const roster = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
+    const ada = roster.json().members.find((m: { id: string }) => m.id === 'coder-1');
+    expect(ada.model).toEqual({ prefer: 'cloud', provider: 'fireworks', workerModel: FLASH });
+
+    const log = await simpleGit(join(root!, 'demo')).log();
+    expect(log.latest?.message).toMatch(/^owner:/);
+
+    const cleared = await patchMember('coder-1', { model: null });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().model).toBeUndefined();
+    const rosterAfter = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
+    expect(rosterAfter.json().members.find((m: { id: string }) => m.id === 'coder-1').model).toBeUndefined();
+  });
+
+  it('refuses a disabled or unknown model with the project route\'s own messages', async () => {
+    await setup();
+    const badPrefer = await patchMember('coder-1', { model: { prefer: 'whatever' } });
+    expect(badPrefer.statusCode).toBe(400);
+
+    const off = await patchMember('coder-1', { model: { prefer: 'cloud', provider: 'fireworks', orchestratorModel: GLM } });
+    expect(off.statusCode).toBe(400);
+    expect(off.json().error).toMatch(/switched off/);
+
+    const unknown = await patchMember('coder-1', { model: { prefer: 'cloud', provider: 'fireworks', orchestratorModel: 'accounts/me/models/nope' } });
+    expect(unknown.statusCode).toBe(400);
+    expect(unknown.json().error).toContain('unknown model');
+
+    // The roster is untouched by every refusal.
+    const roster = await app().inject({ method: 'GET', url: '/api/projects/demo/team' });
+    expect(roster.json().members.find((m: { id: string }) => m.id === 'coder-1').model).toBeUndefined();
+  });
+
+  it('404s for an unknown project or an unknown member', async () => {
+    await setup();
+    const badProject = await app().inject({ method: 'PATCH', url: '/api/projects/ghost/team/coder-1', payload: { model: null } });
+    expect(badProject.statusCode).toBe(404);
+
+    const badMember = await patchMember('ghost-9', { model: null });
+    expect(badMember.statusCode).toBe(404);
+  });
+});
+
 describe('a project turn under a model policy', () => {
   it('sends the orchestrator turn to the policy\'s cloud model', async () => {
     await setup();
@@ -159,5 +212,59 @@ describe('a project turn under a model policy', () => {
     expect(turn.statusCode).toBe(200);
     expect(local!.requests.length).toBeGreaterThan(0);
     expect(fireworks!.requests).toHaveLength(0);
+  });
+});
+
+describe('a turn where one employee has a model override', () => {
+  it("routes that member's subagent run to their own model, leaving the manager on the project's", async () => {
+    // No shared setup() here: the manager needs a scripted spawn_subagent, and the mock it and the
+    // subagent's tier share is set up once, at construction.
+    process.env[KEY_ENV] = 'fw-secret';
+    root = await mkdtemp(join(tmpdir(), 'agenthub-model-policy-'));
+    const managerScript: ScriptStep[] = [
+      { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'add the lexer', member: 'coder-1' } }] },
+      {
+        toolCalls: [{
+          name: 'publish_briefing',
+          arguments: {
+            title: 'Demo', status: 'active', priority: 'project', summary: 'delegated to Ada',
+            progress: { done: 1, total: 2 }, blockers: [], nextSteps: [],
+          },
+        }],
+      },
+      { content: 'delegated' },
+    ];
+    local = createMockOpenAI({ script: managerScript });
+    fireworks = createMockOpenAI({ script: [{ content: 'lexer added' }] });
+    await local.listen({ port: 0, host: '127.0.0.1' });
+    await fireworks.listen({ port: 0, host: '127.0.0.1' });
+    const localUrl = `http://127.0.0.1:${(local.server.address() as { port: number }).port}`;
+    const fireworksUrl = `http://127.0.0.1:${(fireworks.server.address() as { port: number }).port}`;
+    hub = createHub({ projectsRoot: root, cloud: { fireworks: { baseUrl: fireworksUrl } } });
+    await hub.app.inject({
+      method: 'POST', url: '/api/nodes/register',
+      payload: {
+        name: 'spark', arch: 'arm64',
+        endpoints: [
+          { tier: 'orchestrator', url: localUrl, model: 'mock-model', maxStreams: 2 },
+          { tier: 'worker', url: localUrl, model: 'mock-model', maxStreams: 2 },
+        ],
+      },
+    });
+    await hub.app.inject({
+      method: 'POST', url: '/api/projects',
+      payload: { slug: 'demo', title: 'Demo', intent: 'ship the demo' },
+    });
+    // The project itself stays on the (unset, so local-first) default — only Ada gets a cloud model.
+    await patchMember('coder-1', { model: { prefer: 'cloud', provider: 'fireworks', workerModel: FLASH } });
+
+    const turn = await app().inject({ method: 'POST', url: '/api/projects/demo/turn', payload: {} });
+    expect(turn.statusCode).toBe(200);
+
+    // Ada's subagent run went to Fireworks, under her own worker model.
+    expect(fireworks!.requests).toHaveLength(1);
+    expect(fireworks!.lastRequest().model).toBe(FLASH);
+    // The manager's own three calls (spawn, publish, final text) never left the local mock.
+    expect(local!.requests).toHaveLength(3);
   });
 });

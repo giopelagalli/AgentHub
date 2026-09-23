@@ -437,6 +437,8 @@ export interface TeamMember {
   avatar: string;
   /** Appended to the role's system prompt when this member runs a task. At most 2000 chars. */
   instructions?: string;
+  /** Overrides the project's `modelPolicy` for this employee's tasks; absent = project default. */
+  model?: ModelPolicy;
   createdAt: number;
 }
 

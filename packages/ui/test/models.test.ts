@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { ModelCatalog, ModelPolicy } from '@agenthub/shared';
 import {
-  modelOptions, policyFromValue, policyPillText, shortModel, valueFromPolicy, workerOptions,
+  memberModelOptions, modelOptions, policyFromValue, policyPillText, shortModel, valueFromPolicy, workerOptions,
 } from '../src/models.js';
 
 const GLM = 'accounts/fireworks/models/glm-5p3';
@@ -46,6 +46,19 @@ describe('modelOptions', () => {
       { value: KIMI, label: 'Worker: kimi-k3 (off)', disabled: true },
     ]);
     expect(workerOptions(null, 'fireworks')).toHaveLength(1);
+  });
+});
+
+describe('memberModelOptions', () => {
+  it('leads with "Project default" ahead of the project\'s own option list', () => {
+    expect(memberModelOptions(catalog)).toEqual([
+      { value: '', label: 'Project default' },
+      ...modelOptions(catalog),
+    ]);
+    expect(memberModelOptions(null)).toEqual([
+      { value: '', label: 'Project default' },
+      ...modelOptions(null),
+    ]);
   });
 });
 

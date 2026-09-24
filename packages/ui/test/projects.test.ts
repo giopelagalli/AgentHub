@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { PRIORITY_RANK, type HubState, type Priority, type ProjectManifest, type ProjectStatus } from '@agenthub/shared';
+import { PRIORITY_RANK, type HubState, type Priority, type ProjectManifest, type ProjectStatus, type TeamRoster } from '@agenthub/shared';
 import type { UiState } from '../src/store.js';
+import { orgChartModel } from '../src/org.js';
 import { allocationRows } from '../src/pages/allocation.js';
-import { priorityLabel, projectsSignature } from '../src/pages/projects.js';
+import { managerCard, priorityLabel, projectsSignature } from '../src/pages/projects.js';
 
 function project(slug: string, overrides: Partial<ProjectManifest> = {}): ProjectManifest {
   return {
@@ -104,5 +105,26 @@ describe('projectsSignature', () => {
     const s1 = projectsSignature(uiState({ hub, project: 'a', projectBusy: new Set() }));
     const s2 = projectsSignature(uiState({ hub, project: 'a', projectBusy: new Set(['a:coder-1']) }));
     expect(s1).not.toBe(s2);
+  });
+});
+
+describe('managerCard', () => {
+  const roster: TeamRoster = {
+    members: [{ id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan', status: 'idle', sessionsCount: 0, createdAt: 0 }],
+    manager: { status: 'idle' },
+  };
+
+  it('is the very card the org chart draws, so the header opens the Manager card’s own drawer', () => {
+    expect(managerCard(roster)).toEqual(
+      orgChartModel(roster).flatMap((tier) => tier.cards).find((card) => card.kind === 'manager'),
+    );
+  });
+
+  it('carries the id the chat routes are built from', () => {
+    expect(managerCard(roster)).toMatchObject({ id: 'manager', kind: 'manager', name: 'Manager' });
+  });
+
+  it('is there before the roster lands, so Chat works on a project still loading', () => {
+    expect(managerCard(null)).toMatchObject({ id: 'manager', kind: 'manager' });
   });
 });

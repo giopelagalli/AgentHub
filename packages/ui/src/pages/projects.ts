@@ -205,6 +205,15 @@ function memberModelField(slug: string, member: TeamMemberView, catalog: ModelCa
   return field;
 }
 
+/**
+ * The manager's card, taken from the org chart rather than written out again, so the header's Chat
+ * button opens exactly what clicking the Manager card opens. Undefined would mean the chart no
+ * longer has a manager tier, which the header reads as nothing to chat to.
+ */
+export function managerCard(roster: TeamRoster | null): OrgCard | undefined {
+  return orgChartModel(roster).flatMap((tier) => tier.cards).find((card) => card.kind === 'manager');
+}
+
 /** One org-chart card. Employees carry a remove button; the owner card isn't clickable. */
 function orgCardNode(
   card: OrgCard, doing: string | null, rosterStatus: TeamStatus | null,
@@ -431,9 +440,19 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   /** One drawer at a time: a second would land on top of the first. */
   let closeDrawer: (() => void) | null = null;
-  const openDrawer = (open: (into: HTMLElement) => () => void): void => {
+  /** The card id the open drawer belongs to, so the header can light what is open; null while none is. */
+  let drawerFor: string | null = null;
+  const openDrawer = (who: string, open: (into: HTMLElement) => () => void): void => {
+    // Closing the old one first fires its `onClose`, which clears `drawerFor` — hence the order here.
     closeDrawer?.();
     closeDrawer = open(document.body);
+    drawerFor = who;
+    syncChatButton();
+  };
+  /** The drawer has gone, whichever way it was closed. */
+  const onDrawerClosed = (): void => {
+    drawerFor = null;
+    syncChatButton();
   };
 
   let roster: TeamRoster | null = null;
@@ -457,6 +476,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   /** The Run turn button on screen, so the clock can tick on it without a re-render. */
   let turnButton: HTMLButtonElement | null = null;
+  /** The Chat button on screen, so the drawer opening and closing can light it without a redraw. */
+  let chatButton: HTMLButtonElement | null = null;
+  const syncChatButton = (): void => {
+    chatButton?.setAttribute('aria-pressed', String(drawerFor === 'manager'));
+  };
   /** How many events of the running turn the captions have seen; null while none runs. */
   let followedEvents: number | null = null;
   /** The last turn whose end was toasted, so the POST reply and the socket don't both say it. */
@@ -573,16 +597,17 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   const openCard = (slug: string, card: OrgCard): void => {
     if (card.kind === 'assistant') {
-      openDrawer((into) => openChat(into, {
+      openDrawer(card.id, (into) => openChat(into, {
         name: 'Assistant',
         subtitle: 'Your personal assistant',
         endpoint: '/api/assistant/messages',
         pendingBase: '/api/assistant/pending',
+        onClose: onDrawerClosed,
       }));
       return;
     }
     if (card.kind === 'master') {
-      openDrawer((into) => openMasterPanel(into));
+      openDrawer(card.id, (into) => openMasterPanel(into));
       return;
     }
     // The Now section reads the running turn straight out of the store, under the same `who` the
@@ -600,14 +625,35 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
           now: { ...now, meta: `${member.sessionsCount} session${member.sessionsCount === 1 ? '' : 's'}` },
         }
         : undefined;
-    openDrawer((into) => openChat(into, {
+    openDrawer(card.id, (into) => openChat(into, {
       name: card.name,
       subtitle: `${card.role} · ${slug}`,
       endpoint: `/api/projects/${slug}/chat/${card.id}/messages`,
       historyEndpoint: `/api/projects/${slug}/chat/${card.id}`,
+      onClose: onDrawerClosed,
       ...(activity ? { activity } : {}),
       ...(member ? { modelField: memberModelField(slug, member, catalog) } : {}),
     }));
+  };
+
+  /**
+   * The header's way into the manager's drawer: the same drawer the Manager card opens, since it
+   * goes through `openCard` with the chart's own manager card. A press while that drawer is already
+   * up puts the cursor back in its message box rather than rebuilding the conversation.
+   *
+   * A running turn is no reason to hold this back — the hub answers a one-on-one with the manager
+   * alongside the turn, and anything it does refuse arrives in the log as a failed reply.
+   */
+  const openManagerChat = (): void => {
+    const project = selected(store.getState());
+    if (!project) return;
+    if (drawerFor === 'manager') {
+      // The page's own drawer, not the one an artifact sheet mounts in its side slot.
+      document.querySelector<HTMLInputElement>('body > .drawer .chat__form input')?.focus();
+      return;
+    }
+    const card = managerCard(roster);
+    if (card) openCard(project.slug, card);
   };
 
   const removeCard = (slug: string, card: OrgCard): void => {
@@ -632,6 +678,19 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     headBox.append(line, el('p', 'detail__intent', project.intent));
 
     const controls = el('div', 'actions');
+
+    // First in the row, where the owner's most frequent reach lands, and far from the filled Run
+    // turn so its pressed tint doesn't compete with the one primary. A plain button, not a second
+    // primary: talking to the project is always available — during a turn too — but Run turn is
+    // still the action the header leads on. Last place would make this the button that wraps away
+    // on a narrow window; Add employee, a once-per-project action, is the better thing to drop.
+    const chat = button('Chat', 'btn detail__chat');
+    chat.title = 'Chat with the Manager (c)';
+    chat.addEventListener('click', openManagerChat);
+    chatButton = chat;
+    syncChatButton();
+    controls.appendChild(chat);
+
     const priorityField = el('label', 'field');
     priorityField.append(el('span', 'field__label', 'Order'), priorityPicker(project.slug, project.priority));
     controls.appendChild(priorityField);
@@ -885,6 +944,25 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     openArtifact('prd', seed.questions);
   };
 
+  /** The rail's test for "these keys belong to whatever is focused", applied to `c`. */
+  const typing = (): boolean => {
+    const active = document.activeElement;
+    return active instanceof HTMLInputElement
+      || active instanceof HTMLTextAreaElement
+      || active instanceof HTMLSelectElement;
+  };
+
+  /** `c` opens the manager chat, the same as the header button — the rail's `[` sets the pattern. */
+  const onKey = (event: KeyboardEvent): void => {
+    if (event.key !== 'c' || event.metaKey || event.ctrlKey || event.altKey || typing()) return;
+    // The wizard and an artifact sheet own the screen while they are up, and the sheet has a chat
+    // drawer of its own; a page drawer sliding in under either is not what `c` means there.
+    if (document.querySelector('.modal, .sheet')) return;
+    event.preventDefault();
+    openManagerChat();
+  };
+  window.addEventListener('keydown', onKey);
+
   const unsubscribe = store.subscribe(render);
   const unseed = store.subscribe(takeSeed);
   render(store.getState());
@@ -897,6 +975,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   return () => {
     unsubscribe();
     unseed();
+    window.removeEventListener('keydown', onKey);
+    chatButton = null;
     clearInterval(clock);
     clearTimeout(progressTimer);
     closeDrawer?.();

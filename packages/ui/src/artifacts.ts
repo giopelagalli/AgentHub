@@ -10,7 +10,7 @@ import { activityHint, type TurnRecord, type TurnsState } from './turns.js';
  * and the team's current turn are in without opening any of them.
  */
 
-export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity';
+export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity' | 'terminal';
 
 /** Where each button's document is in its own fetch. */
 export type DocState = 'loading' | 'ready' | 'failed';
@@ -36,6 +36,7 @@ const CAPTIONS: Record<ArtifactId, string> = {
   roadmap: 'The order it gets built',
   docs: 'What the team wrote down',
   activity: 'What the team is doing',
+  terminal: 'A shell in the workspace',
 };
 
 export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
@@ -43,6 +44,7 @@ export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
   roadmap: 'Roadmap',
   docs: 'Docs',
   activity: 'Activity',
+  terminal: 'Terminal',
 };
 
 /** The heading the artifact wears once it is open in the sheet. */
@@ -51,6 +53,7 @@ export const ARTIFACT_TITLES: Record<ArtifactId, string> = {
   roadmap: 'Roadmap',
   docs: 'Docs',
   activity: 'Activity',
+  terminal: 'Terminal',
 };
 
 function plural(count: number, noun: string): string {
@@ -117,4 +120,12 @@ export function activitySummary(
 ): ArtifactSummary {
   const { hint, filled, running } = activityHint(state, turns, roster, now);
   return { ...shell('activity', hint, filled), live: running };
+}
+
+/**
+ * The terminal button. It has no document behind it to be thin or full: a project always has a
+ * workspace, so the only state worth a line is whether the shell is on screen right now.
+ */
+export function terminalSummary(open: boolean): ArtifactSummary {
+  return shell('terminal', open ? 'open' : 'closed', true);
 }

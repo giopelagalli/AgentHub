@@ -106,9 +106,26 @@ also kept out of every child the hub spawns: `secretsStripped()` in `@agenthub/s
 `run_shell`, the verify command and the daemon's shell-task runner hand `runShellTask`.
 `ProjectService.create` drives the clone on the request's own path and removes the half-made bundle
 if it fails; `PrdDrafter` reads the clone so the PRD describes the product that exists (0029);
-`GET /api/github/status` answers `{ configured, method }` and never the token. The workspace is a
-real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
-from that checkout's own index.
+`GET /api/github/status` answers `{ configured, method, connected }` and never the token. The
+workspace is a real checkout, so the bundle ignores all of `workspace/` and a milestone's changed
+files are read from that checkout's own index.
+
+**`projects/github-app.ts`, `projects/github-installations.ts`** — the GitHub App half, so
+connecting GitHub is a button rather than a token a member has to mint: `GET /api/github/connect`
+sends the browser to GitHub's own "choose repositories" screen with a signed `state` (a nonce, the
+member and an expiry — nothing is stored, 0032), and `GET /api/github/callback` exchanges the
+`code` for a *user* token used once, to ask GitHub which installations that user has, and then
+dropped (0031). GitHub's `installation_id` is never trusted; only an id in `GET /user/installations`
+is stored, in `github_installations` (installation id, user, account — no token). `AppCredentials`
+is a second `GithubCredentials` beside `PatCredentials`: it finds the installation covering a
+repository by that installation's own repository listing (cached 5 minutes; the account name is the
+fallback only when a listing cannot be read, so a repository an installation was not given falls
+through to the token rather than stopping the chain) and mints a per-installation token, cached
+until five minutes before GitHub expires it, with the app's
+own RS256 JWT signed by `node:crypto`. `ChainedCredentials` is the precedence — the App, then the
+personal access token (0033). `GET /api/github/repos` is what the New-project dialog's picker
+shows; `DELETE /api/github/installations/:id` forgets one, the grant itself being the member's to
+revoke on GitHub.
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

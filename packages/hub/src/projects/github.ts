@@ -12,8 +12,12 @@ import type { GithubRepoRef, ProjectSource } from '@agenthub/shared';
 export const GITHUB_CLONE_BASE = 'https://github.com';
 export const GITHUB_API_BASE = 'https://api.github.com';
 
-/** How the hub found a token, as `GET /api/github/status` reports it. */
-export type GithubAuthMethod = 'token' | 'none';
+/**
+ * How the hub found a token, as `GET /api/github/status` reports it. `app` is a GitHub App
+ * installation the member connected with a button; `token` is the personal access token in
+ * `hub.env`, which stays as the fallback (0033).
+ */
+export type GithubAuthMethod = 'app' | 'token' | 'none';
 
 /**
  * Where a token for one repository comes from.
@@ -36,6 +40,31 @@ export class PatCredentials implements GithubCredentials {
 
   async tokenFor(): Promise<string | null> {
     return this.token;
+  }
+}
+
+/**
+ * Credentials tried in order, answering with the first that produces a token. This is what "the
+ * App, with the personal access token as the fallback" means literally: a member who connected the
+ * App still imports a repository the App cannot see if the owner also set `GITHUB_TOKEN` (0033).
+ * `method` is the first one's, because that is what the hub is set up with.
+ *
+ * A link that throws — GitHub unreachable while minting an installation token — is passed over
+ * rather than fatal, so one broken credential cannot take out a working one behind it.
+ */
+export class ChainedCredentials implements GithubCredentials {
+  readonly method: GithubAuthMethod;
+
+  constructor(private readonly chain: GithubCredentials[]) {
+    this.method = chain[0]?.method ?? 'none';
+  }
+
+  async tokenFor(owner: string, repo: string): Promise<string | null> {
+    for (const link of this.chain) {
+      const token = await link.tokenFor(owner, repo).catch(() => null);
+      if (token) return token;
+    }
+    return null;
   }
 }
 

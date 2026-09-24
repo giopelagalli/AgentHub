@@ -1,6 +1,7 @@
 #!/bin/sh
-# Exercises hub-watch.sh against a stubbed curl (down, then up) and checks
-# the state file and the Telegram send text. Run: sh deploy/do/hub-watch.test.sh
+# Exercises hub-watch.sh against a stubbed curl (two failed probes, the
+# down-detection retry, then a recovery) and checks the state file and the
+# Telegram send text. Run: sh deploy/do/hub-watch.test.sh
 set -eu
 
 dir=$(mktemp -d)
@@ -18,7 +19,7 @@ case "\$*" in
 		[ -f "$dir/health_calls" ] && n=\$(cat "$dir/health_calls")
 		n=\$((n + 1))
 		echo "\$n" > "$dir/health_calls"
-		[ "\$n" -eq 1 ] && printf '000' || printf '200'
+		[ "\$n" -le 2 ] && printf '000' || printf '200'
 		;;
 esac
 STUB
@@ -28,13 +29,14 @@ script_dir=$(dirname -- "$0")
 
 PATH="$dir/bin:$PATH"
 export PATH
+export ENV_FILE=/dev/null
 export STATE_DIR="$dir/state"
 export HUB_UPSTREAM="127.0.0.1:1"
 export HUB_DOMAIN="test.example"
 export TELEGRAM_BOT_TOKEN="test-token"
 export TELEGRAM_CHAT_ID="12345"
 
-# Run 1: curl reports down (000) -> first-ever transition (default "up" -> "down").
+# Run 1: both probes fail (000, 000) -> first-ever transition ("up" -> "down").
 sh "$script_dir/hub-watch.sh"
 state1=$(cat "$dir/state/state")
 case "$state1" in
@@ -43,7 +45,7 @@ case "$state1" in
 esac
 grep -q "not answering" "$dir/telegram_calls" || { echo "FAIL: expected a down alert after run 1" >&2; exit 1; }
 
-# Run 2: curl reports up (200) -> transition back.
+# Run 2: probe succeeds (200) -> transition back.
 sh "$script_dir/hub-watch.sh"
 state2=$(cat "$dir/state/state")
 case "$state2" in

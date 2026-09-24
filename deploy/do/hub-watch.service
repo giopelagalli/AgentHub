@@ -4,5 +4,5 @@ Description=AgentHub hub watchdog
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/hub-watch.sh
-EnvironmentFile=/etc/agenthub-watch.env
+EnvironmentFile=-/etc/agenthub-watch.env
 StateDirectory=agenthub-watch

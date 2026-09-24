@@ -64,14 +64,23 @@
 		header_up X-Real-IP {remote_host}
 	}
 
-	# The Spark off, unreachable, or the hub itself down: serve the offline
-	# page instead of a bare 502. Status 503 (not 200) so monitors and
-	# browsers both see this as an outage.
+	# Caddy raises 502/503/504 itself when it can't reach the upstream (dial
+	# failure, timeout, no healthy upstream) — not a status the hub returned
+	# on its own. Machine paths get a bare 503; everything else gets the
+	# offline page, also 503 so monitors and browsers both see an outage,
+	# not a live 200. `route` keeps this in the order written: Caddy's
+	# default directive sort would otherwise run the unconditional rewrite
+	# before the matched respond, so @machine would never see its own path.
 	handle_errors 502 503 504 {
-		root * /etc/caddy/site
-		rewrite * /offline.html
-		file_server {
-			status 503
+		route {
+			@machine path /api/* /install.sh /install/* /v1/*
+			respond @machine "hub unavailable" 503
+
+			root * /etc/caddy/site
+			rewrite * /offline.html
+			file_server {
+				status 503
+			}
 		}
 	}
 

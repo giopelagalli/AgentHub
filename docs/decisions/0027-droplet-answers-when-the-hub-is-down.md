@@ -31,4 +31,6 @@ holds one small piece of state (`agenthub-watch/state`) and one more secret (a T
 token) — acceptable, since both are cheap to lose or rotate and neither has tailnet reach beyond
 the one health-check GET the ACL (0025) already allows. The alert and the hub's own Telegram
 assistant use two different bots/tokens by design: the droplet's watchdog must keep working when
-the Spark, and everything on it, is unreachable.
+the Spark, and everything on it, is unreachable. A fresh install has no state file, so it assumes
+the prior state was up: a hub that is already down when the watchdog is installed alerts on the
+very first tick rather than the watchdog baselining silently.

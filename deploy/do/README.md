@@ -2,7 +2,8 @@
 
 The one machine in AgentHub with a public listener. It is a **stateless reverse
 proxy on the tailnet** (PRD §4): no database, no `data/`, no API keys, nothing
-that would hurt if the droplet were rebuilt from scratch on a Tuesday. It
+that would hurt if the droplet were rebuilt from scratch on a Tuesday — except
+one state file and, optionally, one bot token for the watchdog (§8). It
 terminates TLS for your domain, forces a second factor before anything is
 forwarded, and proxies to whichever machine is currently the control node,
 over Tailscale.
@@ -196,9 +197,11 @@ in that case, and trusting them lets anyone forge a client identity.
 ## 8. When the hub is down
 
 A visitor gets the offline page, not a bare 502: the `Caddyfile`'s `handle_errors` block catches
-502/503/504 from the upstream and serves `/etc/caddy/site/offline.html` with **status 503**, so
-browsers and uptime monitors both see an outage, not a live page. The page polls `/api/health`
-every 15 seconds and reloads itself once the hub answers again.
+the errors Caddy itself raises when it can't reach the upstream — dial failure, timeout, no
+healthy upstream — not a 502/503/504 the hub returned on its own, and serves
+`/etc/caddy/site/offline.html` with **status 503**, so browsers and uptime monitors both see an
+outage, not a live page. The page polls `/api/health` every 15 seconds and reloads itself once
+the hub answers again.
 
 A second, independent piece — `hub-watch.timer` — runs on the droplet every minute and messages
 Telegram on the down/up transition only (not on every check). It is the droplet's own alert, not

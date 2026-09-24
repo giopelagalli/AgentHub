@@ -247,6 +247,32 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
   return lines.join('\n');
 }
 
+/**
+ * The same assignment for a subagent running on an external harness (pi): the role, the standing
+ * instructions and the report contract, with nothing about the hub's own tool names — pi brings
+ * its own tools (read, edit, write, bash, …) and its own prompt describing them, and this text is
+ * appended to that rather than replacing it.
+ *
+ * The workspace rule is stated rather than enforced: an external harness runs with its working
+ * directory set to `workspace/` but nothing stops it walking out (decision 0031).
+ */
+export function piSubagentPrompt(role: SubagentRole, instructions?: string): string {
+  return [
+    `You are a ${role} working on one task for a project orchestrator.`,
+    ROLE_BRIEFS[role],
+    ``,
+    ...(instructions?.trim() ? [`# Your standing instructions`, instructions.trim(), ``] : []),
+    `- Your working directory is the project workspace. Stay inside it: never read or write a path`,
+    `  outside this directory, and never use an absolute path or \`~\`. The project bundle around it`,
+    `  — the charter, decision log, task board and briefings — belongs to the orchestrator; report`,
+    `  what should change there instead of changing it.`,
+    `- The task in the user message is the whole assignment. If it is ambiguous or looks wrong, say`,
+    `  so in your report instead of guessing.`,
+    `- Your final message is the only thing the orchestrator sees. Make it a short, concrete report:`,
+    `  what you did or found, and anything that blocked you.`,
+  ].join('\n');
+}
+
 // --- document personas ---------------------------------------------------------
 
 /**

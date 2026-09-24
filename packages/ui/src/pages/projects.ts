@@ -1,4 +1,4 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus, type UsageReport } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type HarnessInfo, type HarnessKind, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus, type UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
 import { AUTO_RUN_INTERVALS, autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../autorun.js';
@@ -199,6 +199,47 @@ function memberModelField(slug: string, member: TeamMemberView, catalog: ModelCa
       .then(() => toast(`${member.name} now runs on ${next ? policyPillText(next) : 'the project default'}.`))
       .catch((error: unknown) => {
         toast(`Could not set ${member.name}'s model: ${String(error)}`, 'error');
+        select.value = current;
+      });
+  });
+  field.appendChild(select);
+  return field;
+}
+
+/** What the Harness select calls each kind — the built-in loop has no product name of its own. */
+const HARNESS_LABELS: Record<HarnessKind, string> = {
+  builtin: 'Built-in loop',
+  pi: 'pi',
+  'claude-code': 'Claude Code',
+};
+
+/**
+ * The employee's Harness select, beside their Model one (FR-G4). Only harnesses this hub host can
+ * actually run are offered — a kind whose CLI is missing would only fail at turn time — so with
+ * nothing installed but the built-in loop there is no choice to make and the field is left out.
+ */
+function memberHarnessField(slug: string, member: TeamMemberView, harnesses: HarnessInfo[]): HTMLElement | null {
+  const offered = harnesses.filter((h) => h.available);
+  if (offered.length < 2) return null;
+  const field = el('label', 'field');
+  field.append(el('span', 'field__label', 'Harness'));
+  const select = el('select', 'select');
+  for (const harness of offered) {
+    const item = document.createElement('option');
+    item.value = harness.kind === 'builtin' ? '' : harness.kind;
+    item.textContent = harness.kind === 'builtin'
+      ? `${HARNESS_LABELS.builtin} (project default)`
+      : `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`;
+    select.appendChild(item);
+  }
+  const current = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
+  select.value = current;
+  select.addEventListener('change', () => {
+    const next = select.value ? (select.value as HarnessKind) : null;
+    void sendJson(`/api/projects/${slug}/team/${member.id}`, { harness: next }, 'PATCH')
+      .then(() => toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`))
+      .catch((error: unknown) => {
+        toast(`Could not set ${member.name}'s harness: ${String(error)}`, 'error');
         select.value = current;
       });
   });
@@ -463,6 +504,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   void getJson<ModelCatalog>('/api/models')
     .then((next) => { catalog = next; renderDetail(store.getState()); })
     .catch(() => { /* the picker still offers auto and local only */ });
+  /** Which harnesses this hub can run, fetched once per mount; until it answers, none are offered. */
+  let harnesses: HarnessInfo[] = [];
+  void getJson<HarnessInfo[]>('/api/harnesses')
+    .then((next) => { harnesses = next; })
+    .catch(() => { /* the drawer simply shows no Harness field */ });
   /** Why the employees tier is empty, when it is. */
   let rosterState: 'loading' | 'ready' | 'failed' = 'loading';
   let hiring = false;
@@ -616,6 +662,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     // turn events carry. The idle line behind it is the project's latest briefing for the manager,
     // and the member's latest work session for an employee.
     const member = card.kind === 'employee' ? roster?.members.find((m) => m.id === card.id) : undefined;
+    const harnessField = member ? memberHarnessField(slug, member, harnesses) : null;
     const now = { store, slug, who: card.id };
     const activity: ChatActivity | undefined = card.kind === 'manager'
       ? { kind: 'manager', briefingUrl: `/api/projects/${slug}`, now }
@@ -635,6 +682,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       onClose: onDrawerClosed,
       ...(activity ? { activity } : {}),
       ...(member ? { modelField: memberModelField(slug, member, catalog) } : {}),
+      ...(harnessField ? { harnessField } : {}),
     }));
   };
 

@@ -227,6 +227,8 @@ export interface ProjectManifest {
   index: string[]; // relative paths of bundle files
   /** Absent means `auto` — the hub-wide default of local first, cloud as overflow. */
   modelPolicy?: ModelPolicy;
+  /** The harness this project's employees run on unless their own `harness` says otherwise. */
+  harness?: HarnessKind;
   /** The owner's raw idea/PRD from `POST /api/projects`; kept so the drafter can be run later. */
   intake?: ProjectIntake;
   /** Unattended turns for this project. Absent means off: a turn is the hub's most expensive unit. */
@@ -552,6 +554,23 @@ export type TeamRole = (typeof TEAM_ROLES)[number];
 export const AVATARS = ['robot-cyan', 'robot-magenta', 'robot-amber', 'robot-violet', 'robot-green', 'robot-white'] as const;
 export type Avatar = (typeof AVATARS)[number];
 
+/**
+ * Which runtime executes an employee's task. `builtin` is the hub's own tool loop — the manager's
+ * runtime and the fallback for everyone. `pi` is the open-source coding agent (pi.dev) run as a
+ * subprocess in the workspace. `claude-code` is reserved for the third implementation (FR-G3).
+ */
+export const HARNESS_KINDS = ['builtin', 'pi', 'claude-code'] as const;
+export type HarnessKind = (typeof HARNESS_KINDS)[number];
+
+/** One entry of `GET /api/harnesses`: whether this hub host can actually run that harness today. */
+export interface HarnessInfo {
+  kind: HarnessKind;
+  /** `builtin` is always available; an external harness is available when its CLI is on PATH. */
+  available: boolean;
+  /** What the CLI reports for `--version`; absent when it is not installed. */
+  version?: string;
+}
+
 /** One employee on a project's roster, stored in the bundle's `team.yaml`. */
 export interface TeamMember {
   /** Slug-ish, unique within the project; generated from the role (`coder-1`). */
@@ -563,6 +582,11 @@ export interface TeamMember {
   instructions?: string;
   /** Overrides the project's `modelPolicy` for this employee's tasks; absent = project default. */
   model?: ModelPolicy;
+  /**
+   * Which harness runs this employee's tasks; absent falls back to `manifest.harness`, and absent
+   * on both means `builtin`. A kind the hub host cannot run falls back to `builtin` at run time.
+   */
+  harness?: HarnessKind;
   createdAt: number;
 }
 

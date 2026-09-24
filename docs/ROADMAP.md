@@ -30,6 +30,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
   milestone and a pull request the owner opens (0028–0030).
 
+- The pi spike and the `Harness` interface: pi verified drivable headlessly against a custom
+  OpenAI endpoint, `agents/harness/` with `builtin` (unchanged) and `pi`, a **Harness** select per
+  employee offered only when the CLI is on the host, `GET /api/harnesses` (FR-G1, G2, G4;
+  0031, 0032).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -41,8 +46,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    Silicon 48 GB); the hub's OpenAI-compatible door (FR-D6).
 2. Workbench: preview proxy, terminal, Code screen with the Guide chat, Code map and Tour
    (FR-B1–B7).
-3. Harnesses: the pi spike, then `pi` as the default employee harness and `claude-code` as an
-   option (0013).
+3. Harnesses, the rest: pi through the hub's own door (so failover and the usage ledger come back,
+   0032), workspace containment so pi can become the default and the reviewer can leave `builtin`
+   (0031), a project-level Harness select in the header, `claude-code` (FR-G3), and the installer
+   putting pi on a node.
 4. JD drives the hub; the web door (FR-C1–C5).
 5. Media on the 7900 XTX (FR-E1–E4).
 6. Browser pool (FR-D8).

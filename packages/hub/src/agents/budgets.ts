@@ -7,6 +7,12 @@ export const ORCHESTRATOR_TOOL_CALLS = 40;
 /** Tool calls an orchestrator turn keeps in reserve at the end, so it notices and publishes a briefing. */
 export const BRIEFING_RESERVE = 5;
 export const SUBAGENT_TOOL_CALLS = 25;
+/**
+ * The backstop an external harness gets on top of the tool-call budget: a subprocess that stalls
+ * without calling anything would otherwise sit there until the turn's own 45-minute limit. Well
+ * inside that, so a stuck employee still leaves the turn room to notice and report.
+ */
+export const HARNESS_WALL_CLOCK_MS = 20 * 60 * 1000;
 export const ASSISTANT_TOOL_CALLS = 8;
 export const MASTER_COMMAND_TOOL_CALLS = 8;
 export const CHAT_TOOL_CALLS = 6;

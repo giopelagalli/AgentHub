@@ -73,6 +73,19 @@ model and by subject for the UI) and `cloudUsdSince`, which the daily cap
 and no negative one), `budgets.ts`, `transcript.ts`. The built-in loop is the manager's runtime
 and the fallback harness (0013).
 
+**`agents/harness/`** — where an employee's task actually runs. `Harness.run(task, ctx)` takes one
+assignment (workspace, task, role, instructions, endpoint, tool policy, budget, signal) and returns
+a report, the files written and an outcome, emitting the run's `TurnEvent`s through `ctx.onEvent` —
+so the Activity feed and the employee drawer look the same whichever runtime produced them (FR-G1).
+`builtin.ts` is the existing `loop.run` path, unchanged and the default. `pi.ts` spawns the pi CLI
+(pi.dev) in the workspace with `-p --mode json`, maps its JSON Lines events onto ours, collects the
+files its `write`/`edit` calls named, enforces the tool-call budget pi has no limit of its own for,
+and kills the process group on abort (0031). `select.ts` picks the harness — the member's, else the
+project's, else `builtin` — and resolves the model endpoint a subprocess needs (0032); every reason
+a choice cannot be honoured falls back to `builtin` with a line in the job log. `detect.ts` is
+"is the CLI on PATH", which `routes.ts` serves as `GET /api/harnesses`. The reviewer stays on
+`builtin` (FR-G4).
+
 **`projects/`** — `bundle.ts` (a git repo per project: manifest, PRD, roadmap, docs, decisions,
 team, briefings, workspace), `prd.ts` (twelve fixed sections, the audit score, the drafter and
 roadmap generator), `roadmap.ts`, `digest.ts` (a bounded workspace digest for turn continuity),

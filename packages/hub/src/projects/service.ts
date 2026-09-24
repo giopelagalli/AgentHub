@@ -10,7 +10,7 @@ import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import { ProjectBundle } from './bundle.js';
-import { pushBranchFor, type Github } from './github.js';
+import { assertPushable, pushBranchFor, type Github } from './github.js';
 import { ProjectOrchestrator } from './orchestrator.js';
 import { isPrdScaffold } from './prd.js';
 import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
@@ -180,10 +180,14 @@ export class ProjectService {
     try {
       await bundle.clearWorkspaceScaffold();
       const { branch, commit } = await github.clone(ref, init.source.branch, bundle.workspace);
-      await bundle.setSource({
-        kind: 'github', owner: ref.owner, repo: ref.repo, branch,
+      const source = {
+        kind: 'github' as const, owner: ref.owner, repo: ref.repo, branch,
         importedCommit: commit, pushBranch: pushBranchFor(init.slug),
-      });
+      };
+      await bundle.setSource(source);
+      // Checked here rather than only at the first push: a repository whose branch is literally
+      // `agenthub/<slug>` can never be written back, and the owner should hear that on import.
+      assertPushable(source);
       await bundle.commit(`chore: import ${ref.owner}/${ref.repo}@${branch}`);
     } catch (err) {
       this.bundles.delete(init.slug);

@@ -29,21 +29,58 @@ nothing below `tokenFor` knows the difference.
 
 ## Decision
 `packages/hub/src/projects/github.ts` is the only module that sees a token. It builds git's
-environment itself: every inherited `GIT_*` variable is dropped (an inherited `GIT_DIR` would
-redirect the command; `EDITOR`/`GIT_ASKPASS`/`PAGER` name programs git would run), `GIT_TERMINAL_PROMPT=0`
-so a repository we cannot see fails instead of waiting, the committer identity is set by environment
-rather than written into the owner's clone, and the token — when `tokenFor` returns one — becomes a
-single `http.extraHeader` config entry. simple-git blocks `GIT_CONFIG_COUNT` by default because an
-*inherited* one lets someone else configure git; `allowUnsafeConfigEnvCount` is enabled here because
-the inherited environment is stripped first and this is the only config git sees.
+environment itself:
+
+- Every inherited `GIT_*` variable is dropped (an inherited `GIT_DIR` would redirect the command),
+  along with `EDITOR`/`VISUAL`/`PAGER`/`SSH_ASKPASS`, which name programs git would run.
+- `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_GLOBAL=/dev/null`, so neither `/etc/gitconfig` nor
+  `~/.gitconfig` can add an `insteadOf` rewrite, a proxy or a credential helper to a command that is
+  carrying the token.
+- `core.hooksPath=/dev/null`, plus `--no-verify` on commit and push: `.git/hooks` lives inside the
+  workspace, which agents write, and a hook runs in this process's environment.
+- `GIT_TERMINAL_PROMPT=0` so a repository we cannot see fails instead of waiting, and the committer
+  identity by environment rather than written into the owner's clone.
+- The token, when `tokenFor` returns one, as an `http.<cloneBase>/.extraHeader` config entry —
+  scoped to the host, not a bare `http.extraHeader`, because the clone's `origin` URL is
+  agent-writable and an unscoped header goes wherever the remote points. Pushes name the URL
+  outright for the same reason (0030).
+
+simple-git blocks three of these by default because they are how *someone else's* environment
+configures git; `allowUnsafeConfigEnvCount`, `allowUnsafeConfigPaths` and `allowUnsafeHooksPath` are
+enabled here because each one is used to take configuration *away*, after the inherited git
+environment has been stripped.
 
 `GET /api/github/status` answers `{ configured, method: 'token' | 'none' }` — never the token — so
 the UI can add `'app'` without a new route.
 
+## Correction (security review, 2026-09-24)
+This record originally claimed the token was "in the hub process's environment and nowhere else".
+That was wrong, and in the most important direction: `runShellTask` spawned every agent command with
+`{ ...process.env }`, so `run_shell` and the milestone's own test command could read `GITHUB_TOKEN`
+and push to the owner's default branch themselves. Being in the hub's environment is exactly what
+made it reachable.
+
+The fix is `secretsStripped()` in `@agenthub/shared/shell`: an allow-nothing list of the hub's
+credentials (`GITHUB_TOKEN`, the model provider keys, `HUB_PASSWORD`, `HUB_SESSION_SECRET`,
+`DAEMON_TOKEN`, `TELEGRAM_BOT_TOKEN`, the search keys, `GITHUB_APP_*`) removed from the environment
+handed to `runShellTask`. Every path that runs a command on an agent's behalf passes it: `run_shell`
+(`agents/tools.ts`), the verify command (`agents/verify.ts`) and the daemon's `shell-task` job
+runner, which on a control node is started from the same environment as the hub.
+
 ## Consequences
-The token is in the hub process's environment and nowhere else: not in argv, not in a file, not in
-the project bundle, not on the wire to the UI. Swapping in a GitHub App is one new
-`GithubCredentials` implementation plus a new `method` value. The cost is that this module cannot
-use the shared `simpleGit(dir)` helper the bundle uses — it constructs its own client with the
-`unsafe` flag — and the `allowUnsafeConfigEnvCount` opt-out has to stay correct: if anything ever
-stops stripping the inherited `GIT_*` variables, that flag becomes a real hole.
+The token is in the hub process's environment, and the hub is responsible for keeping it out of
+every child it spawns — which is a standing obligation, not a property of this module. Anything that
+adds a new way to run a command on an agent's behalf has to pass `secretsStripped()`; a test asserts
+`run_shell` of `printenv GITHUB_TOKEN` comes back empty while the hub holds one.
+
+It is not in argv, not in a file, not in the project bundle, and not on the wire to the UI. Two
+further leaks are closed here rather than left implicit: simple-git logs each spawn — argv and the
+environment it was given — through `debug`, so `packages/hub/src/debug-guard.ts` appends
+`-simple-git,-simple-git:*` to `DEBUG` and `main.ts` imports it first (`debug` fixes a namespace's
+enablement when the logger is created, so the order matters and is commented at both ends).
+
+Swapping in a GitHub App is one new `GithubCredentials` implementation plus a new `method` value.
+The cost is that this module cannot use the shared `simpleGit(dir)` helper the bundle uses — it
+constructs its own client with the `unsafe` flags — and those opt-outs only stay honest while the
+inherited git environment is stripped first. If that stripping ever goes, the flags become real
+holes.

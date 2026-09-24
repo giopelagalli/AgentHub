@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Milestone, MilestoneVerification } from '@agenthub/shared';
-import { runShellTask } from '@agenthub/shared/shell';
+import { runShellTask, secretsStripped } from '@agenthub/shared/shell';
 import type { ProjectBundle } from '../projects/bundle.js';
 import type { Github } from '../projects/github.js';
 import { patchMilestone } from '../projects/roadmap.js';
@@ -49,7 +49,9 @@ async function runTests(bundle: ProjectBundle, ctx: ToolContext): Promise<TestRu
   if (!command) return { status: 'skipped', label: 'no test command found', tail: '' };
   const result = await runShellTask(
     { cmd: command.cmd, timeoutMs: VERIFY_TIMEOUT_MS },
-    { workspaceRoot: bundle.workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
+    // The verify command is the project's own `npm test` (or `manifest.verifyCmd`): code agents
+    // wrote, run on the hub. It gets the same credential-free environment `run_shell` does.
+    { workspaceRoot: bundle.workspace, project: '.', onLine: ctx.log, signal: ctx.signal, env: secretsStripped() },
   );
   const passed = result.exitCode === 0 && !result.timedOut && !result.signal;
   const ending = result.timedOut ? `timed out after ${VERIFY_TIMEOUT_MS}ms` : `exit ${result.exitCode ?? `killed (${result.signal})`}`;

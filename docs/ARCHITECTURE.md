@@ -86,8 +86,12 @@ clones a repository into a project's `workspace/`, pushes `agenthub/<slug>` afte
 milestone, and opens the pull request the owner merges; `assertPushable` refuses, in code, to push
 anything to the repository's own branch (0030). The token comes from a `GithubCredentials`
 (`tokenFor(owner, repo)`) — one personal access token today, an App installation's short-lived
-token next — and reaches git as a per-invocation `http.extraHeader` through `GIT_CONFIG_*`, never in
-a remote URL and never in argv, with the whole inherited git environment stripped first (0028).
+token next — and reaches git as a per-invocation `http.<host>.extraHeader` through `GIT_CONFIG_*`,
+never in a remote URL and never in argv, with the whole inherited git environment stripped first,
+system and global config switched off, and hooks disabled, because the clone is a directory agents
+write (0028). Pushes name the computed URL rather than `origin` for the same reason. The token is
+also kept out of every child the hub spawns: `secretsStripped()` in `@agenthub/shared/shell` is what
+`run_shell`, the verify command and the daemon's shell-task runner hand `runShellTask`.
 `ProjectService.create` drives the clone on the request's own path and removes the half-made bundle
 if it fails; `PrdDrafter` reads the clone so the PRD describes the product that exists (0029);
 `GET /api/github/status` answers `{ configured, method }` and never the token. The workspace is a

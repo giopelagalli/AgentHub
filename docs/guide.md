@@ -104,8 +104,14 @@ to the repository line: it opens a pull request from `agenthub/<slug>` into the 
 imported, and then links to it. Pressing it again after a later milestone finds the same pull
 request rather than opening a second one. Merging is yours.
 
-A push that fails (no token, network, permissions) never un-does the milestone: it is recorded in
-the decision log and in the turn's Activity feed, and the next verified milestone tries again.
+The commit leaves out `.env*`, `*.pem` and `*.key` wherever they are in the workspace — agents
+write those while wiring things up and they are not yours to publish. That is a rule of thumb, not
+a guarantee: read the pull request. It also means a `.env.example` or a test fixture named `*.key`
+stays behind, and you commit it yourself if you want it.
+
+A push that fails (no token, network, permissions, or somebody rewrote `agenthub/<slug>`) never
+un-does the milestone: it is recorded in the decision log and in the turn's Activity feed, and the
+next verified milestone tries again.
 
 ## Turns
 

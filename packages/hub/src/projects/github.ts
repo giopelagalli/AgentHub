@@ -50,6 +50,8 @@ export interface GithubOptions {
   /** Test seam for the REST calls; defaults to the global `fetch`. */
   fetch?: typeof fetch;
   apiBase?: string;
+  /** Test seam: every git invocation's argv, so a test can assert no secret ever reaches it. */
+  onGitArgs?: (args: string[]) => void;
 }
 
 /** What went wrong, classified enough for a route to pick a status code. */
@@ -117,6 +119,9 @@ function isAuthFailure(message: string): boolean {
   return AUTH_HINTS.some((hint) => lower.includes(hint));
 }
 
+/** simple-git killed the command because it produced no output for `timeout.block`. */
+const isBlockTimeout = (err: unknown): boolean => /block timeout reached/i.test(gitOutput(err));
+
 /**
  * The identity the hub commits a milestone's work under. The clone is the owner's repository, so
  * nothing is written into its `.git/config`; these travel per invocation instead.
@@ -132,24 +137,53 @@ const COMMITTER_ENV = {
 const GIT_CONFIGURING_ENV = new Set(['EDITOR', 'VISUAL', 'PAGER', 'SSH_ASKPASS', 'PREFIX']);
 
 /**
- * simple-git refuses `GIT_CONFIG_COUNT` by default, because an *inherited* one lets someone else's
- * environment configure git. Here it is the opposite: the whole inherited git environment is
- * stripped above and this is the only config git sees, which is exactly how the token stays out of
- * `.git/config` and out of the command line (0028).
+ * simple-git refuses these three by default because they are how *someone else's* environment
+ * configures git. Every one of them is used here to take configuration away, not to add it: the
+ * whole inherited git environment is stripped first, and what remains is the only config git sees.
+ *
+ * - `allowUnsafeConfigEnvCount` — `GIT_CONFIG_COUNT`, which carries the token's `http.extraHeader`
+ *   and the hooks-path below. It is what keeps the token out of `.git/config` and out of argv.
+ * - `allowUnsafeConfigPaths` — `GIT_CONFIG_GLOBAL=/dev/null`, so `~/.gitconfig` cannot inject an
+ *   `insteadOf` rewrite, a proxy or a credential helper into a command carrying the token.
+ * - `allowUnsafeHooksPath` — `core.hooksPath=/dev/null`, so nothing in the cloned repository's
+ *   `.git/hooks` (which agents can write) runs with the token in its environment (0028).
  */
-const UNSAFE_ALLOWED = { allowUnsafeConfigEnvCount: true } as const;
+const UNSAFE_ALLOWED = {
+  allowUnsafeConfigEnvCount: true,
+  allowUnsafeConfigPaths: true,
+  allowUnsafeHooksPath: true,
+} as const;
+
+/** How long a single git invocation may go without output before it is killed. */
+const GIT_BLOCK_TIMEOUT_MS = 120_000;
+
+/**
+ * Held out of a milestone's commit. A workspace is where agents wire things up, and a `.env` or a
+ * private key they wrote to get something running is not what the owner asked to have pushed to
+ * their repository. `:(glob,exclude)**\/x` excludes `x` at any depth, the root included.
+ *
+ * It is a convention, not a classifier: a secret under another name still goes (see 0030), and a
+ * tracked `.env.example` is held back with the rest.
+ */
+const COMMIT_EXCLUDES = [
+  ':(glob,exclude)**/.env*',
+  ':(glob,exclude)**/*.pem',
+  ':(glob,exclude)**/*.key',
+];
 
 export class Github {
   private readonly credentials: GithubCredentials | undefined;
   private readonly cloneBase: string;
   private readonly apiBase: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly onGitArgs: ((args: string[]) => void) | undefined;
 
   constructor(opts: GithubOptions = {}) {
     this.credentials = opts.credentials;
     this.cloneBase = opts.cloneBase ?? GITHUB_CLONE_BASE;
     this.apiBase = opts.apiBase ?? GITHUB_API_BASE;
     this.fetchImpl = opts.fetch ?? fetch;
+    this.onGitArgs = opts.onGitArgs;
   }
 
   /** What `GET /api/github/status` answers: whether a private repository can be reached at all. */
@@ -171,6 +205,11 @@ export class Github {
    * (inside the project workspace agents can read), and `-c` puts the secret in the process's
    * command line, which any user on the box can read. Per-invocation config from the environment is
    * neither persisted nor listed by `ps` (0028).
+   *
+   * The header is scoped to `cloneBase` — `http.https://github.com/.extraHeader`, not a bare
+   * `http.extraHeader` — because the clone's `origin` URL lives in `workspace/.git/config`, which
+   * agents can write. An unscoped header would be sent to whatever host a rewritten remote named.
+   * (Pushes name the URL outright for the same reason; see `pushWorkspace`.)
    */
   private async gitEnv(ref: GithubRepoRef): Promise<Record<string, string>> {
     // Everything the process has *except* anything that configures git. `GIT_DIR`/`GIT_WORK_TREE`
@@ -187,20 +226,37 @@ export class Github {
       ...COMMITTER_ENV,
       // Never sit waiting for a username on a repository we cannot see: fail, and say so.
       GIT_TERMINAL_PROMPT: '0',
+      // Neither `/etc/gitconfig` nor `~/.gitconfig` may add an `insteadOf` rewrite, a proxy, a
+      // credential helper or a hook template to a command that is carrying the owner's token.
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null',
     };
+    // `.git/hooks` lives in the workspace, which agents write. A hook fires on commit, on push and
+    // on checkout, in this process's environment — so hooks are off for everything this module runs.
+    const config: [string, string][] = [['core.hooksPath', '/dev/null']];
     const token = await this.credentials?.tokenFor(ref.owner, ref.repo);
     if (token) {
       const basic = Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64');
-      env.GIT_CONFIG_COUNT = '1';
-      env.GIT_CONFIG_KEY_0 = 'http.extraHeader';
-      env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${basic}`;
+      config.push([`http.${this.cloneBase}/.extraHeader`, `Authorization: Basic ${basic}`]);
     }
+    env.GIT_CONFIG_COUNT = String(config.length);
+    config.forEach(([key, value], i) => {
+      env[`GIT_CONFIG_KEY_${i}`] = key;
+      env[`GIT_CONFIG_VALUE_${i}`] = value;
+    });
     return env;
   }
 
   private async git(ref: GithubRepoRef, cwd?: string): Promise<SimpleGit> {
-    return simpleGit({ ...(cwd ? { baseDir: cwd } : {}), unsafe: { ...UNSAFE_ALLOWED } })
-      .env(await this.gitEnv(ref));
+    const git = simpleGit({
+      ...(cwd ? { baseDir: cwd } : {}),
+      unsafe: { ...UNSAFE_ALLOWED },
+      // A clone that stalls must not hold the creating request open forever.
+      timeout: { block: GIT_BLOCK_TIMEOUT_MS },
+    }).env(await this.gitEnv(ref));
+    // The argv of every command this module runs, for the test that asserts no secret is in it.
+    const onArgs = this.onGitArgs;
+    return onArgs ? git.outputHandler((_cmd, _out, _err, args) => onArgs(args)) : git;
   }
 
   /**
@@ -215,6 +271,12 @@ export class Github {
       await git.clone(this.remote(ref), into, branch ? ['--branch', branch] : []);
     } catch (err) {
       const line = firstLine(err);
+      if (isBlockTimeout(err)) {
+        throw new GithubError(
+          `${ref.owner}/${ref.repo} stopped responding after ${GIT_BLOCK_TIMEOUT_MS / 1000}s; the clone was abandoned`,
+          'clone',
+        );
+      }
       // Classified on everything git said, not just the line shown: the reason can arrive as a
       // `remote:` line above the `fatal:` one.
       if (isAuthFailure(gitOutput(err))) {
@@ -238,30 +300,32 @@ export class Github {
 
   /**
    * Commits whatever the milestone left in the workspace and pushes it to `source.pushBranch`.
-   * Returns false when there was nothing to commit and nothing new to push.
    *
-   * The push is an ordinary one — the branch is the hub's, so a normal push is the honest default —
-   * and only falls back to `--force-with-lease` when the remote's copy has diverged, which for a
-   * branch nobody else writes means a previous push we lost track of.
+   * The destination is the URL this module computes, never the symbolic `origin`: `origin`'s URL
+   * lives in `workspace/.git/config`, which agents can write, so pushing to it would let a rewritten
+   * remote decide where the owner's code — and the header carrying their token — is sent.
+   *
+   * The push is an ordinary one and stays one. `agenthub/<slug>` is the hub's own branch, so a
+   * diverged remote copy means somebody else rewrote it; that is reported rather than forced over
+   * (0030). `--no-verify` and `core.hooksPath` both keep the repository's hooks out of it.
    */
-  async pushWorkspace(workspace: string, source: ProjectSource, message: string): Promise<boolean> {
+  async pushWorkspace(workspace: string, source: ProjectSource, message: string): Promise<void> {
     assertPushable(source);
     if (!this.credentials) throw new GithubError('no GitHub token configured on the hub', 'config');
     const git = await this.git(source, workspace);
     try {
-      await git.add(['-A']);
-      const status = await git.status();
-      if (status.staged.length > 0) await git.commit(message);
-      const spec = `HEAD:refs/heads/${source.pushBranch}`;
-      try {
-        await git.push(['origin', spec]);
-      } catch (err) {
-        const line = firstLine(err);
-        if (!/non-fast-forward|fetch first|rejected/i.test(line)) throw err;
-        await git.push(['--force-with-lease', 'origin', spec]);
-      }
-      return true;
+      // Everything the milestone produced except files that are credentials by convention: an agent
+      // that wrote a `.env` while wiring something up must not have it published to the owner's
+      // repository by the next verified milestone.
+      await git.raw(['add', '-A', '--', '.', ...COMMIT_EXCLUDES]);
+      // `status.staged` misses a rename, so what is staged is read from the index itself.
+      const staged = (await git.raw(['diff', '--cached', '--name-only'])).trim();
+      if (staged) await git.raw(['commit', '--no-verify', '-m', message]);
+      await git.raw(['push', '--no-verify', this.remote(source), `HEAD:refs/heads/${source.pushBranch}`]);
     } catch (err) {
+      if (isBlockTimeout(err)) {
+        throw new GithubError(`${source.owner}/${source.repo} stopped responding; the push was abandoned`, 'push');
+      }
       throw new GithubError(firstLine(err), 'push');
     }
   }

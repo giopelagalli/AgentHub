@@ -1,19 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { dump, load } from 'js-yaml';
 import { simpleGit } from 'simple-git';
 import type { ProjectSource, TurnEvent } from '@agenthub/shared';
+import { secretsStripped } from '@agenthub/shared/shell';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
 import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
-import type { ToolContext } from '../src/agents/tools.js';
+import { workspaceTools, type ToolContext } from '../src/agents/tools.js';
 import { completeMilestoneTool } from '../src/agents/verify.js';
 import type { ProjectBundle } from '../src/projects/bundle.js';
 import { assertPushable, Github, PatCredentials } from '../src/projects/github.js';
@@ -303,6 +304,146 @@ describe('writing a verified milestone back', () => {
     await expect(localGithub().pushWorkspace(bundle.workspace, trunk, 'nope')).rejects.toThrow(/refusing to push/);
     // main still points where it did: nothing reached it.
     expect(await simpleGit(bare).raw(['show', '--name-only', '--format=%s', 'main'])).toContain('initial');
+  });
+});
+
+describe('the token stays inside the hub', () => {
+  const TOKEN = 'ghp_a_real_looking_secret';
+
+  /** Sets `GITHUB_TOKEN` for one test and puts the environment back afterwards. */
+  async function withToken(fn: () => Promise<void>): Promise<void> {
+    const before = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = TOKEN;
+    try {
+      await fn();
+    } finally {
+      if (before === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = before;
+    }
+  }
+
+  it('is not in the environment of a command an agent runs', async () => {
+    await withToken(async () => {
+      makeHub({ token: TOKEN });
+      expect((await importProject('acme/portal')).statusCode).toBe(201);
+      const bundle = await hub!.projects.get('portal');
+      const runShell = workspaceTools().find((t) => t.def.name === 'run_shell')!;
+      const ctx: ToolContext = { bundle, sessionId: 0, log: () => {} };
+
+      // The hub process really is holding it; what follows is about what the child inherits.
+      expect(process.env.GITHUB_TOKEN).toBe(TOKEN);
+      expect(secretsStripped().GITHUB_TOKEN).toBeUndefined();
+      expect(secretsStripped().PATH).toBe(process.env.PATH);
+
+      // `printenv NAME` exits 1 and prints nothing when the variable is not set.
+      const secret = await runShell.run({ cmd: ['printenv', 'GITHUB_TOKEN'] }, ctx);
+      expect(secret).not.toContain(TOKEN);
+      expect(secret).toContain('exit: 1');
+      // The shell is stripped of credentials, not of its environment: a build still has its PATH.
+      expect(await runShell.run({ cmd: ['printenv', 'PATH'] }, ctx)).toContain('exit: 0');
+    });
+  });
+
+  it('is never in git\'s argv, and leaves nothing behind in the clone', async () => {
+    const argv: string[][] = [];
+    const github = new Github({
+      credentials: new PatCredentials(TOKEN), cloneBase: `file://${origin}`, onGitArgs: (a) => argv.push(a),
+    });
+    const into = join(await mkdtemp(join(tmpdir(), 'agenthub-import-cred-')), 'clone');
+    await github.clone({ owner: OWNER, repo: REPO }, undefined, into);
+
+    expect(argv.length).toBeGreaterThan(0);
+    const flat = argv.flat().join(' ');
+    expect(flat).not.toContain(TOKEN);
+    expect(flat.toLowerCase()).not.toContain('extraheader');
+    expect(flat.toLowerCase()).not.toContain('authorization');
+
+    // Nor in the repository the agents get to read and write.
+    const config = await readFile(join(into, '.git', 'config'), 'utf8');
+    expect(config).not.toContain(TOKEN);
+    expect(config.toLowerCase()).not.toContain('extraheader');
+    await rm(into, { recursive: true, force: true });
+  });
+
+  it('is not sent to a remote an agent rewrote', async () => {
+    makeHub();
+    expect((await importProject('acme/portal')).statusCode).toBe(201);
+    const bundle = await readyForMilestone();
+    await writeFile(join(bundle.workspace, 'sso.js'), '// single sign-on\n', 'utf8');
+
+    // `origin` lives in workspace/.git/config, which agents can write. Point it somewhere else.
+    const decoy = join(origin, OWNER, 'decoy.git');
+    await simpleGit().raw(['init', '--bare', decoy]);
+    await simpleGit(bundle.workspace).raw(['remote', 'set-url', 'origin', `file://${decoy}`]);
+
+    await complete(bundle, localGithub());
+    expect(await simpleGit(bare).raw(['branch', '--list'])).toContain('agenthub/portal');
+    expect(await simpleGit(decoy).raw(['branch', '--list'])).not.toContain('agenthub/portal');
+  });
+
+  it('does not run hooks the repository carries', async () => {
+    makeHub();
+    expect((await importProject('acme/portal')).statusCode).toBe(201);
+    const bundle = await readyForMilestone();
+    await writeFile(join(bundle.workspace, 'sso.js'), '// single sign-on\n', 'utf8');
+
+    const marker = join(origin, 'hook-ran');
+    for (const hook of ['pre-commit', 'pre-push', 'post-checkout']) {
+      await writeFile(join(bundle.workspace, '.git', 'hooks', hook), `#!/bin/sh\necho ran > ${marker}\n`, { mode: 0o755 });
+    }
+
+    await complete(bundle, localGithub());
+    expect(await simpleGit(bare).raw(['branch', '--list'])).toContain('agenthub/portal');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('keeps a .env or a private key out of what it pushes', async () => {
+    makeHub();
+    expect((await importProject('acme/portal')).statusCode).toBe(201);
+    const bundle = await readyForMilestone();
+    await writeFile(join(bundle.workspace, 'sso.js'), '// single sign-on\n', 'utf8');
+    await writeFile(join(bundle.workspace, '.env'), 'GITHUB_TOKEN=leaked\n', 'utf8');
+    await writeFile(join(bundle.workspace, 'server.key'), 'a private key\n', 'utf8');
+    await mkdir(join(bundle.workspace, 'deploy'), { recursive: true });
+    await writeFile(join(bundle.workspace, 'deploy', '.env.production'), 'SECRET=1\n', 'utf8');
+    await writeFile(join(bundle.workspace, 'deploy', 'tls.pem'), 'a certificate\n', 'utf8');
+
+    await complete(bundle, localGithub());
+    const pushed = await simpleGit(bare).raw(['ls-tree', '-r', '--name-only', 'agenthub/portal']);
+    expect(pushed).toContain('sso.js');
+    expect(pushed).not.toContain('.env');
+    expect(pushed).not.toContain('.key');
+    expect(pushed).not.toContain('.pem');
+  });
+
+  it('commits a milestone that only renamed a file', async () => {
+    makeHub();
+    expect((await importProject('acme/portal')).statusCode).toBe(201);
+    const bundle = await readyForMilestone();
+    // Nothing but a rename: what `git status` reports as R, which is not "staged" to simple-git.
+    await rename(join(bundle.workspace, 'index.js'), join(bundle.workspace, 'entry.js'));
+
+    await complete(bundle, localGithub());
+    const pushed = await simpleGit(bare).raw(['ls-tree', '-r', '--name-only', 'agenthub/portal']);
+    expect(pushed).toContain('entry.js');
+    expect(pushed).not.toContain('index.js');
+  });
+
+  it('refuses at import when the repository\'s own branch is the one we would push', async () => {
+    // A repository whose default branch is already `agenthub/<slug>`: there is nowhere to write to.
+    const trunk = join(origin, OWNER, 'trunk.git');
+    await simpleGit().raw(['init', '--bare', trunk]);
+    await simpleGit(trunk).raw(['symbolic-ref', 'HEAD', 'refs/heads/agenthub/trunk']);
+    await simpleGit(bare).raw(['push', trunk, 'main:refs/heads/agenthub/trunk']);
+
+    makeHub();
+    const res = await app().inject({
+      method: 'POST', url: '/api/projects',
+      payload: { slug: 'trunk', title: 'Trunk', intent: 'x', source: { url: 'acme/trunk' } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatch(/refusing to push/);
+    expect(existsSync(join(root, 'trunk'))).toBe(false);
   });
 });
 

@@ -36,12 +36,24 @@ without a browser.
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon` or `owner` by an explicit table; unknown routes deny. Daemon routes declare the
-node they are about so a node token cannot act for another node (0016). Login throttling per IP.
+`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. Daemon routes
+declare the node they are about so a node token cannot act for another node (0016). Login
+throttling per IP.
+
+**`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
+stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
+mints, `GET` lists, `DELETE` revokes. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
+`agenthub/worker`) and `POST /v1/chat/completions` turns the OpenAI wire shape into
+`ChatMessage[]`/`ToolDef[]`, hands it to the gateway, and turns the `ChatResult` back — streaming
+(SSE, with usage in the final chunk on request) or not. The token's `kind` picks the vLLM priority
+(0020, 0032) and its label becomes the ledger's subject, so an outside client costs and caps like a
+project turn (0031). Bad bearers meet login's throttle. It is registered in `server.ts` with one
+line and is the only route family outside `/api/` that is guarded.
 
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
-marks unhealthy endpoints, sends per-endpoint `priority` and `requestExtras` (0006, 0008),
+marks unhealthy endpoints, sends per-endpoint `priority` — or a caller's per-request
+`priorityOverride` (0032) — and `requestExtras` (0006, 0008),
 refuses switched-off models and cloud past the spend cap (0002, 0019, 0024). It is the only place
 a model is ever called, and it prices each request as it finishes.
 

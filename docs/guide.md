@@ -241,6 +241,48 @@ node in place; `--uninstall` reverses it. `--dry-run` prints the whole plan with
 machine, which is the quickest way to see what a given box would become. The flags, the recipe
 table and everything it writes are in `deploy/README-install.md`.
 
+## Using the hub as an API
+
+The hub speaks OpenAI. Anything that can point at an OpenAI-compatible base URL — JD, pi, the
+`openai` SDK, plain `curl` — can use your nodes through it, with the hub's routing, the hub's
+spend cap, and one line per request in the same cost ledger the Cluster page shows.
+
+**A token.** Cluster → **API tokens** → a label and a kind → **Create token**. The token
+(`ah_…`) is shown once and never again; the hub keeps only a hash. Revoke it from the same table
+and it stops working immediately.
+
+**The two kinds** set the request's priority on a shared server (the Spark runs one model for
+everyone):
+
+| Kind | For | vLLM priority |
+|---|---|---|
+| `assistant` | something you are waiting on — JD, a chat client | 0 (first in line) |
+| `agent` | something running by itself — a coding harness, a batch | 10 (yields to the above) |
+
+**The base URL** is the hub's, plus `/v1`: `https://rosenroot.com/v1` from outside,
+`http://<hub>:4000/v1` on the tailnet.
+
+```sh
+curl https://rosenroot.com/v1/chat/completions \
+  -H "Authorization: Bearer ah_…" -H "content-type: application/json" \
+  -d '{"model":"agenthub/worker","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+**The models.** `GET /v1/models` lists the two that matter:
+
+- `agenthub/orchestrator` — the thinking tier.
+- `agenthub/worker` — the working tier.
+
+Both are *tiers*, not models: the hub picks the node, exactly as it does for a project's turns,
+and the response's `model` field says what actually served it. A concrete model id that is
+serving right now also works — a cloud id routes to that provider, a local id stays local.
+
+Streaming and non-streaming both work, as do `tools` and `tool_calls`; ask for
+`stream_options: {"include_usage": true}` and the last chunk carries the token counts. Fields the
+hub has no use for (`temperature`, `max_tokens`, …) are accepted and ignored. Spend through the
+door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the Cluster page's
+cloud-spend line.
+
 ## The shared browser (Computer)
 
 One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and

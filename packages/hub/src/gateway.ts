@@ -17,7 +17,20 @@ export interface Route {
   model?: string;
 }
 
-export interface ChatOptions { onToken?: (t: string) => void; tools?: ToolDef[]; signal?: AbortSignal; route?: Route }
+export interface ChatOptions {
+  onToken?: (t: string) => void;
+  tools?: ToolDef[];
+  signal?: AbortSignal;
+  route?: Route;
+  /**
+   * The vLLM priority to send for this one request, replacing whatever the chosen endpoint carries
+   * (`ServingEndpoint.priority`). It belongs to the caller, not to the endpoint: the same server
+   * serves the owner's assistant ahead of its agents (decision 0020), and only the caller knows
+   * which it is. `null` sends no `priority` field at all, which is what 0 means to vLLM; absent
+   * leaves the endpoint's own value alone.
+   */
+  priorityOverride?: number | null;
+}
 
 const UNHEALTHY_MS = 10_000;
 
@@ -359,7 +372,7 @@ export class ModelGateway {
   }
 
   private async chatInternal(tier: Tier, messages: ChatMessage[], opts: ChatOptions): Promise<ChatResult> {
-    const { onToken, tools, signal, route } = opts;
+    const { onToken, tools, signal, route, priorityOverride } = opts;
     for (let attempt = 0; ; attempt++) {
       const picked = this.pick(tier, route);
       if (!picked) {
@@ -412,7 +425,10 @@ export class ModelGateway {
         // vLLM priority scheduling: agents yield to the owner's assistant on a shared server. An
         // endpoint that already refused it (not started with --scheduling-policy priority) is
         // asked plainly from here on, rather than failing every turn until the hub restarts.
-        let sendPriority = picked.endpoint.priority != null && !this.priorityRefused.has(key);
+        // An explicit `priorityOverride` wins, `null` included — that is how a caller asks for no
+        // priority field at all rather than inheriting the endpoint's.
+        const priority = priorityOverride === undefined ? picked.endpoint.priority : priorityOverride;
+        let sendPriority = priority != null && !this.priorityRefused.has(key);
         // Asking for usage is how a request gets costed, but an older server may reject the field
         // outright. One that has is asked plainly from then on — its requests go unpriced rather
         // than failing, the same bargain the priority field above strikes.
@@ -431,7 +447,7 @@ export class ModelGateway {
               // the keys around it, so `requestExtras` can never turn cost accounting off.
               ...(sendUsage ? { stream_options: { include_usage: true } } : {}),
               ...(tools ? { tools: toOpenAiTools(tools) } : {}),
-              ...(sendPriority ? { priority: picked.endpoint.priority } : {}),
+              ...(sendPriority ? { priority } : {}),
             }),
             signal,
           });

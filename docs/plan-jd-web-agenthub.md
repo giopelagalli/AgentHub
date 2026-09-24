@@ -86,6 +86,10 @@ one connector among several (web now, Discord and email after). The local Qwen d
   assistant page points here.
 - **The droplet.** Follow `deploy/do/README.md` as written: $6 droplet, Tailscale, Caddy, basic
   auth, `hub.rosenroot.com` A record, proxy to `spark-f9a9:4000`. Stateless; rebuildable.
+- **JD's model comes from the hub** (PRD FR-C5). Once the edge is up, JD points `SPARK_URL` at
+  `https://rosenroot.com/v1` with an `assistant` API token instead of the Spark's vLLM directly —
+  same routing, cloud fallback and cost ledger as everything else, and priority 0 so JD never
+  waits behind an agent.
 - **Acceptance:** log in at `hub.rosenroot.com` from your phone's browser and from a laptop, send
   JD a message there, get the reply in the browser *and* see it in the Telegram transcript later;
   tap a check-in button on the web; record a voice note and get one back.

@@ -608,11 +608,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       return;
     }
     if (card.kind === 'master') {
-      // The master panel takes no `onClose`, so its going is reported from the handle we hold.
-      openDrawer(card.id, (into) => {
-        const close = openMasterPanel(into);
-        return () => { close(); onDrawerClosed(); };
-      });
+      openDrawer(card.id, (into) => openMasterPanel(into, { onClose: onDrawerClosed }));
       return;
     }
     // The Now section reads the running turn straight out of the store, under the same `who` the

@@ -303,6 +303,44 @@ hub has no use for (`temperature`, `max_tokens`, …) are accepted and ignored. 
 door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the Cluster page's
 cloud-spend line.
 
+## Preview (seeing the app)
+
+A **Preview** button sits with the PRD, Roadmap, Docs and Activity buttons on the project page. It
+opens a sheet with the project's own app running inside it, plus **Start**, **Stop**, **Restart**,
+**Open in tab**, a **Settings** form and the dev server's last 50 lines of output.
+
+The hub runs the dev server on its own machine, in the project's `workspace/`. It does **not** serve
+it on the hub's own address: previews get a second listener on their own port (`PREVIEW_PORT`,
+`4010` when the hub is on `4000`), because the app is code the agents wrote and it must not share an
+origin with the hub's API. The manager usually sets a preview up itself (the `set_preview` tool)
+once a milestone stands a dev server up; you can also set it by hand under **Settings**: the command
+(run in the workspace, split on spaces), the port, and optionally the path the preview should open
+on.
+
+**The link is the key.** There is no login on the preview port, so each project's address carries a
+secret: `http://<host>:4010/p/<slug>/<32 hex>/`. Anyone holding that link can open that app, so
+treat it like a password — and if it gets out, **Settings → Reset link** mints a new one and the old
+address stops working immediately.
+
+**About base paths.** The hub does not rewrite anything on the way through: your app is served under
+`/p/<slug>/<cap>/`, so the dev server has to be told that is where it lives. Read it from the
+environment rather than writing it out — the hub puts it in the child's environment as
+`AGENTHUB_PREVIEW_BASE`:
+
+    // vite.config.js
+    export default { base: process.env.AGENTHUB_PREVIEW_BASE ?? '/' }
+
+A hard-coded path works until the next link reset, and then silently stops. Without a base path at
+all, the page loads and every script and stylesheet it asks for 404s.
+
+Two things it does on its own: a preview nobody has looked at for 30 minutes is **stopped** (the log
+says so — press Start), and a preview that dies on its own reads **Crashed** with its last lines
+still on screen. The dev server never sees your session cookie, and nothing but previews is served
+on that port.
+
+Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
+`deploy/do/README.md` §8b.
+
 ## The shared browser (Computer)
 
 One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and

@@ -29,7 +29,7 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
 the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs, activity and the terminal; a drawer per agent with a live *Now* feed and a chat. Pure model
+docs, activity, the terminal and the preview; a drawer per agent with a live *Now* feed and a chat. Pure model
 functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, and the terminal's frame helpers) are
 separated from DOM code so they are testable without a browser — the UI's tests run in node, and
 nothing that needs a DOM is tested at all. No framework, but no longer no runtime dependencies:
@@ -39,9 +39,11 @@ what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. Daemon routes
-declare the node they are about so a node token cannot act for another node (0016). Login
-throttling per IP.
+`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. `sameOriginWrite` is
+the CSRF guard: a cookie-authenticated write must carry `Sec-Fetch-Site: same-origin` or the hub's
+own `Origin`, because the preview listener is a different port on the same *site* and a
+`SameSite=Lax` cookie would otherwise ride along (0040). Daemon routes declare the node they are
+about so a node token cannot act for another node (0016). Login throttling per IP.
 
 **`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
 stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
@@ -148,6 +150,19 @@ host:port but its own — a WebSocket handshake is not same-origin-policed and c
 listeners are wired, because the handshake completes before the handler runs and xterm's first frame
 is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
 addon, reconnect with a banner — a reconnect is a *new* shell and says so).
+
+**`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
+per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and
+`AGENTHUB_PREVIEW_BASE`, killed by process group, holding a 200-line log ring, joining concurrent
+starts on one promise, and stopping itself after 30 minutes with no proxied traffic (0039).
+`PreviewServer` is a **second HTTP listener on its own port** (`PREVIEW_PORT`, default the hub's
+plus ten) that serves previews and nothing else: a preview document is project code, so it must not
+share an origin with the hub's API (0040). Access is a per-project capability in the path,
+`/p/<slug>/<cap>/…`, compared in constant time; the path is forwarded verbatim (0037), requests are
+piped with `stream.pipeline` and upgrades are spliced at the TCP level (0038). The `previewRoutes`
+plugin carries the owner's routes on the hub — `GET/PUT/DELETE /api/projects/:slug/preview`,
+`POST …/preview/start|stop|restart|rotate` — and answers with the preview's absolute URL. The
+manager sets a project's preview with the `set_preview` tool.
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

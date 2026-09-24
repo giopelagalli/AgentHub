@@ -9,6 +9,7 @@ import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
 import { subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
+import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import { SUBAGENT_TOOL_CALLS } from './budgets.js';
@@ -484,6 +485,34 @@ export function bundleTools(): Tool[] {
         await bundle.writeTasks({ tasks });
         await bundle.commit('agent: update tasks');
         return `tasks updated (${tasks.length})`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'set_preview',
+        description: 'Declare how this project\'s app is run so the owner can see it live. The hub runs `cmd` in ' +
+          'workspace/ on its own machine and serves it on its own port, under a base path it passes to the process ' +
+          'as AGENTHUB_PREVIEW_BASE — set the dev server\'s base path from that environment variable (Vite `base`, ' +
+          'Next `basePath`) rather than hard-coding one. Set this once the dev server exists; calling it again replaces it.',
+        parameters: {
+          type: 'object',
+          properties: {
+            cmd: { type: 'array', items: { type: 'string' }, description: 'Argv, e.g. ["npm", "run", "dev"].' },
+            port: { type: 'number', description: 'The port the dev server listens on (1024-65535).' },
+          },
+          required: ['cmd', 'port'],
+        },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const validated = validatePreview(args);
+        if ('error' in validated) throw new Error(validated.error);
+        // The capability is the hub's, not the model's: an existing one is kept so the owner's link
+        // keeps working, and a project that never had one gets a fresh one here.
+        const current = (await bundle.manifest()).preview;
+        await bundle.setPreview({ ...validated.preview, cap: current?.cap ?? newCapability() });
+        await bundle.commit('agent: set preview');
+        return `preview set: ${validated.preview.cmd.join(' ')} on port ${validated.preview.port}`;
       },
     },
     {

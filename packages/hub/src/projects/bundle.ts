@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { AutoRun, DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, ProjectSource, TeamMember } from '@agenthub/shared';
+import type { AutoRun, DocPage, Milestone, ModelPolicy, PreviewConfig, Priority, ProjectIntake, ProjectSource, TeamMember } from '@agenthub/shared';
 import { auditPrd, prdScaffold } from './prd.js';
 import { newTeamMember, validateBriefing, validateDocSlug, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
@@ -340,6 +340,15 @@ export class ProjectBundle {
     const m = await this.manifest();
     if (autoRun) m.autoRun = autoRun;
     else delete m.autoRun;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /** The dev server the hub supervises and proxies; `undefined` clears it back to none. */
+  async setPreview(preview: PreviewConfig | undefined): Promise<void> {
+    const m = await this.manifest();
+    if (preview) m.preview = preview;
+    else delete m.preview;
     m.updatedAt = Date.now();
     await this.writeManifest(m);
   }

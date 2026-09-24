@@ -238,6 +238,45 @@ gives you. To find the chat id: message [@userinfobot](https://t.me/userinfobot)
 it replies with. Leaving either key blank in the env file still runs the check and updates the
 state file; it just skips the send.
 
+## 8b. Previews: a second site, on its own hostname
+
+Previews are served by a **second listener on the Spark** (`PREVIEW_PORT`, default `4010`) on its
+own origin, because a preview document is project code and must never share an origin with the
+hub's API (decision 0040). Publishing it therefore means a second Caddy site, not a path on the
+first one.
+
+DNS, alongside the records in §3:
+
+    A     preview    <droplet public IPv4>     TTL 600
+
+Caddy — add a site block beside the main one (this repo's `Caddyfile` is the file to edit, then
+scp it to `/etc/caddy/Caddyfile` and `sudo systemctl reload caddy`):
+
+    preview.rosenroot.com {
+        reverse_proxy {$HUB_PREVIEW_UPSTREAM}
+    }
+
+with `HUB_PREVIEW_UPSTREAM=spark-f9a9.tail7ac2e2.ts.net:4010` in the same environment file §4
+writes.
+
+Two things about that block are deliberate:
+
+- **No basic auth.** The main site's edge password is what keeps strangers off the hub; the preview
+  site cannot have it, because the iframe on the hub's page would have no way to answer the prompt.
+  What protects a preview is the capability in its path — 32 random hex, minted per project, reset
+  from the sheet's **Settings → Reset link**.
+- **Nothing else is proxied there.** The listener behind it serves `/p/<slug>/<cap>/…` and answers
+  404 to everything else, including `/api`, so a misconfigured block cannot expose the hub.
+
+Finally, tell the hub what the public origin is, so the UI links to the hostname rather than to
+`spark:4010` — in `~/AgentHub/configs/hub.env` on the Spark:
+
+    PREVIEW_PUBLIC_BASE=https://preview.rosenroot.com
+
+Leave it unset and the hub links to its own host on `PREVIEW_PORT`, which is right on the tailnet
+and wrong through the droplet. The §5 tailnet ACL needs `4010` opened to the droplet the same way
+`4000` is.
+
 ## 9. Rate limiting
 
 Caddy's standard build has no rate limiter, and the layers below it do carry

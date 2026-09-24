@@ -9,7 +9,7 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
-import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
+import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
 import { door, openAiError } from './door.js';
@@ -35,6 +35,7 @@ import { ProjectService, TurnRefusedError, type StopOptions } from './projects/s
 import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
+import { previewRoutes } from './projects/preview.js';
 import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
 import {
   AppCredentials, ConnectState, GithubAppClient, GithubAppError, type GithubAppConfig,
@@ -229,6 +230,13 @@ export interface HubOptions {
   turnTimeoutMs?: number;
   assistant?: AssistantOptions;
   browser?: BrowserOptions;
+  /**
+   * The preview listener (FR-B1, 0040): its port (`PREVIEW_PORT`, defaulting to the hub's plus ten),
+   * the interface it binds, and the public origin it is reached at behind a proxy
+   * (`PREVIEW_PUBLIC_BASE`). Omitted, it still runs — on an ephemeral port, which is what a test
+   * wants and what a hub that was never configured gets.
+   */
+  preview?: { port?: number; host?: string; publicBase?: string };
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
   auth?: AuthOptions;
   /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
@@ -577,7 +585,18 @@ export function createHub(opts: HubOptions = {}): Hub {
       const access = routeAccess(req.method, route);
       // The door checks its own bearer — a user API token, not the owner's cookie (`door.ts`).
       if (access === 'none' || access === 'open' || access === 'door') return;
-      if (auth.ownerOk(req.headers.cookie)) return;
+      if (auth.ownerOk(req.headers.cookie)) {
+        // A session cookie is `SameSite=Lax`, and the preview listener is a different *port* rather
+        // than a different site — so a page served there (project code) could otherwise post to the
+        // hub as the owner. A cookie-authenticated write has to say it came from the hub's own
+        // origin. Bearer-carrying requests skip this: nothing attaches a bearer by itself.
+        const bearer = auth.bearerOk(req.headers.authorization) || !!nodeByBearer(req.headers.authorization);
+        if (!bearer && !sameOriginWrite(req.method, req.headers, originOf(req.headers.host, isHttps(req)))) {
+          console.warn(`[auth] cross-origin ${req.method} ${route} refused (origin ${req.headers.origin ?? 'none'})`);
+          return reply.code(403).send({ error: 'cross-origin request refused' });
+        }
+        return;
+      }
       if (access === 'daemon') {
         // The shared DAEMON_TOKEN stays the admin's break-glass: it speaks for every node, and for
         // the ones that registered before enrollment existed it is the only credential there is.
@@ -717,6 +736,10 @@ export function createHub(opts: HubOptions = {}): Hub {
       return null;
     }
   };
+
+  // FR-B1 — the preview: the owner's config and lifecycle routes here, and the separate listener
+  // that serves the app itself on its own origin (0040).
+  void app.register(previewRoutes, { projects, refresh: refreshProjects, ...(opts.preview ? { listen: opts.preview } : {}) });
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
   // hangs off it; briefings pass straight through to the service's own listeners, and a settled job

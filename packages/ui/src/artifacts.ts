@@ -1,16 +1,16 @@
+import type { PreviewStatus, TeamRoster } from '@agenthub/shared';
 import { docsEntries, type DocsIndex } from './docs.js';
 import { auditStrip, type PrdDoc } from './prd.js';
-import type { TeamRoster } from '@agenthub/shared';
 import { roadmapRows, type RoadmapDoc } from './roadmap.js';
 import { activityHint, type TurnRecord, type TurnsState } from './turns.js';
 
 /**
- * The four big buttons above the org chart. Pure — each one turns a document the hub sent into
- * the one line the button shows, so the owner can tell what state the PRD, the roadmap, the docs
- * and the team's current turn are in without opening any of them.
+ * The big buttons above the org chart. Pure — each one turns something the hub sent into the one
+ * line the button shows, so the owner can tell what state the PRD, the roadmap, the docs, the
+ * team's current turn and the running app are in without opening any of them.
  */
 
-export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity' | 'terminal';
+export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity' | 'terminal' | 'preview';
 
 /** Where each button's document is in its own fetch. */
 export type DocState = 'loading' | 'ready' | 'failed';
@@ -37,6 +37,7 @@ const CAPTIONS: Record<ArtifactId, string> = {
   docs: 'What the team wrote down',
   activity: 'What the team is doing',
   terminal: 'A shell in the workspace',
+  preview: 'The app, live',
 };
 
 export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
@@ -45,6 +46,7 @@ export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
   docs: 'Docs',
   activity: 'Activity',
   terminal: 'Terminal',
+  preview: 'Preview',
 };
 
 /** The heading the artifact wears once it is open in the sheet. */
@@ -54,6 +56,7 @@ export const ARTIFACT_TITLES: Record<ArtifactId, string> = {
   docs: 'Docs',
   activity: 'Activity',
   terminal: 'Terminal',
+  preview: 'Preview',
 };
 
 function plural(count: number, noun: string): string {
@@ -128,4 +131,17 @@ export function activitySummary(
  */
 export function terminalSummary(open: boolean): ArtifactSummary {
   return shell('terminal', open ? 'open' : 'closed', true);
+}
+
+/**
+ * The preview button: whether the app is up, and on which port. A project with no preview declared
+ * says so rather than offering a dead button — setting one is the first thing the sheet does.
+ */
+export function previewSummary(state: DocState, status: PreviewStatus | null): ArtifactSummary {
+  const waiting = pending('preview', state);
+  if (waiting) return waiting;
+  if (!status?.configured) return shell('preview', 'Not configured', false);
+  if (status.running) return shell('preview', `Running on :${status.port}`, true);
+  if (status.crashed) return shell('preview', 'Crashed — read the log', false);
+  return shell('preview', 'Stopped', false);
 }

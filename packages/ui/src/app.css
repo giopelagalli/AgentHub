@@ -917,13 +917,14 @@ button.card__open:hover {
 
 /* --- the four artifacts --------------------------------------------------- */
 
-/* Four cards between the header and the chart: three doors to a document, and
-   one to the turn in progress. They are the tallest thing on the page that
-   isn't the chart itself, and the only place the accent appears until one of
-   them is hovered. */
+/* The cards between the header and the chart: doors to a document, to the turn
+   in progress, and to the running app. They are the tallest thing on the page
+   that isn't the chart itself, and the only place the accent appears until one
+   of them is hovered. The track is auto-filled rather than fixed at four, so
+   the workbench's buttons can land beside the documents' without a reflow. */
 .artifacts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
   gap: 10px;
   max-width: 1240px;
   margin: 0 0 26px;
@@ -2998,4 +2999,104 @@ button.card__open:hover {
 
 .term__foot {
   color: var(--text-mute);
+}
+
+/* The preview: the project's own app, in the sheet, with the controls above it
+   and the dev server's last words below. The stage takes whatever height is
+   left over, because the app is the point and the log is the footnote. */
+.preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview__bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview__pill {
+  padding: 2px 9px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg2);
+  border: 1px solid var(--line-lit);
+  border-radius: 999px;
+}
+
+.preview__pill--running {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--line-lit));
+}
+
+.preview__pill--crashed {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line-lit));
+}
+
+.preview__settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 12px 14px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--line);
+}
+
+.preview__field {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.preview__label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.preview__hint {
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.preview__stage {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg0);
+}
+
+.preview__stage .empty {
+  margin: auto;
+  padding: 24px;
+}
+
+.preview__frame {
+  flex: 1;
+  min-width: 0;
+  background: #fff;
+  border: 0;
+}
+
+/* The tail of the dev server's output: short, monospaced, and always scrolled
+   to the last line — it is read when something is wrong, never browsed. */
+.preview__log {
+  max-height: 148px;
+  margin: 0;
+  padding: 10px 14px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  color: var(--text-dim);
+  background: var(--bg1);
+  border-top: 1px solid var(--line);
 }

@@ -13,7 +13,6 @@
 #   EDGE_HASH      $2a$14$...               `caddy hash-password` output
 #
 # Reload after editing either file:  sudo systemctl reload caddy
-
 {
 	email {$ACME_EMAIL}
 	# The droplet must never answer on its IP or on a name we did not configure:
@@ -63,6 +62,17 @@
 			dial_timeout 5s
 		}
 		header_up X-Real-IP {remote_host}
+	}
+
+	# The Spark off, unreachable, or the hub itself down: serve the offline
+	# page instead of a bare 502. Status 503 (not 200) so monitors and
+	# browsers both see this as an outage.
+	handle_errors 502 503 504 {
+		root * /etc/caddy/site
+		rewrite * /offline.html
+		file_server {
+			status 503
+		}
 	}
 
 	# One request per client identity is not worth logging a body for; keep the

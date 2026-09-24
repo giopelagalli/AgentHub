@@ -193,7 +193,49 @@ cookie `Secure`. Leave it unset when the hub is reachable directly on the
 tailnet by anything other than the droplet: those headers are attacker-supplied
 in that case, and trusting them lets anyone forge a client identity.
 
-## 8. Rate limiting
+## 8. When the hub is down
+
+A visitor gets the offline page, not a bare 502: the `Caddyfile`'s `handle_errors` block catches
+502/503/504 from the upstream and serves `/etc/caddy/site/offline.html` with **status 503**, so
+browsers and uptime monitors both see an outage, not a live page. The page polls `/api/health`
+every 15 seconds and reloads itself once the hub answers again.
+
+A second, independent piece — `hub-watch.timer` — runs on the droplet every minute and messages
+Telegram on the down/up transition only (not on every check). It is the droplet's own alert, not
+JD's: JD runs on the Spark, so it goes silent for exactly the outage you'd want to hear about.
+
+Install the offline page (scp'd from the Mac like the Caddyfile — the droplet has no repo):
+
+    sudo mkdir -p /etc/caddy/site
+    sudo cp deploy/do/site/offline.html /etc/caddy/site/
+
+Install the watchdog:
+
+    sudo cp hub-watch.sh /usr/local/bin/
+    sudo chmod +x /usr/local/bin/hub-watch.sh
+    sudo cp hub-watch.service hub-watch.timer /etc/systemd/system/
+
+    sudo tee /etc/agenthub-watch.env >/dev/null <<'EOF'
+    HUB_UPSTREAM=spark-f9a9.tail7ac2e2.ts.net:4000
+    HUB_DOMAIN=rosenroot.com
+    TELEGRAM_BOT_TOKEN=your-bot-token
+    TELEGRAM_CHAT_ID=your-chat-id
+    EOF
+    sudo chmod 600 /etc/agenthub-watch.env
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now hub-watch.timer
+
+Test it:
+
+    sudo systemctl start hub-watch.service; journalctl -u hub-watch -n 5
+
+To create the bot: message [@BotFather](https://t.me/BotFather) `/newbot` and copy the token it
+gives you. To find the chat id: message [@userinfobot](https://t.me/userinfobot) and copy the `Id`
+it replies with. Leaving either key blank in the env file still runs the check and updates the
+state file; it just skips the send.
+
+## 9. Rate limiting
 
 Caddy's standard build has no rate limiter, and the layers below it do carry
 their own: `basic_auth` refuses everything unauthenticated before it costs the
@@ -218,7 +260,7 @@ Treat that as optional hardening, not as the security boundary. The boundary is
 basic auth, the hub's own login, and an ACL that lets this machine open exactly
 one port.
 
-## 9. Verify
+## 10. Verify
 
     curl -sI https://hub.example.com/                      # 401 — basic auth demanded
     curl -sI https://hub.example.com/ -u owner:<pass>      # 200 — the UI, then the hub's login box

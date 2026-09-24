@@ -252,6 +252,14 @@ Two systemd *user* units, installed from `deploy/spark/`:
 Backups: `DATA_ROOT` is the whole state. Every project folder is a git repo, so `git log` inside
 `projects/<slug>` is the full history of that project.
 
+When the Spark (and so the hub) is off, `rosenroot.com` does not answer with a bare 502: the
+droplet's Caddy serves an offline page instead, with status 503 so monitors still see it as down.
+The page polls the hub itself and reloads on its own once it is back.
+
+The droplet also runs its own watchdog, independent of JD (which lives on the Spark and so is
+silent for exactly the outage you'd want to hear about): every minute it checks the hub and sends
+a Telegram message on the down/up transition only. Setup is `deploy/do/README.md` §8.
+
 ## Troubleshooting
 
 | You see | It means | Do |

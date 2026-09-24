@@ -5,9 +5,12 @@ import { toast } from '../toast.js';
 import { note, type ViewContext } from './parts.js';
 
 /**
- * The preview sheet (FR-B1): the project's own app in an iframe, served through the hub at
- * `/preview/<slug>/`, with the controls that start and stop it and the log tail that says why it
- * isn't up when it isn't.
+ * The preview sheet (FR-B1): the project's own app in an iframe, with the controls that start and
+ * stop it and the log tail that says why it isn't up when it isn't.
+ *
+ * The app is served from the hub's preview listener — a different origin (0040), which is what
+ * keeps project code out of the session. The iframe is therefore genuinely sandboxed, and the URL
+ * carries a capability the owner can reset from here.
  */
 
 /** How often the sheet re-reads the status while it is open. */
@@ -36,8 +39,9 @@ export function previewStatusText(status: PreviewStatus | null): string {
   return PHASE_TEXT[phase];
 }
 
-/** Where the iframe points: the proxy's base plus the app path the config asked for. */
-export function previewSrc(status: PreviewStatus): string {
+/** Where the iframe points: the preview's own origin plus the app path the config asked for. */
+export function previewSrc(status: PreviewStatus): string | null {
+  if (!status.url) return null;
   const path = status.config?.path ?? '/';
   return `${status.url}${path.replace(/^\//, '')}`;
 }
@@ -91,10 +95,24 @@ export function mountPreview(host: HTMLElement, ctx: ViewContext): () => void {
         if (!alive) return;
         if (next) { status = next; state = 'ready'; }
         settingsOpen = false;
+        renderSettings();
         render();
         toast('Preview saved');
       })
       .catch((error: unknown) => toast(`Could not save the preview: ${String(error)}`, 'error'));
+  };
+
+  /** A new capability: the old address stops working, and the preview stops with it. */
+  const rotate = (): void => {
+    void sendJson<PreviewStatus>(`/api/projects/${ctx.slug}/preview/rotate`)
+      .then((next) => {
+        if (!alive) return;
+        if (next) { status = next; state = 'ready'; }
+        renderSettings();
+        render();
+        toast('Preview link reset');
+      })
+      .catch((error: unknown) => toast(`Could not reset the link: ${String(error)}`, 'error'));
   };
 
   /** The settings form: the command, the port and the path, written straight to the manifest. */
@@ -122,7 +140,21 @@ export function mountPreview(host: HTMLElement, ctx: ViewContext): () => void {
       field.append(el('span', 'preview__label', label), input, el('span', 'preview__hint', hint));
       settingsBox.appendChild(field);
     }
-    settingsBox.appendChild(submit);
+    const link = el('label', 'preview__field');
+    const address = el('input');
+    address.value = status?.url ?? '';
+    address.readOnly = true;
+    address.placeholder = 'Saved previews get their own address.';
+    const reset = button('Reset link');
+    reset.addEventListener('click', () => {
+      if (!window.confirm('Reset the preview link? The current address stops working and the preview is stopped.')) return;
+      rotate();
+    });
+    link.append(
+      el('span', 'preview__label', 'Address'), address,
+      el('span', 'preview__hint', 'Its own origin, with a secret in the path — anyone holding it can open the app.'),
+    );
+    settingsBox.append(link, reset, submit);
     settingsBox.onsubmit = (event) => {
       event.preventDefault();
       const argv = cmd.value.trim().split(/\s+/).filter(Boolean);
@@ -146,9 +178,10 @@ export function mountPreview(host: HTMLElement, ctx: ViewContext): () => void {
       restart.disabled = phase !== 'running';
       restart.addEventListener('click', () => act('restart'));
       actions.append(toggle, restart);
-      if (status && phase === 'running') {
+      const src = status && phase === 'running' ? previewSrc(status) : null;
+      if (src) {
         const open = el('a', 'btn', 'Open in tab');
-        open.href = previewSrc(status);
+        open.href = src;
         open.target = '_blank';
         open.rel = 'noreferrer';
         actions.appendChild(open);
@@ -161,12 +194,12 @@ export function mountPreview(host: HTMLElement, ctx: ViewContext): () => void {
     bar.replaceChildren(pill, actions);
 
     stage.replaceChildren();
-    if (status && phase === 'running') {
-      const src = previewSrc(status);
+    const running = status && phase === 'running' ? previewSrc(status) : null;
+    if (running) {
       // Only re-pointed when the address actually changed: a poll that reassigned `src` would
       // reload the app under the owner every five seconds.
-      const key = `${src}#${status.startedAt ?? 0}`;
-      if (key !== frameKey) { frameKey = key; frame.setAttribute('src', src); }
+      const key = `${running}#${status?.startedAt ?? 0}`;
+      if (key !== frameKey) { frameKey = key; frame.setAttribute('src', running); }
       stage.appendChild(frame);
     } else {
       frameKey = '';

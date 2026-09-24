@@ -92,16 +92,44 @@ export function daemonRouteSubject(method: string, route: string | undefined): N
 export function routeAccess(method: string, route: string | undefined): Access {
   if (route === undefined) return 'owner';
   if (route === '/ws') return 'owner';
-  // The preview proxy is not under /api/, but it is the owner's dev server: the whole point of
-  // running it behind the hub (decision 0021) is that it inherits the session rather than sitting
-  // on a raw port.
-  if (route.startsWith('/preview/')) return 'owner';
   if (route !== '/api' && !route.startsWith('/api/')) return 'none';
   if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
   if (method === 'POST' && route === '/api/login') return 'open';
   if (method === 'POST' && route === '/api/nodes/enroll') return 'open';
   if (DAEMON_ROUTES.has(`${method} ${route}`)) return 'daemon';
   return 'owner';
+}
+
+/** Methods a browser may issue cross-site without the user meaning to write anything. */
+const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+/**
+ * Whether a cookie-authenticated write came from the hub's own pages.
+ *
+ * The session cookie is `SameSite=Lax`, which stops cross-site *sub-resource* requests from
+ * carrying it but not a top-level form post — and a same-site page on another port (the preview
+ * listener serves project code) is not cross-site at all, so Lax lets it through. This is the
+ * check that does not: a write authenticated by the cookie must say, through `Sec-Fetch-Site` or
+ * `Origin`, that it came from this origin.
+ *
+ * A request with neither header is let through: that is curl, a script, or a test — never a
+ * browser doing something on a page's behalf, which is the whole attack. Bearer-authenticated
+ * requests never reach here; nothing attaches a bearer to a cross-site request by itself.
+ */
+export function sameOriginWrite(
+  method: string, headers: { origin?: string; 'sec-fetch-site'?: string }, selfOrigin: string,
+): boolean {
+  if (SAFE_METHODS.includes(method.toUpperCase())) return true;
+  const site = headers['sec-fetch-site'];
+  if (site !== undefined) return site === 'same-origin';
+  const origin = headers.origin;
+  if (origin !== undefined) return origin === selfOrigin;
+  return true;
+}
+
+/** The origin this request was addressed to, as a browser would have written it. */
+export function originOf(host: string | undefined, https: boolean): string {
+  return `${https ? 'https' : 'http'}://${host ?? ''}`;
 }
 
 /**

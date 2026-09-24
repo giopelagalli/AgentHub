@@ -31,9 +31,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   milestone and a pull request the owner opens (0028–0030).
 
 - Workbench, first piece: **Preview** (FR-B1) — a project declares `preview { cmd, port, path? }`,
-  the hub supervises it in the workspace and proxies it at `/preview/<slug>/` (HTTP + WebSocket)
-  behind the session, with a sheet holding the iframe, start/stop/restart, settings and a log tail
-  (0031–0033).
+  the hub supervises it in the workspace and serves it (HTTP + WebSocket) from a second listener on
+  its own origin, behind a per-project capability, with a sheet holding the iframe,
+  start/stop/restart, settings, reset-link and a log tail (0037–0040). Same-origin CSRF guard on the
+  hub's own writes came with it.
 
 ## In progress
 

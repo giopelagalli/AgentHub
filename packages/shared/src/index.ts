@@ -206,25 +206,33 @@ export interface AutoRun {
 }
 
 /**
- * A project's dev server: the argv the hub runs in `workspace/`, the port it listens on, and the
- * path inside the app the preview opens on. The app is served to the browser under
- * `/preview/<slug>/`, so the dev server has to be configured with that base path (Vite `base`,
- * Next `basePath`) — see decision 0031.
+ * A project's dev server: the argv the hub runs in `workspace/`, the port it listens on, the path
+ * inside the app the preview opens on, and the capability the preview is served under.
+ *
+ * The app is served from the hub's *preview* listener, on its own port, at `/p/<slug>/<cap>/` — so
+ * the dev server has to be built with that base path (Vite `base`, Next `basePath`), read from
+ * `AGENTHUB_PREVIEW_BASE` rather than hard-coded, because resetting the link changes it. See
+ * decisions 0037 and 0040.
  */
 export interface PreviewConfig {
   cmd: string[];
   port: number;
   /** Where the iframe opens, relative to the app's base; defaults to `/`. */
   path?: string;
+  /** 32 hex characters. Minted by the hub when the preview is saved; never taken from a request. */
+  cap: string;
 }
 
-/** What `GET /api/projects/:slug/preview` answers: the config's state and the process's. */
-export interface PreviewStatus {
+/** A preview config as the owner or an agent supplies it — the hub mints the capability itself. */
+export type PreviewConfigInput = Omit<PreviewConfig, 'cap'>;
+
+/** What the supervisor knows about a project's preview, with no request behind it. */
+export interface PreviewSnapshot {
   configured: boolean;
   running: boolean;
   port: number | null;
-  /** Where the proxy serves it, whether or not it is running. */
-  url: string;
+  /** The path the preview is served under (`/p/<slug>/<cap>/`), or null when none is configured. */
+  base: string | null;
   startedAt: number | null;
   /** The stored config, so the settings form and the iframe's path read from one answer. */
   config: PreviewConfig | null;
@@ -232,6 +240,12 @@ export interface PreviewStatus {
   crashed: boolean;
   /** The tail of the process's output — the last 50 lines. */
   log: string[];
+}
+
+/** What `GET /api/projects/:slug/preview` answers: the snapshot plus where to reach it. */
+export interface PreviewStatus extends PreviewSnapshot {
+  /** The absolute address of the preview, on the preview listener's own origin. */
+  url: string | null;
 }
 
 /** Turns spent in the trailing 24h against the project's cap (null when unset) and the hub's. */

@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import type { AuthOptions } from './auth.js';
 import { SEARCH_PROVIDERS, type ExternalOptions, type SearchProvider } from './external/index.js';
+import { PREVIEW_PORT_OFFSET } from './projects/preview.js';
 import type { AssistantOptions, HubOptions } from './server.js';
 
 /** Where the hub listens when `HUB_HOST` says nothing. */
@@ -169,6 +170,23 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     else log(`[hub] TURN_TIMEOUT_MINUTES=${env.TURN_TIMEOUT_MINUTES} is not a whole number of at least 1; ignored`);
   }
 
+  // The preview listener is a second port on this machine, serving project code on its own origin
+  // (0040). It defaults to the hub's port plus ten so a hub on 4000 previews on 4010; behind the
+  // public site it is a separate hostname, and `PREVIEW_PUBLIC_BASE` is what the UI then links to.
+  const port = Number(env.PORT ?? DEFAULT_PORT);
+  const host = env.HUB_HOST || DEFAULT_HUB_HOST;
+  let previewPort = port + PREVIEW_PORT_OFFSET;
+  if (env.PREVIEW_PORT !== undefined && env.PREVIEW_PORT !== '') {
+    const n = Number(env.PREVIEW_PORT);
+    if (Number.isInteger(n) && n > 0 && n <= 65535 && n !== port) previewPort = n;
+    else log(`[hub] PREVIEW_PORT=${env.PREVIEW_PORT} is not a free port number; using ${previewPort}`);
+  }
+  const preview = {
+    port: previewPort,
+    host,
+    ...(env.PREVIEW_PUBLIC_BASE ? { publicBase: env.PREVIEW_PUBLIC_BASE } : {}),
+  };
+
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
     projectsRoot: env.PROJECTS_ROOT ?? (dataRoot ? join(dataRoot, 'projects') : 'data/projects'),
@@ -183,14 +201,15 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
     ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+    preview,
   };
 
   return {
     options,
-    port: Number(env.PORT ?? DEFAULT_PORT),
+    port,
     // The tailnet address on a deployed control node, so the hub is not on every interface the
     // machine happens to have; `0.0.0.0` stays the default for local dev.
-    host: env.HUB_HOST || DEFAULT_HUB_HOST,
+    host,
     telegram,
   };
 }

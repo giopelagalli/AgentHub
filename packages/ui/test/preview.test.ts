@@ -3,13 +3,16 @@ import type { PreviewStatus } from '@agenthub/shared';
 import { previewSummary } from '../src/artifacts.js';
 import { previewPhase, previewSrc, previewStatusText } from '../src/views/preview.js';
 
+const CAP = 'a'.repeat(32);
+
 const status = (over: Partial<PreviewStatus> = {}): PreviewStatus => ({
   configured: true,
   running: false,
   port: 5173,
-  url: '/preview/demo/',
+  base: `/p/demo/${CAP}/`,
+  url: `http://hub.local:4010/p/demo/${CAP}/`,
   startedAt: null,
-  config: { cmd: ['npm', 'run', 'dev'], port: 5173 },
+  config: { cmd: ['npm', 'run', 'dev'], port: 5173, cap: CAP },
   crashed: false,
   log: [],
   ...over,
@@ -40,9 +43,13 @@ describe('previewStatusText', () => {
 
 describe('previewSrc', () => {
   it('opens at the app\'s root by default, and at the configured path otherwise', () => {
-    expect(previewSrc(status())).toBe('/preview/demo/');
-    expect(previewSrc(status({ config: { cmd: ['npm'], port: 5173, path: '/dashboard' } })))
-      .toBe('/preview/demo/dashboard');
+    expect(previewSrc(status())).toBe(`http://hub.local:4010/p/demo/${CAP}/`);
+    expect(previewSrc(status({ config: { cmd: ['npm'], port: 5173, path: '/dashboard', cap: CAP } })))
+      .toBe(`http://hub.local:4010/p/demo/${CAP}/dashboard`);
+  });
+
+  it('has nowhere to point until the preview is configured', () => {
+    expect(previewSrc(status({ configured: false, url: null }))).toBeNull();
   });
 });
 

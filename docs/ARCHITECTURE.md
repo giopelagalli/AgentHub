@@ -36,7 +36,10 @@ without a browser.
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon` or `owner` by an explicit table; unknown routes deny. Daemon routes declare the
+`open`, `daemon` or `owner` by an explicit table; unknown routes deny. `sameOriginWrite` is the
+CSRF guard: a cookie-authenticated write must carry `Sec-Fetch-Site: same-origin` or the hub's own
+`Origin`, because the preview listener is a different port on the same *site* and a `SameSite=Lax`
+cookie would otherwise ride along (0040). Daemon routes declare the
 node they are about so a node token cannot act for another node (0016). Login throttling per IP.
 
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
@@ -100,12 +103,15 @@ from that checkout's own index.
 
 **`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
 per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and
-`AGENTHUB_PREVIEW_BASE`, killed by process group, holding a 200-line log ring and stopping itself
-after 30 minutes with no proxied traffic (0033); every preview goes down with the hub via the
-plugin's `onClose`. The `previewRoutes` plugin carries the owner's routes
-(`GET/PUT/DELETE /api/projects/:slug/preview`, `POST …/preview/start|stop|restart`) and the proxy
-at `/preview/:slug/*` — `owner` in `routeAccess`, path forwarded verbatim (0031), hub cookie
-stripped, HTTP piped through `node:http` and the upgrade bridged to a `ws` client (0032). The
+`AGENTHUB_PREVIEW_BASE`, killed by process group, holding a 200-line log ring, joining concurrent
+starts on one promise, and stopping itself after 30 minutes with no proxied traffic (0039).
+`PreviewServer` is a **second HTTP listener on its own port** (`PREVIEW_PORT`, default the hub's
+plus ten) that serves previews and nothing else: a preview document is project code, so it must not
+share an origin with the hub's API (0040). Access is a per-project capability in the path,
+`/p/<slug>/<cap>/…`, compared in constant time; the path is forwarded verbatim (0037), requests are
+piped with `stream.pipeline` and upgrades are spliced at the TCP level (0038). The `previewRoutes`
+plugin carries the owner's routes on the hub — `GET/PUT/DELETE /api/projects/:slug/preview`,
+`POST …/preview/start|stop|restart|rotate` — and answers with the preview's absolute URL. The
 manager sets a project's preview with the `set_preview` tool.
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.

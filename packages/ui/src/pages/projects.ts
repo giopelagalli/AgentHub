@@ -449,8 +449,9 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     drawerFor = who;
     syncChatButton();
   };
-  /** The drawer has gone, whichever way it was closed. */
+  /** The drawer has gone, whichever way it was closed; nothing is left to call a second time. */
   const onDrawerClosed = (): void => {
+    closeDrawer = null;
     drawerFor = null;
     syncChatButton();
   };
@@ -607,7 +608,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       return;
     }
     if (card.kind === 'master') {
-      openDrawer(card.id, (into) => openMasterPanel(into));
+      // The master panel takes no `onClose`, so its going is reported from the handle we hold.
+      openDrawer(card.id, (into) => {
+        const close = openMasterPanel(into);
+        return () => { close(); onDrawerClosed(); };
+      });
       return;
     }
     // The Now section reads the running turn straight out of the store, under the same `who` the
@@ -636,18 +641,32 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     }));
   };
 
+  /** Whether the keyboard currently belongs to an open drawer rather than to the page. */
+  const focusInDrawer = (): boolean => {
+    const active = document.activeElement;
+    return active instanceof HTMLElement && !!active.closest('.drawer');
+  };
+
   /**
    * The header's way into the manager's drawer: the same drawer the Manager card opens, since it
-   * goes through `openCard` with the chart's own manager card. A press while that drawer is already
-   * up puts the cursor back in its message box rather than rebuilding the conversation.
+   * goes through `openCard` with the chart's own manager card.
+   *
+   * What a second press does depends on where it came from. `fromDrawer` — from inside the
+   * conversation — closes it, which is what the button's pressed state promises. From anywhere else
+   * it puts the cursor back in the message box, rather than rebuilding the conversation or tearing
+   * it down under someone who only meant to reach it.
    *
    * A running turn is no reason to hold this back — the hub answers a one-on-one with the manager
    * alongside the turn, and anything it does refuse arrives in the log as a failed reply.
    */
-  const openManagerChat = (): void => {
+  const openManagerChat = (fromDrawer: boolean): void => {
     const project = selected(store.getState());
     if (!project) return;
     if (drawerFor === 'manager') {
+      if (fromDrawer) {
+        closeDrawer?.();
+        return;
+      }
       // The page's own drawer, not the one an artifact sheet mounts in its side slot.
       document.querySelector<HTMLInputElement>('body > .drawer .chat__form input')?.focus();
       return;
@@ -686,7 +705,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     // on a narrow window; Add employee, a once-per-project action, is the better thing to drop.
     const chat = button('Chat', 'btn detail__chat');
     chat.title = 'Chat with the Manager (c)';
-    chat.addEventListener('click', openManagerChat);
+    // Some browsers focus a button on press, so where focus was is read before that happens: it is
+    // what separates a press from inside the conversation from one reaching for it off the page.
+    let pressedFromDrawer = false;
+    chat.addEventListener('pointerdown', () => { pressedFromDrawer = focusInDrawer(); });
+    chat.addEventListener('click', () => {
+      openManagerChat(pressedFromDrawer);
+      pressedFromDrawer = false;
+    });
     chatButton = chat;
     syncChatButton();
     controls.appendChild(chat);
@@ -955,11 +981,15 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** `c` opens the manager chat, the same as the header button — the rail's `[` sets the pattern. */
   const onKey = (event: KeyboardEvent): void => {
     if (event.key !== 'c' || event.metaKey || event.ctrlKey || event.altKey || typing()) return;
-    // The wizard and an artifact sheet own the screen while they are up, and the sheet has a chat
-    // drawer of its own; a page drawer sliding in under either is not what `c` means there.
-    if (document.querySelector('.modal, .sheet')) return;
+    // A drawer already on screen owns the conversation in it, and `c` must not replace someone
+    // else's and abort its stream. Focus is often back on the body here — a click on unfocusable
+    // content inside the drawer leaves it there — so what is open is the test, not where focus
+    // landed. The manager's own drawer is the exception: there `c` only reaches for its message box.
+    if (drawerFor !== 'manager' && document.querySelector('body > .drawer')) return;
+    // The wizard and an artifact sheet own the screen outright, and the sheet carries its own chat.
+    if (focusInDrawer() || document.querySelector('.modal, .sheet')) return;
     event.preventDefault();
-    openManagerChat();
+    openManagerChat(false);
   };
   window.addEventListener('keydown', onKey);
 

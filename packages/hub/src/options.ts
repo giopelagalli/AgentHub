@@ -1,6 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuthOptions } from './auth.js';
 import { SEARCH_PROVIDERS, type ExternalOptions, type SearchProvider } from './external/index.js';
+import type { GithubAppConfig } from './projects/github-app.js';
 import type { AssistantOptions, HubOptions } from './server.js';
 
 /** Where the hub listens when `HUB_HOST` says nothing. */
@@ -26,6 +28,46 @@ function parseTrustProxy(raw: string | undefined): boolean | string | undefined 
   if (['1', 'true', 'yes'].includes(raw.toLowerCase())) return true;
   if (['0', 'false', 'no'].includes(raw.toLowerCase())) return false;
   return raw;
+}
+
+/** The five `hub.env` keys behind the registered GitHub App, and the sixth that points at its key. */
+const GITHUB_APP_ENV = ['GITHUB_APP_ID', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_CLIENT_SECRET', 'GITHUB_APP_SLUG', 'GITHUB_APP_PRIVATE_KEY'] as const;
+
+/**
+ * The GitHub App's configuration, with its private key read from disk here rather than at the first
+ * callback — a `.pem` the hub cannot read is a startup problem and says so at startup, in the log
+ * the owner is already watching. Nothing about the app is ever logged beyond the names of what is
+ * missing; the key, the secret and the client id never appear.
+ *
+ * All five or none, because four of them cannot connect anything and would only fail later.
+ */
+function readGithubApp(env: NodeJS.ProcessEnv, log: (line: string) => void): GithubAppConfig | undefined {
+  const present = GITHUB_APP_ENV.filter((key) => env[key]);
+  if (present.length === 0) return undefined;
+  const missing = GITHUB_APP_ENV.filter((key) => !env[key]);
+  if (missing.length) {
+    log(`[hub] GitHub App not configured: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing — "Connect GitHub" is off`);
+    return undefined;
+  }
+  const path = env.GITHUB_APP_PRIVATE_KEY as string;
+  let privateKey: string;
+  try {
+    privateKey = readFileSync(path, 'utf8');
+  } catch (err) {
+    log(`[hub] GITHUB_APP_PRIVATE_KEY=${path} could not be read (${err instanceof Error ? err.message : String(err)}) — "Connect GitHub" is off`);
+    return undefined;
+  }
+  if (!privateKey.includes('PRIVATE KEY')) {
+    log(`[hub] GITHUB_APP_PRIVATE_KEY=${path} is not a PEM private key — "Connect GitHub" is off`);
+    return undefined;
+  }
+  return {
+    appId: env.GITHUB_APP_ID as string,
+    clientId: env.GITHUB_APP_CLIENT_ID as string,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET as string,
+    slug: env.GITHUB_APP_SLUG as string,
+    privateKey,
+  };
 }
 
 /**
@@ -140,7 +182,13 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
   // branch back. Only its presence is ever reported (`GET /api/github/status`); the value is read
   // here and handed to the git and REST calls, and is never logged or sent to the UI.
   const githubToken = env.GITHUB_TOKEN;
-  if (!githubToken) log('[hub] GITHUB_TOKEN not set; only public repositories can be imported, and nothing can be pushed back');
+  // The registered GitHub App, which is how a member connects GitHub with a button instead of
+  // minting a token. All five values or none: a half-configured app would fail at the callback,
+  // hours after the hub started, so it is refused here with the missing names said out loud.
+  const githubApp = readGithubApp(env, log);
+  if (!githubToken && !githubApp) {
+    log('[hub] no GitHub App and no GITHUB_TOKEN; only public repositories can be imported, and nothing can be pushed back');
+  }
 
   // A turn is the hub's most expensive unit, so the scheduler has a kill switch and a hub-wide cap.
   // `AUTO_TURNS=0` is the only value that disables it; a bad cap is dropped with one log line.
@@ -178,7 +226,9 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(auth ? { auth } : {}),
     ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
     ...(cloud ? { cloud } : {}),
-    ...(githubToken ? { github: { token: githubToken } } : {}),
+    ...(githubToken || githubApp
+      ? { github: { ...(githubToken ? { token: githubToken } : {}), ...(githubApp ? { app: githubApp } : {}) } }
+      : {}),
     ...(autoTurns !== undefined ? { autoTurns } : {}),
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
     ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),

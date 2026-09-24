@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { optionsFromEnv } from '../src/options.js';
 
@@ -111,6 +114,41 @@ describe('optionsFromEnv', () => {
       expect(optionsFromEnv({ MAX_CLOUD_USD_PER_DAY: bad }, (l) => lines.push(l)).options.maxCloudUsdPerDay).toBeUndefined();
       expect(lines.filter((l) => l.includes('MAX_CLOUD_USD_PER_DAY'))).toHaveLength(1);
     }
+  });
+
+  it('reads the GitHub App as all five keys or none, with the key file read at startup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agenthub-options-'));
+    const pem = join(dir, 'key.pem');
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    await writeFile(pem, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(), 'utf8');
+    const env = {
+      GITHUB_APP_ID: '1234', GITHUB_APP_CLIENT_ID: 'Iv1.x', GITHUB_APP_CLIENT_SECRET: 'shh',
+      GITHUB_APP_SLUG: 'agenthub-test', GITHUB_APP_PRIVATE_KEY: pem,
+    };
+
+    const app = optionsFromEnv(env, quiet).options.github?.app;
+    expect(app).toMatchObject({ appId: '1234', clientId: 'Iv1.x', clientSecret: 'shh', slug: 'agenthub-test' });
+    expect(app?.privateKey).toContain('PRIVATE KEY');
+
+    // Four of five cannot connect anything, so it is off — and the log names what is missing.
+    const partial: string[] = [];
+    const { GITHUB_APP_SLUG: _slug, ...missingSlug } = env;
+    expect(optionsFromEnv(missingSlug, (l) => partial.push(l)).options.github?.app).toBeUndefined();
+    expect(partial.filter((l) => l.includes('GITHUB_APP_SLUG'))).toHaveLength(1);
+
+    // A `.pem` the hub cannot read is a startup problem, and says so at startup.
+    const unreadable: string[] = [];
+    expect(optionsFromEnv(
+      { ...env, GITHUB_APP_PRIVATE_KEY: join(dir, 'nope.pem') }, (l) => unreadable.push(l),
+    ).options.github?.app).toBeUndefined();
+    expect(unreadable.filter((l) => l.includes('GITHUB_APP_PRIVATE_KEY'))).toHaveLength(1);
+
+    // The app and the token live side by side; neither one's absence hides the other.
+    expect(optionsFromEnv({ ...env, GITHUB_TOKEN: 'ghp_x' }, quiet).options.github)
+      .toMatchObject({ token: 'ghp_x' });
+    expect(optionsFromEnv({ GITHUB_TOKEN: 'ghp_x' }, quiet).options.github).toEqual({ token: 'ghp_x' });
+    expect(optionsFromEnv({}, quiet).options.github).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('reads TURN_TIMEOUT_MINUTES as a whole number of at least 1, in ms, and drops anything else with a log line', () => {

@@ -1,4 +1,5 @@
 import './app.css';
+import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';
 import { mountAllocation } from './pages/allocation.js';
 import { mountCluster } from './pages/cluster.js';
@@ -8,6 +9,7 @@ import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
 import { mountRail, type PageId } from './rail.js';
 import { Store } from './store.js';
+import { toast } from './toast.js';
 
 /** Every page mounts into the same host and hands back its own teardown. */
 const MOUNTS: Record<PageId, (host: HTMLElement, store: Store) => () => void> = {
@@ -69,6 +71,12 @@ async function boot(): Promise<void> {
     teardown = MOUNTS[showing](page, store);
   }
   connect(store);
+  // Back from GitHub's install screen. Say so once and take the parameter off the address bar, so
+  // a reload doesn't toast again.
+  if (githubReturn(window.location.search)) {
+    toast('GitHub connected. Its repositories are in New project → Import a repo.');
+    window.history.replaceState(null, '', withoutGithubParam(window.location.href));
+  }
   // Dev harness: `?fake-turns` (or `=idle`, `=long`) plays scripted turn frames into the store.
   // The import is behind `DEV`, so a production build carries none of it.
   if (import.meta.env.DEV) {

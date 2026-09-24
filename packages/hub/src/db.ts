@@ -99,6 +99,18 @@ CREATE TABLE IF NOT EXISTS usage (
   usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
+-- One row per GitHub App installation a member completed from the Connect button. No token: the id
+-- names a grant the member made on GitHub (and can revoke there), and every actual token is minted
+-- per repository and thrown away. \`user\` is 'admin' today and is the column Phase F's accounts need.
+CREATE TABLE IF NOT EXISTS github_installations (
+  installation_id INTEGER PRIMARY KEY,
+  user TEXT NOT NULL,
+  account_login TEXT NOT NULL,
+  account_type TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_github_installations_user ON github_installations(user);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */

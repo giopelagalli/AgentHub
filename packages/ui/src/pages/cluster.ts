@@ -2,6 +2,7 @@ import type { Job, NodeInfo, UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import type { Store, UiState } from '../store.js';
 import { toast } from '../toast.js';
+import { githubLineText, type GithubStatus } from '../github.js';
 import { formatUsd } from '../turns.js';
 import { button, el } from './projects.js';
 
@@ -168,7 +169,11 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   const addNode = addNodePanel();
   // What the cloud half of the cluster has cost, above the machines it was spent on.
   const spend = el('p', 'cluster__spend', cloudSpendText(null));
-  nodesPane.append(addNode.head, addNode.panel, spend, nodes.node, nodesEmpty);
+  // How this hub reaches GitHub, with the way in (or out) beside it. It lives here because this is
+  // the page for what the hub itself is wired to; connecting from scratch is offered where the need
+  // arises, in New project → Import a repo (0034).
+  const githubLine = el('p', 'cluster__spend', githubLineText(null));
+  nodesPane.append(addNode.head, addNode.panel, spend, githubLine, nodes.node, nodesEmpty);
 
   const jobsPane = el('section', 'panel');
   const jobs = table(JOB_COLUMNS);
@@ -241,6 +246,39 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   // Spend moves with turns, not with the hub state frames these tables follow, so it has its own
   // slow refresh rather than a fetch per broadcast.
   const spendTimer = setInterval(loadSpend, SPEND_REFRESH_MS);
+
+  /**
+   * The GitHub line and the one action that goes with it. Connect and Manage are plain navigations
+   * (the hub's connect route redirects to GitHub); Disconnect only forgets the installation here —
+   * the grant itself is removed on GitHub, which is what the confirmation says.
+   */
+  const loadGithub = (): void => {
+    void getJson<GithubStatus>('/api/github/status')
+      .then((status) => {
+        githubLine.replaceChildren(githubLineText(status));
+        const installation = (status.installations ?? [])[0];
+        if (installation) {
+          const manage = el('a', undefined, 'Manage on GitHub');
+          manage.href = installation.manageUrl;
+          manage.target = '_blank';
+          manage.rel = 'noreferrer';
+          const drop = button('Disconnect');
+          drop.addEventListener('click', () => {
+            if (!window.confirm('Forget this GitHub connection? The app stays installed on GitHub until you remove it there.')) return;
+            void sendJson(`/api/github/installations/${installation.id}`, undefined, 'DELETE')
+              .then(() => { toast('GitHub disconnected.'); loadGithub(); })
+              .catch((error: unknown) => toast(`Could not disconnect: ${String(error)}`, 'error'));
+          });
+          githubLine.append(' · ', manage, ' ', drop);
+        } else if (status.installUrl) {
+          const start = button('Connect GitHub');
+          start.addEventListener('click', () => { window.location.assign(status.installUrl!); });
+          githubLine.append(' ', start);
+        }
+      })
+      .catch(() => { /* a hub too old to know the route leaves the line reading… */ });
+  };
+  loadGithub();
 
   const unsubscribe = store.subscribe(render);
   render(store.getState());

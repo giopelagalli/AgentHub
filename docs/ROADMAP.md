@@ -29,6 +29,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - Import a repo as a third way to start a project: clone into `workspace/`, a PRD drafted from the
   code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
   milestone and a pull request the owner opens (0028–0030).
+- **Connect GitHub** for a non-technical member: a button, GitHub's own "choose repositories"
+  screen, a repository picker in the import tab, and Manage/Disconnect on the Cluster page. The
+  hub keeps no GitHub credential — only an installation id — and mints a short-lived token per
+  repository; `GITHUB_TOKEN` stays as the fallback (0031–0034).
 
 ## In progress
 

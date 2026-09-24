@@ -9,3 +9,4 @@ data/
 dist/
 configs/hub.env
 .claude/settings.local.json
+configs/*.pem

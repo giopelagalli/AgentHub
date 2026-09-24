@@ -1,5 +1,8 @@
 import type { ProjectManifest } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
+import {
+  repoFieldMode, repoFieldNote, repoLabel, type GithubRepo, type GithubStatus,
+} from '../github.js';
 import { deriveSlug, repoProblem, slugProblem, wizardPayload, type Source } from '../newproject.js';
 import { streamPost } from '../stream.js';
 
@@ -82,6 +85,8 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   /** Aborts the draft when the card closes; null once the stream is over. */
   let draft: AbortController | null = null;
   let closed = false;
+  /** The connected repositories the picker offers; empty until the status says there are any. */
+  let repos: GithubRepo[] = [];
 
   const dispose = (): void => {
     if (closed) return;
@@ -148,9 +153,10 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   prd.placeholder = '# Product requirements\n\nPaste the document you already have.';
   prd.hidden = true;
 
-  // Import: the repository, the branch, and one line saying whether a private one can be reached.
-  // Free text today; a repo picker replaces this input later, with `repoProblem` still the
-  // fallback for a name typed by hand.
+  // Import: the repository, the branch, and one line about how this hub reaches GitHub. Which of
+  // the three ways in shows — a picker of connected repositories, the Connect button, or nothing
+  // but the text box — is `repoFieldMode`; the text box is always there, so a repository the picker
+  // does not list can still be typed and `repoProblem` still judges it.
   const repo = el('input', 'input mono');
   repo.placeholder = 'owner/repo';
   repo.spellcheck = false;
@@ -159,14 +165,32 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   branch.spellcheck = false;
   const repoField = field('Repository', repo);
   const branchField = field('Branch', branch);
-  const tokenNote = el('p', 'modal__note', 'Private repos need a GitHub token on the hub.');
+  const picker = el('select', 'input');
+  const pickerField = field('Repository', picker);
+  pickerField.wrap.hidden = true;
+  const connect = button('Connect GitHub', 'btn btn--primary');
+  connect.hidden = true;
+  const githubNote = el('p', 'modal__note', 'Private repos need a GitHub token on the hub.');
   const repoFields = el('div');
   const repoRow = el('div', 'wizard__row');
   repoRow.append(repoField.wrap, branchField.wrap);
-  repoFields.append(repoRow, tokenNote);
+  // The way in comes first — the picker, or the button and the line explaining it — and the typed
+  // fields sit under it, because in every mode but `typed` they are the second-best way in.
+  repoFields.append(pickerField.wrap, connect, githubNote, repoRow);
   repoFields.hidden = true;
   repo.addEventListener('input', () => {
     repoField.note.textContent = repo.value ? (repoProblem(repo.value) ?? '') : '';
+    say('');
+  });
+  // Choosing from the picker fills the text box rather than replacing it, so what gets posted is
+  // the same field either way — and the repository's own default branch becomes the placeholder,
+  // which is exactly what leaving Branch blank means.
+  picker.addEventListener('change', () => {
+    const chosen = repos.find((r) => r.fullName === picker.value);
+    if (!chosen) return;
+    repo.value = chosen.fullName;
+    repoField.note.textContent = '';
+    branch.placeholder = chosen.defaultBranch;
     say('');
   });
 
@@ -311,13 +335,31 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   host.appendChild(scrim);
   (options.existing ? idea : name).focus();
 
-  // Whether a private repository can be reached at all. The hub answers with a boolean and never
-  // the token; a hub too old to know the route simply leaves the line as it stands.
+  // How this hub reaches GitHub, and — when an App is connected — what it can reach. The hub
+  // answers with accounts and repository names, never a token; a hub too old to know the route
+  // simply leaves the line as it stands and the text box as the only way in.
   if (!options.existing) {
-    void getJson<{ configured: boolean }>('/api/github/status')
-      .then(({ configured }) => {
+    void getJson<GithubStatus>('/api/github/status')
+      .then(async (status) => {
         if (closed) return;
-        tokenNote.textContent = `Private repos need a GitHub token on the hub — ${configured ? 'configured' : 'not configured'}.`;
+        const mode = repoFieldMode(status);
+        githubNote.textContent = repoFieldNote(status);
+        connect.hidden = mode !== 'connect';
+        if (mode === 'connect') {
+          const url = status.installUrl ?? '/api/github/connect';
+          connect.addEventListener('click', () => { window.location.assign(url); });
+        }
+        if (mode !== 'picker') return;
+        repos = await getJson<GithubRepo[]>('/api/github/repos');
+        if (closed || !repos.length) return;
+        picker.replaceChildren(el('option', undefined, 'Choose a repository…'));
+        for (const item of repos) {
+          const option = el('option', undefined, repoLabel(item));
+          option.value = item.fullName;
+          picker.appendChild(option);
+        }
+        pickerField.wrap.hidden = false;
+        repoField.wrap.querySelector('.field__label')!.textContent = 'or type owner/repo';
       })
       .catch(() => { /* leave the note as the plain sentence */ });
   }

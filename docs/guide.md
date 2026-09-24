@@ -91,13 +91,30 @@ roadmap starts with what the code already delivers, listed as **done** milestone
 planned milestone is the first new thing. The project header shows `owner/repo @ branch` under the
 intent, linking to GitHub.
 
-**The token.** Public repositories clone without one. A private repository needs a token on the
-hub, and so does pushing anything back — the line under the Repository field says whether there is
-one. Make it at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained
-tokens**: *Only select repositories*, and under Repository permissions set **Contents: Read and
-write** (and **Pull requests: Read and write** if you want the button below to work). Put it in
-`hub.env` as `GITHUB_TOKEN` and restart the hub. It is never logged, never written into the clone,
-and never sent to the browser.
+**Connect GitHub.** Public repositories clone without anything. For a private one — and for
+pushing anything back — the hub needs to reach GitHub as you. If the hub has the AgentHub GitHub
+App set up (the owner does that once; see *Operating the hub*), the Import a repo tab shows a
+**Connect GitHub** button. Press it and you are on GitHub's own screen, signed in as yourself,
+choosing **which repositories AgentHub may use** — all of them, or a list you pick. Approve, and
+you land back on the hub with "GitHub connected".
+
+There is no token to make and nothing to paste. After that, the Repository field is a **picker** of
+the repositories you chose, newest first, with the branch shown; the text box stays beside it if
+you would rather type `owner/repo`.
+
+**Changing your mind.** The repositories are yours to change at any time: **GitHub → Settings →
+Applications → Installed GitHub Apps → AgentHub → Configure**, or the **Manage on GitHub** link on
+the Cluster page. **Disconnect**, on that same line, makes the hub forget the connection; the app
+stays installed on GitHub until you remove it there, under the same Configure screen
+(*Uninstall*).
+
+**The token (the other way).** A hub with no GitHub App uses one token instead, for everybody. Make
+it at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
+*Only select repositories*, and under Repository permissions set **Contents: Read and write** (and
+**Pull requests: Read and write** if you want the button below to work). Put it in `hub.env` as
+`GITHUB_TOKEN` and restart the hub. Either way the credential is never logged, never written into
+the clone, and never sent to the browser — the line under the Repository field says only *how* the
+hub reaches GitHub, never with what.
 
 **Getting work back.** Agents never push to your branch. After each *verified* milestone the hub
 commits what the milestone produced in `workspace/` and pushes it to **`agenthub/<slug>`** — one
@@ -287,6 +304,34 @@ Two systemd *user* units, installed from `deploy/spark/`:
 | `MAX_TURNS_PER_DAY`, `AUTO_TURNS` | The hub-wide cap (default 24) and the scheduler kill switch (`0`) |
 | `TURN_TIMEOUT_MINUTES` | How long a turn may run before it is cut short (default 45) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | The hub's own Telegram alerts (optional; JD is separate) |
+| `GITHUB_APP_*` | The GitHub App behind **Connect GitHub** (below); `GITHUB_TOKEN` is the fallback |
+
+**Registering the GitHub App (once).** This is what turns "Connect GitHub" on for everybody who
+uses the hub. At **GitHub → Settings → Developer settings → GitHub Apps → New GitHub App**:
+
+- **Callback URL** `https://<your hub>/api/github/callback` — and the same URL as the **Setup URL**.
+- Tick **Request user authorization (OAuth) during installation**, **Redirect on update** and
+  **Expire user authorization tokens**.
+- **Repository permissions**: Contents *Read and write*, Pull requests *Read and write*, Metadata
+  *Read-only*. No webhook is needed.
+- **Where can this app be installed**: any account, so members can connect their own.
+- Generate a private key; a `.pem` downloads. Keep it beside `hub.env`, readable only by the hub's
+  user (`chmod 600`).
+
+Then five keys in `hub.env`, and a restart:
+
+| Key | Where it comes from |
+|---|---|
+| `GITHUB_APP_ID` | the App's *App ID* |
+| `GITHUB_APP_CLIENT_ID` | the App's *Client ID* (`Iv…`) |
+| `GITHUB_APP_CLIENT_SECRET` | *Generate a client secret* on the App's page |
+| `GITHUB_APP_SLUG` | the App's URL name — the last part of `github.com/apps/<slug>` |
+| `GITHUB_APP_PRIVATE_KEY` | the **path** to the `.pem`, not its contents |
+
+All five or none: with four of them the hub logs which one is missing and leaves Connect GitHub
+off. It reads the `.pem` at startup, so an unreadable key is one clear line in the log rather than
+a failure hours later. Nothing about the App is ever logged, and no token it mints reaches the
+browser.
 
 Backups: `DATA_ROOT` is the whole state. Every project folder is a git repo, so `git log` inside
 `projects/<slug>` is the full history of that project.

@@ -10,6 +10,7 @@ import { orgChartModel, type OrgCard, type OrgTier } from '../org.js';
 import { openChat, type ChatActivity } from '../panels/chat.js';
 import { openMasterPanel } from '../panels/master.js';
 import { openSheet, type SheetHandle } from '../panels/sheet.js';
+import { projectSourceRow } from '../panels/source.js';
 import type { PrdDoc } from '../prd.js';
 import type { RoadmapDoc } from '../roadmap.js';
 import { turnsOf, type Store, type UiState } from '../store.js';
@@ -630,6 +631,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       el('span', 'pill pill--models', policyPillText(project.modelPolicy)),
     );
     headBox.append(line, el('p', 'detail__intent', project.intent));
+    const sourceRow = projectSourceRow(project);
+    if (sourceRow) headBox.append(sourceRow);
 
     const controls = el('div', 'actions');
     const priorityField = el('label', 'field');

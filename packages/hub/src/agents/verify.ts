@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Milestone, MilestoneVerification } from '@agenthub/shared';
 import { runShellTask } from '@agenthub/shared/shell';
 import type { ProjectBundle } from '../projects/bundle.js';
+import type { Github } from '../projects/github.js';
 import { patchMilestone } from '../projects/roadmap.js';
 import { SUBAGENT_TOOL_CALLS } from './budgets.js';
 import { runSubagent, truncateResult, workspaceTools, type SubagentDeps, type Tool, type ToolContext } from './tools.js';
@@ -111,13 +112,50 @@ async function runReview(deps: SubagentDeps, ctx: ToolContext, bundle: ProjectBu
   return { status: parseVerdict(report), who: reviewer.name, findings: truncateResult(report, REVIEW_REPORT_LIMIT), reported: true };
 }
 
+/** The turn event a push (or a failed one) leaves in the feed; `text` events are capped at 300. */
+const TURN_TEXT_LIMIT = 300;
+
+/**
+ * Pushes what a verified milestone produced to the project's own `agenthub/<slug>` branch, for an
+ * imported project only. The owner opens the pull request from there — nothing here touches the
+ * repository's own branch (`assertPushable` inside `pushWorkspace` refuses to).
+ *
+ * A push that fails never fails the milestone: the work is verified and recorded either way, and a
+ * missing token or an unreachable remote is the owner's to fix, not the manager's. It is reported
+ * where the owner looks — the decision log and the turn feed — rather than swallowed.
+ */
+async function pushVerified(github: Github | undefined, bundle: ProjectBundle, ctx: ToolContext, milestone: Milestone): Promise<void> {
+  const source = (await bundle.manifest()).source;
+  if (!source) return;
+  const note = (text: string): void => { ctx.onEvent?.({ kind: 'text', who: 'manager', text: text.slice(0, TURN_TEXT_LIMIT) }); };
+  if (!github) {
+    note(`could not push ${source.pushBranch}: this hub has no GitHub access configured`);
+    return;
+  }
+  try {
+    await github.pushWorkspace(bundle.workspace, source, `AgentHub: ${milestone.id} — ${milestone.title}`);
+    await bundle.setSource({ ...source, pushedAt: Date.now() });
+    await bundle.commit(`agent: push ${source.pushBranch} after ${milestone.id}`);
+    note(`pushed ${source.pushBranch} to ${source.owner}/${source.repo} — open a pull request when you are ready`);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await bundle.appendDecision({
+      title: `Push of ${source.pushBranch} failed after ${milestone.id}`,
+      rationale: `The milestone is verified and done; the branch did not reach ${source.owner}/${source.repo}: ${reason}`,
+      by: 'hub',
+    });
+    await bundle.commit(`hub: push failed after ${milestone.id}`);
+    note(`could not push ${source.pushBranch} to ${source.owner}/${source.repo}: ${reason}`);
+  }
+}
+
 /**
  * The only way a milestone becomes `done`: the project's tests run, the roster's reviewer reads what
  * changed, and both have to come back clean. Anything else leaves the milestone in progress and
  * hands the manager the evidence — the test tail, the reviewer's findings — to act on. Either way
  * the milestone records what was found, the decision log says so, and the turn feed sees it.
  */
-export function completeMilestoneTool(deps: SubagentDeps): Tool {
+export function completeMilestoneTool(deps: SubagentDeps, github?: Github): Tool {
   return {
     def: {
       type: 'tool', name: 'complete_milestone',
@@ -162,7 +200,10 @@ export function completeMilestoneTool(deps: SubagentDeps): Tool {
       await bundle.commit(`agent: milestone ${id} ${done ? 'done (verified)' : 'verification failed'}`);
       ctx.onEvent?.({ kind: 'verify', milestoneId: id, tests: tests.status, review: review.status, summary });
 
-      if (done) return `milestone ${id} is now done — ${summary}`;
+      if (done) {
+        await pushVerified(github, bundle, ctx, milestone);
+        return `milestone ${id} is now done — ${summary}`;
+      }
       return [
         `milestone ${id} stays in-progress — ${summary}`,
         ...(tests.status === 'fail' ? [`test output (last ${TEST_TAIL_LINES} lines):`, tests.tail || '(no output)'] : []),

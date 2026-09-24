@@ -1,3 +1,5 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PRD_SECTIONS, type Milestone, type PrdAudit } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
@@ -149,6 +151,76 @@ const DRAFT_SYSTEM = [
   `  decisions you most need from the owner. Nothing after them.`,
 ].join('\n');
 
+/**
+ * What the drafter is told when the project came from a repository. The default prompt writes a
+ * product that does not exist yet; here one does, and a PRD that describes the owner's wish as if
+ * from scratch would send every later turn rebuilding what is already there.
+ */
+const IMPORT_RULES = [
+  ``,
+  `This project was imported from an existing repository, and the code below is what it is today.`,
+  `Write the PRD for *this* product, not for a new one:`,
+  `- Describe the system as it exists — its real modules, technologies, data and operations — in the`,
+  `  present tense. The code is the source of truth where it and the owner's words disagree.`,
+  `- Put what the owner asked for on top of that: a requirement they named is a change to this`,
+  `  product, and the sections say what it is today and what it becomes.`,
+  `- Do not invent components the repository does not have, and do not describe existing behaviour as`,
+  `  something still to be built.`,
+].join('\n');
+
+/**
+ * The roadmap's counterpart. Milestones that are already delivered lead the list and are marked
+ * done, so the first *planned* milestone is the first thing that still has to be built.
+ */
+const IMPORT_ROADMAP_RULES = [
+  ``,
+  `This project was imported from an existing repository — the code below already runs. Begin the`,
+  `array with what the codebase already delivers, one milestone per capability that is genuinely`,
+  `there, in the order it was built, each with \`"status": "done"\`. Every milestone after those is`,
+  `new work and carries no "status". The first milestone without a status is therefore the first`,
+  `thing still to build.`,
+].join('\n');
+
+/** Top-level manifests worth showing the drafter; whichever of them the repository has. */
+const MANIFEST_FILES = ['package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod'];
+const README_LIMIT = 6000;
+const MANIFEST_LIMIT = 2000;
+
+/** Reads a workspace file, capped, or null when it isn't there. */
+async function capped(path: string, limit: number): Promise<string | null> {
+  const text = await readFile(path, 'utf8').catch(() => null);
+  if (text === null) return null;
+  return text.length <= limit ? text : `${text.slice(0, limit)}\n[truncated]`;
+}
+
+/**
+ * The existing product as the drafter reads it: the README (what the authors say it is), the
+ * top-level manifests (what it is built out of) and the workspace digest (what is actually there).
+ * Bounded on purpose — this is orientation, not the repository.
+ */
+export async function codebaseContext(workspace: string): Promise<string> {
+  const names = await readdir(workspace).catch((): string[] => []);
+  const readmeName = names.find((n) => /^readme(\.|$)/i.test(n));
+  const readme = readmeName ? await capped(join(workspace, readmeName), README_LIMIT) : null;
+  const manifests: string[] = [];
+  for (const name of MANIFEST_FILES) {
+    const body = names.includes(name) ? await capped(join(workspace, name), MANIFEST_LIMIT) : null;
+    if (body) manifests.push(`### ${name}\n\`\`\`\n${body}\n\`\`\``);
+  }
+  return [
+    `# The existing codebase`,
+    ``,
+    `## ${readmeName ?? 'README'}`,
+    readme ?? '(the repository has no README)',
+    ``,
+    `## Manifests`,
+    ...(manifests.length ? manifests : ['(no top-level manifest found)']),
+    ``,
+    `## Files`,
+    await workspaceDigest(workspace),
+  ].join('\n');
+}
+
 const REVISE_RULES = [
   ``,
   `This PRD already has the owner's material in it. Keep their content and their voice: fill the`,
@@ -246,18 +318,25 @@ export class PrdDrafter {
       const bundle = await this.deps.bundleFor(slug);
       const manifest = await bundle.manifest();
       const existing = input.prd?.trim();
-      const user = existing
-        ? [`# ${manifest.title}`, `Owner intent: ${manifest.intent}`, ``, `The PRD so far:`, ``, existing].join('\n')
-        : [
-          `# ${manifest.title}`,
-          `Owner intent: ${manifest.intent}`,
-          ``,
-          `The idea, in the owner's words:`,
-          ``,
-          input.idea?.trim() || manifest.intent,
-        ].join('\n');
+      // An imported project's PRD is drafted from the owner's intent *and* the code as it stands,
+      // so the document describes the product that exists and what the owner wants done to it.
+      const code = manifest.source ? await codebaseContext(bundle.workspace) : null;
+      const user = [
+        existing
+          ? [`# ${manifest.title}`, `Owner intent: ${manifest.intent}`, ``, `The PRD so far:`, ``, existing].join('\n')
+          : [
+            `# ${manifest.title}`,
+            `Owner intent: ${manifest.intent}`,
+            ``,
+            `The idea, in the owner's words:`,
+            ``,
+            input.idea?.trim() || manifest.intent,
+          ].join('\n'),
+        ...(code ? [``, code] : []),
+      ].join('\n');
 
-      const text = await this.run(slug, 'prd', bundle, existing ? DRAFT_SYSTEM + REVISE_RULES : DRAFT_SYSTEM, user, opts);
+      const system = DRAFT_SYSTEM + (existing ? REVISE_RULES : '') + (code ? IMPORT_RULES : '');
+      const text = await this.run(slug, 'prd', bundle, system, user, opts);
       const { markdown, questions } = splitQuestions(stripFence(text));
       if (!markdown) throw new Error('the model returned no PRD');
 
@@ -274,7 +353,11 @@ export class PrdDrafter {
       const prd = await bundle.prd();
       if (isPrdScaffold(prd)) throw new PrdNotDraftedError();
 
-      const text = await this.run(slug, 'roadmap', bundle, ROADMAP_SYSTEM, prd, opts);
+      // Same reason as the draft: what is already built has to lead the roadmap as done, and only
+      // the code says what that is — the PRD describes the product, not how far along it is.
+      const code = (await bundle.manifest()).source ? await codebaseContext(bundle.workspace) : null;
+      const system = ROADMAP_SYSTEM + (code ? IMPORT_ROADMAP_RULES : '');
+      const text = await this.run(slug, 'roadmap', bundle, system, code ? `${prd}\n\n${code}` : prd, opts);
       const milestones = normalizeMilestones(parseJsonArray(text));
       await bundle.writeRoadmap(milestones);
       await bundle.commit('agent: generate roadmap');

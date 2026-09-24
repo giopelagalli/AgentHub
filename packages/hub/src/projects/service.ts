@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type AutoRun, type ModelPolicy, type Priority, type ProjectIntake, type TurnBudget, type TurnEvent } from '@agenthub/shared';
+import { PRIORITY_RANK, type AutoRun, type GithubRepoRef, type ModelPolicy, type Priority, type ProjectIntake, type TurnBudget, type TurnEvent } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -10,6 +10,7 @@ import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import { ProjectBundle } from './bundle.js';
+import { pushBranchFor, type Github } from './github.js';
 import { ProjectOrchestrator } from './orchestrator.js';
 import { isPrdScaffold } from './prd.js';
 import { validateSlug, type Briefing, type Manifest, type ProjectStatus, type TaskItem } from './schema.js';
@@ -33,6 +34,8 @@ export interface ProjectServiceDeps {
   queue: JobQueue;
   registry: NodeRegistry;
   transcript: Transcript;
+  /** Clones an imported project's repository, and pushes what its verified milestones produce. */
+  github?: Github;
   /** Present once the hub wires the shared browser; absent, orchestrators get no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
@@ -67,6 +70,8 @@ export interface ProjectInit {
   priority?: Priority;
   /** The owner's idea or pasted PRD, kept on the manifest for the drafter to work from later. */
   intake?: ProjectIntake;
+  /** Import: the repository to clone into `workspace/`, and the branch to clone (else the default). */
+  source?: { ref: GithubRepoRef; branch?: string };
 }
 
 /** A project's latest briefing together with the prose the master is allowed to read. */
@@ -158,9 +163,33 @@ export class ProjectService {
     this.suspendedListeners.push(listener);
   }
 
+  /**
+   * Creates the bundle and, for an imported project, clones the repository into its `workspace/`
+   * before the project exists as far as anyone else is concerned. The clone is on the request's
+   * critical path deliberately: a project whose code has not landed yet has nothing to say, and a
+   * failed clone leaves nothing behind — the half-made bundle is removed so the slug is free again.
+   */
   async create(init: ProjectInit): Promise<Manifest> {
     const bundle = await ProjectBundle.create(this.deps.root, init);
     this.bundles.set(init.slug, bundle);
+    if (!init.source) return bundle.manifest();
+
+    const { github } = this.deps;
+    if (!github) throw new Error('this hub cannot import repositories');
+    const { ref } = init.source;
+    try {
+      await bundle.clearWorkspaceScaffold();
+      const { branch, commit } = await github.clone(ref, init.source.branch, bundle.workspace);
+      await bundle.setSource({
+        kind: 'github', owner: ref.owner, repo: ref.repo, branch,
+        importedCommit: commit, pushBranch: pushBranchFor(init.slug),
+      });
+      await bundle.commit(`chore: import ${ref.owner}/${ref.repo}@${branch}`);
+    } catch (err) {
+      this.bundles.delete(init.slug);
+      await rm(bundle.dir, { recursive: true, force: true });
+      throw err;
+    }
     return bundle.manifest();
   }
 
@@ -422,9 +451,9 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, leases, browser, external, onBusy, onEvent } = this.deps;
+    const { loop, gateway, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent } = this.deps;
     const orchestrator = new ProjectOrchestrator({
-      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, leases, browser, external,
+      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, github, leases, browser, external,
       ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
       onEvent: (sessionId, e, at) => {
         // Turns are serialized per slug, so the session a turn-start names is the one running now.

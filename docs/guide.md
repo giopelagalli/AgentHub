@@ -55,11 +55,12 @@ A **project page** has, top to bottom:
 
 ## Starting a project
 
-**New project** asks for a name and a slug, then one of two things:
+**New project** asks for a name and a slug, then one of three things:
 
 - **Start from an idea** — a paragraph. The PRD drafter (orchestrator tier) writes a full PRD
   from it, streaming, in about two minutes on the Spark.
 - **Paste a PRD** — your own document. It is filed as-is and scored.
+- **Import a repo** — a repository you already have. See below.
 
 The PRD has twelve fixed sections (overview, goals and non-goals, users, functional requirements,
 UI, data, security, scalability, operations, acceptance criteria, risks and open questions,
@@ -75,6 +76,36 @@ The decision log is the *why*: every notable choice an agent makes lands there w
 requirement it serves.
 
 Then **Run turn**.
+
+## Import a repo
+
+Give it the repository (`owner/repo`, or its github.com URL — the SSH form works too) and,
+optionally, a branch; leave the branch blank for the repository's default. The paragraph box asks
+**what do you want done?** — that is your instruction, not a description of the product.
+
+Continue clones the repository into the project's `workspace/` (full history) and *then* drafts the
+PRD, so the document describes the product you actually have with your request layered on top. The
+roadmap starts with what the code already delivers, listed as **done** milestones; the first
+planned milestone is the first new thing. The project header shows `owner/repo @ branch` under the
+intent, linking to GitHub.
+
+**The token.** Public repositories clone without one. A private repository needs a token on the
+hub, and so does pushing anything back — the line under the Repository field says whether there is
+one. Make it at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained
+tokens**: *Only select repositories*, and under Repository permissions set **Contents: Read and
+write** (and **Pull requests: Read and write** if you want the button below to work). Put it in
+`hub.env` as `GITHUB_TOKEN` and restart the hub. It is never logged, never written into the clone,
+and never sent to the browser.
+
+**Getting work back.** Agents never push to your branch. After each *verified* milestone the hub
+commits what the milestone produced in `workspace/` and pushes it to **`agenthub/<slug>`** — one
+commit per milestone. Once something has been pushed, an **Open pull request** button appears next
+to the repository line: it opens a pull request from `agenthub/<slug>` into the branch you
+imported, and then links to it. Pressing it again after a later milestone finds the same pull
+request rather than opening a second one. Merging is yours.
+
+A push that fails (no token, network, permissions) never un-does the milestone: it is recorded in
+the decision log and in the turn's Activity feed, and the next verified milestone tries again.
 
 ## Turns
 

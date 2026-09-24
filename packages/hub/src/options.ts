@@ -136,6 +136,12 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
       }
     : undefined;
 
+  // The one credential for imported projects: cloning a private repository and pushing the agents'
+  // branch back. Only its presence is ever reported (`GET /api/github/status`); the value is read
+  // here and handed to the git and REST calls, and is never logged or sent to the UI.
+  const githubToken = env.GITHUB_TOKEN;
+  if (!githubToken) log('[hub] GITHUB_TOKEN not set; only public repositories can be imported, and nothing can be pushed back');
+
   // A turn is the hub's most expensive unit, so the scheduler has a kill switch and a hub-wide cap.
   // `AUTO_TURNS=0` is the only value that disables it; a bad cap is dropped with one log line.
   const autoTurns = env.AUTO_TURNS === '0' ? false : undefined;
@@ -172,6 +178,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(auth ? { auth } : {}),
     ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
     ...(cloud ? { cloud } : {}),
+    ...(githubToken ? { github: { token: githubToken } } : {}),
     ...(autoTurns !== undefined ? { autoTurns } : {}),
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
     ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),

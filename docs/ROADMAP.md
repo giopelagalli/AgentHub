@@ -24,6 +24,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   per turn and per employee, `MAX_CLOUD_USD_PER_DAY` (0019, 0022–0024, 0026).
 - The v2 PRD and plan with the owner's decisions (0012–0015, 0018, 0020, 0021).
 
+- Import a repo as a third way to start a project: clone into `workspace/`, a PRD drafted from the
+  code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
+  milestone and a pull request the owner opens (0028–0030).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.

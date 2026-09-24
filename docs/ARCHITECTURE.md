@@ -80,6 +80,20 @@ roadmap generator), `roadmap.ts`, `digest.ts` (a bounded workspace digest for tu
 `prompts.ts` (all agent prompts; the verify-first rules, 0010), `service.ts` (turn serialization,
 time limit 0009, auto-run scheduling and caps 0001), `master.ts`.
 
+**`projects/github.ts`** — the third way to start a project: import one that already exists. The
+only module that ever sees a GitHub token, which is the point of it being one module. `Github`
+clones a repository into a project's `workspace/`, pushes `agenthub/<slug>` after a verified
+milestone, and opens the pull request the owner merges; `assertPushable` refuses, in code, to push
+anything to the repository's own branch (0030). The token comes from a `GithubCredentials`
+(`tokenFor(owner, repo)`) — one personal access token today, an App installation's short-lived
+token next — and reaches git as a per-invocation `http.extraHeader` through `GIT_CONFIG_*`, never in
+a remote URL and never in argv, with the whole inherited git environment stripped first (0028).
+`ProjectService.create` drives the clone on the request's own path and removes the half-made bundle
+if it fails; `PrdDrafter` reads the clone so the PRD describes the product that exists (0029);
+`GET /api/github/status` answers `{ configured, method }` and never the token. The workspace is a
+real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
+from that checkout's own index.
+
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 
 **`assistant/`, `telegram/`, `external/`, `resources.ts`, `control-switch.ts`** — the built-in

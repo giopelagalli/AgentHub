@@ -29,9 +29,12 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
 the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs and activity; a drawer per agent with a live *Now* feed and a chat. Pure model functions
-(`turns.ts`, `models.ts`, `org.ts`, `rail.ts`) are separated from DOM code so they are testable
-without a browser.
+docs, activity and the terminal; a drawer per agent with a live *Now* feed and a chat. Pure model
+functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, and the terminal's frame helpers) are
+separated from DOM code so they are testable without a browser — the UI's tests run in node, and
+nothing that needs a DOM is tested at all. No framework, but no longer no runtime dependencies:
+`@xterm/xterm` and `@xterm/addon-fit` are the terminal's, and they are imported eagerly, which is
+what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on ROADMAP).
 
 ## Hub modules (`packages/hub/src`)
 
@@ -105,9 +108,14 @@ joins pty and socket as binary frames both ways; the only text frames are `{type
 one-line notice down. The route is `owner` by `routeAccess`'s default, so the daemon bearer and
 per-node tokens cannot reach it, and the shell is handed `secretsStripped(process.env)` plus `TERM`
 and `AGENTHUB_PROJECT` — a terminal is not a way to read the hub's credentials out of its own
-process (0031). One socket is one shell: the process *group* is killed on close, so a backgrounded
-grandchild goes with it. Four sessions per hub, a 60-minute idle sweep, and a start/end log line
-that is a slug and a duration, never a transcript. The socket is paused until the pty and its
+process (0041). One socket is one shell: the process *group* is killed on close, so a backgrounded
+grandchild goes with it. Four sessions per hub, a 30-second sweep that closes an idle session at the
+hour and ends one whose peer stopped answering keepalive pings, and a start/end log line that is a
+slug and a duration, never a transcript. Output is paused when a slow socket has a megabyte still
+to write, so a `cat` of something enormous cannot be buffered into the hub's memory at pty speed;
+at shutdown the groups are killed outright, since the hub will not be there to run an escalation.
+It is registered only when the hub has a password, and refuses an upgrade whose `Origin` names any
+host:port but its own — a WebSocket handshake is not same-origin-policed and carries cookies. The socket is paused until the pty and its
 listeners are wired, because the handshake completes before the handler runs and xterm's first frame
 is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
 addon, reconnect with a banner — a reconnect is a *new* shell and says so).

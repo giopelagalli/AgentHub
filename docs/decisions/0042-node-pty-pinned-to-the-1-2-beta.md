@@ -1,4 +1,4 @@
-# 0032 — node-pty pinned to 1.2.0-beta.15, because 1.1.0's prebuilt helper is not executable
+# 0042 — node-pty pinned to 1.2.0-beta.15, because 1.1.0's prebuilt helper is not executable
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted

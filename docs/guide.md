@@ -259,8 +259,17 @@ machine the hub runs on. `Esc` closes the sheet; the button underneath reads *op
   along with anything it started in the background. Reconnecting gives you a *new* shell, which the
   banner says; **New session** does the same on purpose.
 - Four terminals at a time across the whole hub, and one that sits untouched for an hour closes
-  itself.
+  itself. A tab that went away without saying so — a closed laptop, a dropped tunnel — is noticed
+  within a minute and its shell ended, so it cannot sit on one of the four.
+- When the hub says why a session ended (the hour, the shell exiting, all four in use), the sheet
+  stops there and waits: **New session** is how you start another. Only an unexplained drop
+  reconnects on its own, and a reconnect is always a new shell.
 - The hub logs that a session happened — which project, how long — and never what you typed.
+
+**No password, no terminal.** A hub started without `HUB_PASSWORD` has no terminal route at all —
+the sheet opens and reports that it cannot connect — because owner-only means nothing on a hub
+where there is no owner to be. A browser page on another site cannot open one either, even in a
+browser you are logged in on: the hub checks where the request came from before it upgrades.
 
 **It is your shell, with your reach.** It is scoped to the workspace only in the sense that it
 *starts* there: everything the user running the hub can do, this can do. It is owner-only for that

@@ -46,7 +46,7 @@ function handshake(port: number, path: string, headers: string[] = []): Promise<
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write([
-        `GET ${path} HTTP/1.1`, 'Host: 127.0.0.1', 'Connection: Upgrade', 'Upgrade: websocket',
+        `GET ${path} HTTP/1.1`, `Host: 127.0.0.1:${port}`, 'Connection: Upgrade', 'Upgrade: websocket',
         'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
         ...headers, '', '',
       ].join('\r\n'));
@@ -103,26 +103,93 @@ function waitFor(socket: WebSocket, match: RegExp, ms = 8000): Promise<string> {
 const closed = (socket: WebSocket): Promise<{ code: number; reason: string }> =>
   new Promise((resolve) => socket.once('close', (code, reason) => resolve({ code, reason: String(reason) })));
 
+/** Polls until the pid is gone; false if it outlived the wait. */
+async function gone(pid: number): Promise<boolean> {
+  for (let i = 0; i < 100; i += 1) {
+    try { process.kill(pid, 0); } catch { return true; }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+}
+
+/** Runs `echo PID=$$` and returns the shell's own pid, which is its process group's id too. */
+async function shellPid(socket: WebSocket): Promise<number> {
+  const output = waitFor(socket, /PID=\d+/);
+  type(socket, 'echo PID=$$\n');
+  const pid = Number(/PID=(\d+)/.exec(await output)![1]);
+  expect(pid).toBeGreaterThan(0);
+  return pid;
+}
+
 const type = (socket: WebSocket, line: string): void => { socket.send(Buffer.from(line, 'utf8'), { binary: true }); };
+
+const PATH = '/api/projects/demo/terminal';
+
+/** A hub with a password, listening, plus its port and a logged-in cookie. */
+async function guardedHub(): Promise<{ port: number; cookie: string }> {
+  hub = createHub({ auth: { password: PASSWORD, daemonToken: DAEMON_TOKEN, sessionSecret: 'test-secret' } });
+  await hub.app.listen({ port: 0, host: '127.0.0.1' });
+  const login = await hub.app.inject({ method: 'POST', url: '/api/login', payload: { password: PASSWORD } });
+  return {
+    port: (hub.app.server.address() as { port: number }).port,
+    cookie: String(login.headers['set-cookie']).split(';')[0]!,
+  };
+}
 
 describeWithPty('terminal route auth', () => {
   it('refuses the upgrade without an owner session, and with the daemon bearer', async () => {
-    hub = createHub({ auth: { password: PASSWORD, daemonToken: DAEMON_TOKEN, sessionSecret: 'test-secret' } });
-    await hub.app.listen({ port: 0, host: '127.0.0.1' });
-    const port = (hub.app.server.address() as { port: number }).port;
-    const path = '/api/projects/demo/terminal';
-
-    expect(await handshake(port, path)).toContain('401 Unauthorized');
-    expect(await handshake(port, path, [`Authorization: Bearer ${DAEMON_TOKEN}`])).toContain('401 Unauthorized');
-
-    const login = await hub.app.inject({ method: 'POST', url: '/api/login', payload: { password: PASSWORD } });
-    const cookie = String(login.headers['set-cookie']).split(';')[0]!;
-    expect(await handshake(port, path, [`Cookie: ${cookie}`])).toContain('101 Switching Protocols');
+    const { port, cookie } = await guardedHub();
+    expect(await handshake(port, PATH)).toContain('401 Unauthorized');
+    expect(await handshake(port, PATH, [`Authorization: Bearer ${DAEMON_TOKEN}`])).toContain('401 Unauthorized');
+    expect(await handshake(port, PATH, [`Cookie: ${cookie}`])).toContain('101 Switching Protocols');
   });
 
-  it('classifies the route as the owner\'s', async () => {
+  it('refuses a node\'s own token, which is a credential for jobs and not for shells', async () => {
+    const { port, cookie } = await guardedHub();
+    const minted = await hub!.app.inject({
+      method: 'POST', url: '/api/nodes/enrollment-tokens', headers: { cookie }, payload: { name: 'strix' },
+    });
+    const enrolled = await hub!.app.inject({
+      method: 'POST', url: '/api/nodes/enroll',
+      payload: { token: (minted.json() as { token: string }).token, name: 'strix', arch: 'x86_64' },
+    });
+    const nodeToken = (enrolled.json() as { nodeToken: string }).nodeToken;
+    // The token is real: it drives the node's own routes.
+    const heartbeat = await hub!.app.inject({
+      method: 'POST', url: '/api/nodes/strix/heartbeat', headers: { authorization: `Bearer ${nodeToken}` },
+    });
+    expect(heartbeat.statusCode).toBe(200);
+    expect(await handshake(port, PATH, [`Authorization: Bearer ${nodeToken}`])).toContain('401 Unauthorized');
+  });
+
+  it('refuses an upgrade a cross-origin page asked for, even with the session cookie', async () => {
+    const { port, cookie } = await guardedHub();
+    const cookieHeader = `Cookie: ${cookie}`;
+    expect(await handshake(port, PATH, [cookieHeader, 'Origin: https://evil.example'])).toContain('403 Forbidden');
+    // Same host, wrong port is still another origin, and a shell is too much to lose to it.
+    expect(await handshake(port, PATH, [cookieHeader, `Origin: http://127.0.0.1:${port + 1}`])).toContain('403 Forbidden');
+    expect(await handshake(port, PATH, [cookieHeader, `Origin: http://127.0.0.1:${port}`])).toContain('101 Switching Protocols');
+  });
+
+  it('is not there at all on a hub with no password', async () => {
+    hub = createHub({});
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = (hub.app.server.address() as { port: number }).port;
+    // No route, so no shell: `owner` means nothing where there is no credential to hold.
+    expect(await handshake(port, PATH)).toContain('404');
+  });
+
+  it('classifies the route as the owner\'s, and checks the origin itself', async () => {
     const { routeAccess } = await import('../src/auth.js');
     expect(routeAccess('GET', terminal!.TERMINAL_ROUTE)).toBe('owner');
+
+    const { originAllowed } = terminal!;
+    expect(originAllowed(undefined, 'spark:4000')).toBe(true);
+    expect(originAllowed('http://spark:4000', 'spark:4000')).toBe(true);
+    expect(originAllowed('http://spark:4001', 'spark:4000')).toBe(false);
+    expect(originAllowed('https://evil.example', 'spark:4000')).toBe(false);
+    expect(originAllowed('null', 'spark:4000')).toBe(false);
+    expect(originAllowed('http://spark:4000', undefined)).toBe(false);
   });
 });
 
@@ -175,20 +242,19 @@ describeWithPty('terminal session', () => {
   it('leaves no process behind when the socket closes', async () => {
     const base = await serve();
     const socket = await open(base);
-    const output = waitFor(socket, /PID=\d+/);
-    type(socket, 'echo PID=$$\n');
-    const pid = Number(/PID=(\d+)/.exec(await output)![1]);
-    expect(pid).toBeGreaterThan(0);
-
+    const pid = await shellPid(socket);
     socket.close();
-    const gone = async (): Promise<boolean> => {
-      for (let i = 0; i < 100; i += 1) {
-        try { process.kill(pid, 0); } catch { return true; }
-        await new Promise((r) => setTimeout(r, 50));
-      }
-      return false;
-    };
-    expect(await gone()).toBe(true);
+    expect(await gone(pid)).toBe(true);
+  });
+
+  it('kills the shell outright when the hub itself goes down', async () => {
+    const base = await serve();
+    const socket = await open(base);
+    const pid = await shellPid(socket);
+    // Nothing may outlive the hub, so shutdown does not leave an escalation timer behind — it is
+    // not going to be here to run one.
+    await app!.close();
+    expect(await gone(pid)).toBe(true);
   });
 });
 

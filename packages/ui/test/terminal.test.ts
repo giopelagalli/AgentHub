@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { terminalSummary } from '../src/artifacts.js';
-import { encodeInput, parseNotice, reconnectDelay, resizeFrame, terminalUrl } from '../src/views/terminal.js';
+import { MAX_RECONNECTS, encodeInput, parseNotice, reconnectAfter, reconnectDelay, resizeFrame, terminalUrl } from '../src/views/terminal.js';
 
 // The view itself needs a DOM and a socket; these are its pure parts — the frames that go over the
 // wire in both directions, and the one line the big button shows.
@@ -36,6 +36,19 @@ describe('terminal frames', () => {
 
   it('backs off between reconnects and then holds', () => {
     expect([0, 1, 2, 3, 4, 9].map(reconnectDelay)).toEqual([1000, 2000, 4000, 8000, 8000, 8000]);
+  });
+
+  it('dials again after an unexplained drop, and never after the hub said why', () => {
+    expect(reconnectAfter(null, 0)).toBe(true);
+    // The idle timeout, a shell that exited, the hub going down: every one of these arrives as a
+    // `closed` frame, and reconnecting would undo it — the idle timeout would be a no-op and a
+    // shell that exits at once would become a spawn loop.
+    expect(reconnectAfter(parseNotice(JSON.stringify({ type: 'closed', reason: 'idle' })), 0)).toBe(false);
+    expect(reconnectAfter(parseNotice(JSON.stringify({ type: 'closed', reason: 'shell exited (0)' })), 0)).toBe(false);
+    expect(reconnectAfter(parseNotice(JSON.stringify({ type: 'error', message: 'too many terminals' })), 0)).toBe(false);
+    // And the retries are finite, so a hub that is simply not there is not dialled forever.
+    expect(reconnectAfter(null, MAX_RECONNECTS - 1)).toBe(true);
+    expect(reconnectAfter(null, MAX_RECONNECTS)).toBe(false);
   });
 });
 

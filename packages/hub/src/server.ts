@@ -640,7 +640,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   leases.onChange(() => broadcastState());
   // After `registerWs`, which is what registers @fastify/websocket: a route may only ask for
   // `websocket: true` once that plugin has booted, and plugins boot in the order they were added.
-  app.register(terminalRoutes, { projects });
+  // Only on a hub that has a password: `owner` means nothing where there is no credential to hold,
+  // and a shell is not something to offer on an unguarded hub.
+  if (auth) app.register(terminalRoutes, { projects });
 
   // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
   const refreshes = new Set<Promise<void>>();

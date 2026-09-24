@@ -36,8 +36,10 @@ export function encodeInput(text: string): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(text);
 }
 
+export interface Notice { type: 'error' | 'closed'; message: string }
+
 /** A text frame from the hub: why it is refusing, or why it closed. Anything else is ignored. */
-export function parseNotice(text: string): { type: 'error' | 'closed'; message: string } | null {
+export function parseNotice(text: string): Notice | null {
   let msg: { type?: unknown; message?: unknown; reason?: unknown };
   try {
     msg = JSON.parse(text) as { type?: unknown; message?: unknown; reason?: unknown };
@@ -52,6 +54,20 @@ export function parseNotice(text: string): { type: 'error' | 'closed'; message: 
 /** Backoff between reconnects: 1s, 2s, 4s, 8s, then every 8s. */
 export function reconnectDelay(attempt: number): number {
   return Math.min(8000, 1000 * 2 ** Math.max(0, attempt));
+}
+
+/** After this many failed attempts the banner stops promising and hands the reader the button. */
+export const MAX_RECONNECTS = 5;
+
+/**
+ * Whether a socket that just closed should be dialled again, given the last notice the hub sent on
+ * it. Only an *unexplained* drop reconnects. A notice means the hub ended this session on purpose —
+ * the idle timeout, a shell that exited, the session cap, an unknown project — and every one of
+ * those would be undone by a fresh pty: the idle timeout would be a no-op, and a shell that exits
+ * the moment it starts would become a spawn loop. **New session** is the deliberate restart.
+ */
+export function reconnectAfter(notice: Notice | null, attempts: number): boolean {
+  return notice === null && attempts < MAX_RECONNECTS;
 }
 
 export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
@@ -76,8 +92,8 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
   term.open(screen);
 
   let socket: WebSocket | null = null;
-  /** Set when the hub itself refused (the cap, an unknown project): retrying would only hammer it. */
-  let refused = false;
+  /** The last thing the hub said on this socket, which is what decides whether to dial again. */
+  let notice: Notice | null = null;
   let attempt = 0;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
@@ -102,17 +118,17 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
 
     next.addEventListener('open', () => {
       attempt = 0;
-      refused = false;
+      notice = null;
       setBanner('');
       resize();
       term.focus();
     });
     next.addEventListener('message', (event: MessageEvent) => {
       if (typeof event.data === 'string') {
-        const notice = parseNotice(event.data);
-        if (!notice) return;
-        setBanner(notice.message);
-        if (notice.type === 'error') refused = true;
+        const said = parseNotice(event.data);
+        if (!said) return;
+        notice = said;
+        setBanner(said.message);
         return;
       }
       term.write(new Uint8Array(event.data as ArrayBuffer));
@@ -120,10 +136,13 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
     next.addEventListener('close', () => {
       if (disposed || socket !== next) return;
       socket = null;
-      // A banner the hub already wrote (the cap, an unknown project) is the better answer; a drop
-      // with nothing said is the socket itself going away.
-      if (refused) return;
-      if (!banner.textContent) setBanner('Connection lost — reconnecting…');
+      if (!reconnectAfter(notice, attempt)) {
+        // The hub said why it ended this one, or the retries are spent. Either way the next shell
+        // is the reader's call, not ours.
+        if (!banner.textContent) setBanner('Disconnected — press New session to start another shell.');
+        return;
+      }
+      setBanner('Connection lost — reconnecting…');
       const wait = reconnectDelay(attempt);
       attempt += 1;
       retry = setTimeout(() => {
@@ -140,7 +159,7 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
     attempt = 0;
     const old = socket;
     socket = null;
-    refused = false;
+    notice = null;
     old?.close();
     term.reset();
     setBanner('');

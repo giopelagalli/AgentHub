@@ -33,8 +33,23 @@ export const MAX_TERMINALS = 4;
 /** A session with no traffic either way for this long is closed. */
 export const TERMINAL_IDLE_MS = 60 * 60 * 1000;
 
-/** How often idle sessions are swept for. */
-const SWEEP_MS = 60 * 1000;
+/** How often sessions are swept: for idleness, and for a peer that has stopped answering. */
+const SWEEP_MS = 30 * 1000;
+
+/**
+ * How long between keepalive pings. A socket whose peer vanished without a FIN — a laptop lid, a
+ * dropped tunnel — stays "open" here forever, and a half-open one would hold both a pty and one of
+ * the four session slots. A ping that goes unanswered until the next sweep ends the session.
+ */
+const PING_MS = 30 * 1000;
+
+/**
+ * Output is paused when this much of it is waiting on a slow socket, and resumed once the backlog
+ * has drained to a quarter of it. Without this a `cat` of something enormous is buffered in the
+ * hub's memory as fast as the pty can produce it.
+ */
+const SEND_HIGH_WATER = 1024 * 1024;
+const SEND_LOW_WATER = SEND_HIGH_WATER / 4;
 
 /** How long a closing session's process group gets to die on a HUP before it is killed outright. */
 const KILL_ESCALATION_MS = 5000;
@@ -72,6 +87,23 @@ export function parseControl(text: string): TerminalControl | null {
   return cols && rows ? { type: 'resize', cols, rows } : null;
 }
 
+/**
+ * Whether an upgrade may proceed, given the request's `Origin` and `Host`. A WebSocket handshake is
+ * not subject to the same-origin policy and carries cookies, so any page in the owner's browser
+ * could otherwise open this socket and hold a shell. A non-browser client (curl, a test) sends no
+ * Origin and is let through — the session cookie is still the credential. The comparison is on the
+ * full host *including the port*: "same site" is port-blind, and the prize here is a shell.
+ */
+export function originAllowed(origin: string | undefined, host: string | undefined): boolean {
+  if (origin === undefined) return true;
+  if (!host) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
+
 /** Whether the process group `pid` leads still has members. */
 function groupAlive(pid: number): boolean {
   try { process.kill(-pid, 0); return true; } catch { return false; }
@@ -83,9 +115,15 @@ function groupAlive(pid: number): boolean {
  * (a backgrounded server, an npm script). SIGHUP first — a shell losing its terminal is exactly
  * what that means — then SIGKILL for anything that ignored it.
  */
-function killGroup(pid: number): void {
+function killGroup(pid: number, immediate = false): void {
   if (!groupAlive(pid)) return;
   try { process.kill(-pid, 'SIGHUP'); } catch { /* already gone */ }
+  if (immediate) {
+    // The hub is going down and will not be here to run the escalation timer: nothing may outlive
+    // it, so the group is killed outright rather than asked twice.
+    try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+    return;
+  }
   const escalate = setTimeout(() => {
     if (groupAlive(pid)) {
       try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
@@ -100,6 +138,11 @@ interface Session {
   socket: WebSocket;
   startedAt: number;
   lastActivity: number;
+  /** When the last keepalive ping went out, and whether it is still unanswered. */
+  lastPing: number;
+  awaitingPong: boolean;
+  /** True while the pty is paused because the socket has too much output still to write. */
+  paused: boolean;
 }
 
 /** Closes the socket after telling the client why, in a text frame it can put in its banner. */
@@ -117,23 +160,36 @@ export const terminalRoutes: FastifyPluginAsync<TerminalDeps> = async (app, deps
   const now = deps.now ?? Date.now;
   const sessions = new Set<Session>();
 
-  const end = (session: Session, why: string): void => {
+  const end = (session: Session, why: string, immediate = false): void => {
     if (!sessions.delete(session)) return;
     const seconds = Math.round((now() - session.startedAt) / 1000);
     // Transcript-free by design: what the owner typed and what the shell answered is never logged,
     // only that a session existed, for which project, and for how long.
     console.log(`[terminal] ${session.slug} session ended after ${seconds}s (${why})`);
-    killGroup(session.pty.pid);
+    killGroup(session.pty.pid, immediate);
   };
 
   const sweep = setInterval(() => {
     for (const session of sessions) {
-      if (now() - session.lastActivity < TERMINAL_IDLE_MS) continue;
-      try {
-        session.socket.send(JSON.stringify({ type: 'closed', reason: 'idle' }));
-      } catch { /* closing anyway */ }
-      session.socket.close(1000, 'idle');
-      end(session, 'idle');
+      if (now() - session.lastActivity >= TERMINAL_IDLE_MS) {
+        try {
+          session.socket.send(JSON.stringify({ type: 'closed', reason: 'idle' }));
+        } catch { /* closing anyway */ }
+        session.socket.close(1000, 'idle');
+        end(session, 'idle');
+        continue;
+      }
+      if (now() - session.lastPing < PING_MS) continue;
+      if (session.awaitingPong) {
+        // No pong since the last ping: the peer is gone without having said so. `terminate` rather
+        // than `close`, because a closing handshake with nobody on the other end never finishes.
+        session.socket.terminate();
+        end(session, 'no pong');
+        continue;
+      }
+      session.awaitingPong = true;
+      session.lastPing = now();
+      try { session.socket.ping(); } catch { /* closing anyway */ }
     }
   }, deps.sweepMs ?? SWEEP_MS);
   sweep.unref?.();
@@ -141,12 +197,22 @@ export const terminalRoutes: FastifyPluginAsync<TerminalDeps> = async (app, deps
   app.addHook('onClose', async () => {
     clearInterval(sweep);
     for (const session of [...sessions]) {
-      session.socket.close(1001, 'hub closing');
-      end(session, 'hub closing');
+      session.socket.terminate();
+      end(session, 'hub closing', true);
     }
   });
 
-  app.get(TERMINAL_ROUTE, { websocket: true }, async (socket: WebSocket, req) => {
+  app.get(TERMINAL_ROUTE, {
+    websocket: true,
+    // Before the upgrade, not after: a cross-origin page must never get as far as holding a socket.
+    // The refused request hangs up its own connection for the same reason the auth hook's 401 does.
+    onRequest: async (req, reply) => {
+      if (originAllowed(req.headers.origin, req.headers.host)) return;
+      console.warn(`[terminal] refused an upgrade from origin ${req.headers.origin}`);
+      reply.raw.on('finish', () => reply.raw.socket?.end());
+      return reply.code(403).send({ error: 'cross-origin' });
+    },
+  }, async (socket: WebSocket, req) => {
     const { slug } = req.params as { slug: string };
     // The handshake completes before this handler runs, so the client may already be sending —
     // xterm's first frame is the resize it fits itself to. Paused until the pty and the listeners
@@ -180,7 +246,10 @@ export const terminalRoutes: FastifyPluginAsync<TerminalDeps> = async (app, deps
       return refuse(socket, `could not start ${shell}: ${(err as Error).message}`, 1011);
     }
 
-    const session: Session = { slug, pty: child, socket, startedAt: now(), lastActivity: now() };
+    const session: Session = {
+      slug, pty: child, socket, startedAt: now(), lastActivity: now(),
+      lastPing: now(), awaitingPong: false, paused: false,
+    };
     sessions.add(session);
     console.log(`[terminal] ${slug} session started (${sessions.size}/${MAX_TERMINALS})`);
 
@@ -188,8 +257,24 @@ export const terminalRoutes: FastifyPluginAsync<TerminalDeps> = async (app, deps
       session.lastActivity = now();
       // Binary both ways: the pty's bytes are a stream, not a string, and a UTF-8 sequence that
       // straddles two chunks must not be mangled by a text frame's own validation.
-      try { socket.send(Buffer.from(data, 'utf8'), { binary: true }); } catch { /* socket closing */ }
+      try {
+        socket.send(Buffer.from(data, 'utf8'), { binary: true }, () => {
+          // Fires once this frame has been written. Nothing follows a paused pty, so this is the
+          // callback that sees the backlog drain.
+          if (session.paused && socket.bufferedAmount <= SEND_LOW_WATER) {
+            session.paused = false;
+            child.resume();
+          }
+        });
+      } catch { /* socket closing */ }
+      if (!session.paused && socket.bufferedAmount > SEND_HIGH_WATER) {
+        session.paused = true;
+        child.pause();
+      }
     });
+    // A pong is the peer answering a ping, not the owner doing anything: it clears the keepalive
+    // but deliberately does not count as activity, or a forgotten tab would never idle out.
+    socket.on('pong', () => { session.awaitingPong = false; });
     child.onExit(({ exitCode }) => {
       try {
         socket.send(JSON.stringify({ type: 'closed', reason: `shell exited (${exitCode})` }));

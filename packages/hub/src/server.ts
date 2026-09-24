@@ -1341,8 +1341,9 @@ export function createHub(opts: HubOptions = {}): Hub {
    * Where GitHub sends the browser back. An owner route like any other — the member is logged in to
    * this hub in the same browser, and `SameSite=Lax` sends the session cookie on a top-level GET.
    *
-   * GitHub warns that the `installation_id` on this URL can be spoofed, so it is never trusted:
-   * the `code` is exchanged for a *user* token, GitHub is asked which installations that user has
+   * Nothing on this URL is trusted. The `state` must be one this hub signed for this member (0032),
+   * and GitHub warns that the `installation_id` can be spoofed, so that is checked too: the `code`
+   * is exchanged for a *user* token, GitHub is asked which installations that user has
    * (`GET /user/installations`, which covers their own account and every organisation they can
    * administer), and only an id in that list is stored. The user token is dropped immediately —
    * everything afterwards runs on installation tokens (0031).
@@ -1350,14 +1351,19 @@ export function createHub(opts: HubOptions = {}): Hub {
   app.get('/api/github/callback', async (req, reply) => {
     if (!githubApp) return reply.code(400).send({ error: 'no GitHub App is configured on this hub' });
     const query = req.query as Partial<Record<'installation_id' | 'setup_action' | 'code' | 'state', string>>;
-    // GitHub carries `state` through the install leg but not every later one (a "redirect on
-    // update" can arrive without it), so it is required to *verify* when present rather than to
-    // exist. The session cookie is what makes the request the member's either way.
-    if (query.state !== undefined && connectState.verify(query.state) !== ADMIN_USER) {
+    // A return with no `code` cannot tell us who is connecting, so it can neither be trusted nor
+    // acted on — but it is also what a "redirect on update" looks like when the member only changed
+    // which repositories an installation covers, which is not an error to shout about. Nothing is
+    // stored and the browser goes home. This comes first so the check below cannot turn a routine
+    // update into a 400.
+    if (!query.code) return reply.redirect('/?github=connected', 302);
+    // Everything past here binds an installation to a member, so the `state` this hub signed is
+    // required, not merely verified when it happens to be there: GitHub preserves `state` through
+    // `installations/new`, and without that requirement a callback URL someone else assembled —
+    // their `code`, their `installation_id` — would attach their installation to this account the
+    // moment the member opened it (or to anyone at all on a hub running without a password).
+    if (connectState.verify(query.state) !== ADMIN_USER) {
       return reply.code(400).send({ error: 'this connection link has expired — press Connect GitHub again' });
-    }
-    if (!query.code) {
-      return reply.code(400).send({ error: 'GitHub did not say who is connecting — press Connect GitHub again' });
     }
     const installationId = Number(query.installation_id);
     if (!Number.isInteger(installationId) || installationId <= 0) {

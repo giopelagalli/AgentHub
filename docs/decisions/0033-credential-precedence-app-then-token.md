@@ -25,6 +25,14 @@ working one behind it.
 The App is first because its token is the narrower one: minted per installation, scoped to the
 repositories the member chose on GitHub, and dead in an hour.
 
+For the fallback to mean anything, `AppCredentials` has to answer **null** for a repository it
+cannot actually reach. It matches on each installation's *repository list*, never on the account
+name: GitHub's install screen defaults to "only select repositories", so an installation on `acme`
+routinely covers a few `acme/*` and not the rest, and an account match would hand back a token that
+cannot read the repository — stopping the chain on a credential that does not work. The account
+name is used only when a listing could not be read at all (GitHub unreachable), where a same-account
+installation is a better guess than nothing.
+
 ## Consequences
 "PAT fallback" is literal: a member with the App connected can still import a repository only the
 owner's token reaches, and nothing has to be reconfigured for that to work. The cost is that a

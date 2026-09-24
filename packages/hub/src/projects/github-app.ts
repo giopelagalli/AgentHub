@@ -34,8 +34,10 @@ const JWT_BACKDATE_SEC = 60;
 const TOKEN_EARLY_EXPIRY_MS = 5 * 60 * 1000;
 /** How long a listing of an installation's repositories is reused. */
 export const REPO_CACHE_MS = 5 * 60 * 1000;
-/** Pages of 100 repositories to walk before giving up on an enormous installation. */
-const MAX_REPO_PAGES = 5;
+/** GitHub's own maximum page size for both listings below. */
+const PER_PAGE = 100;
+/** Pages to walk before giving up on an enormous account: 500 repositories, 500 installations. */
+const MAX_PAGES = 5;
 /** How long a connect round trip may take before its `state` stops verifying. */
 export const CONNECT_STATE_TTL_MS = 15 * 60 * 1000;
 
@@ -204,24 +206,33 @@ export class GithubAppClient {
    * installations are theirs.
    */
   async userInstallations(userToken: string): Promise<{ id: number; account: InstallationAccount }[]> {
-    const body = await this.call(
-      `${this.apiBase}/user/installations?per_page=100`, { headers: this.headers(`Bearer ${userToken}`) },
-    );
-    const list = (body as { installations?: unknown } | null)?.installations;
-    if (!Array.isArray(list)) return [];
-    return list.flatMap((raw) => {
-      const row = raw as { id?: unknown; account?: { id?: unknown; login?: unknown; type?: unknown } | null };
-      const account = row.account;
-      if (typeof row.id !== 'number' || !account || typeof account.login !== 'string') return [];
-      return [{
-        id: row.id,
-        account: {
-          id: typeof account.id === 'number' ? account.id : 0,
-          login: account.login,
-          type: typeof account.type === 'string' ? account.type : 'User',
-        },
-      }];
-    });
+    const out: { id: number; account: InstallationAccount }[] = [];
+    // Paginated for the same reason the repository listing is: a member who belongs to many
+    // organisations would otherwise have the installation they just made fall off the first page,
+    // and the callback would refuse the very install they completed.
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const body = await this.call(
+        `${this.apiBase}/user/installations?per_page=${PER_PAGE}&page=${page}`,
+        { headers: this.headers(`Bearer ${userToken}`) },
+      );
+      const list = (body as { installations?: unknown } | null)?.installations;
+      if (!Array.isArray(list) || list.length === 0) break;
+      for (const raw of list) {
+        const row = raw as { id?: unknown; account?: { id?: unknown; login?: unknown; type?: unknown } | null };
+        const account = row.account;
+        if (typeof row.id !== 'number' || !account || typeof account.login !== 'string') continue;
+        out.push({
+          id: row.id,
+          account: {
+            id: typeof account.id === 'number' ? account.id : 0,
+            login: account.login,
+            type: typeof account.type === 'string' ? account.type : 'User',
+          },
+        });
+      }
+      if (list.length < PER_PAGE) break;
+    }
+    return out;
   }
 
   /** A token scoped to one installation, good for an hour, with the expiry GitHub stamped on it. */
@@ -239,12 +250,12 @@ export class GithubAppClient {
     };
   }
 
-  /** Every repository an installation reaches, paginated. */
+  /** Every repository an installation reaches, paginated, up to `MAX_PAGES × PER_PAGE`. */
   async installationRepos(token: string): Promise<GithubRepoSummary[]> {
     const out: GithubRepoSummary[] = [];
-    for (let page = 1; page <= MAX_REPO_PAGES; page += 1) {
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
       const body = await this.call(
-        `${this.apiBase}/installation/repositories?per_page=100&page=${page}`,
+        `${this.apiBase}/installation/repositories?per_page=${PER_PAGE}&page=${page}`,
         { headers: this.headers(`Bearer ${token}`) },
       );
       const list = (body as { repositories?: unknown } | null)?.repositories;
@@ -259,7 +270,7 @@ export class GithubAppClient {
           updatedAt: typeof repo.updated_at === 'string' ? repo.updated_at : '',
         });
       }
-      if (list.length < 100) break;
+      if (list.length < PER_PAGE) break;
     }
     return out;
   }
@@ -303,9 +314,14 @@ export class GithubAppClient {
  * installation that covers the repository and mints a token for it, cached until shortly before
  * GitHub expires it.
  *
- * The lookup is the account name first — an installation on `acme` covers `acme/*` — and only when
- * that misses does it walk each installation's repository list, which is how a repository shared
- * with the member through an organisation they do not own still resolves.
+ * The lookup is each installation's *repository list*, never the account name: GitHub's install
+ * screen defaults to "only select repositories", so an installation on `acme` routinely covers a
+ * handful of `acme/*` and not the rest. Matching on the account would hand back a token that
+ * cannot read the repository and, worse, would count as an answer — the personal access token
+ * behind it in the chain (0033) would never be asked. A miss returns null so the chain carries on.
+ *
+ * The account name is the fallback for the one case the listing cannot settle: a listing that
+ * could not be read at all. Then a same-account installation is the better guess than nothing.
  */
 export class AppCredentials implements GithubCredentials {
   readonly method = 'app' as const;
@@ -322,16 +338,26 @@ export class AppCredentials implements GithubCredentials {
 
   async tokenFor(owner: string, repo: string): Promise<string | null> {
     const rows = this.installations.list(this.user);
-    const byAccount = rows.find((row) => row.accountLogin.toLowerCase() === owner.toLowerCase());
-    if (byAccount) return (await this.token(byAccount.installationId)).token;
     const wanted = `${owner}/${repo}`.toLowerCase();
+    let unreadable = false;
     for (const row of rows) {
-      const list = await this.repositories(row.installationId).catch(() => []);
+      let list: GithubRepoSummary[];
+      try {
+        list = await this.repositories(row.installationId);
+      } catch {
+        // GitHub unreachable, or the installation is gone. Noted, and the next one still gets asked.
+        unreadable = true;
+        continue;
+      }
       if (list.some((r) => r.fullName.toLowerCase() === wanted)) {
         return (await this.token(row.installationId)).token;
       }
     }
-    return null;
+    // Every listing was read and none covered it: that is a definite no, and the chain moves on.
+    if (!unreadable) return null;
+    const byAccount = rows.find((row) => row.accountLogin.toLowerCase() === owner.toLowerCase());
+    if (!byAccount) return null;
+    return (await this.token(byAccount.installationId).catch(() => null))?.token ?? null;
   }
 
   /** Every repository the member's installations reach, newest first — what the picker shows. */

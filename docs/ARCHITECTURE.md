@@ -106,8 +106,10 @@ member and an expiry — nothing is stored, 0032), and `GET /api/github/callback
 dropped (0031). GitHub's `installation_id` is never trusted; only an id in `GET /user/installations`
 is stored, in `github_installations` (installation id, user, account — no token). `AppCredentials`
 is a second `GithubCredentials` beside `PatCredentials`: it finds the installation covering a
-repository (account name first, then each installation's repository list, cached 5 minutes) and
-mints a per-installation token, cached until five minutes before GitHub expires it, with the app's
+repository by that installation's own repository listing (cached 5 minutes; the account name is the
+fallback only when a listing cannot be read, so a repository an installation was not given falls
+through to the token rather than stopping the chain) and mints a per-installation token, cached
+until five minutes before GitHub expires it, with the app's
 own RS256 JWT signed by `node:crypto`. `ChainedCredentials` is the precedence — the App, then the
 personal access token (0033). `GET /api/github/repos` is what the New-project dialog's picker
 shows; `DELETE /api/github/installations/:id` forgets one, the grant itself being the member's to

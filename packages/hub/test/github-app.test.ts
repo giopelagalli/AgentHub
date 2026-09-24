@@ -44,6 +44,10 @@ interface Fake {
   minted: number[];
   /** Whether the OAuth exchange should fail. */
   badCode?: boolean;
+  /** Whether listing an installation's repositories should fail outright. */
+  reposUnreadable?: boolean;
+  /** The clock GitHub stamps token expiries with — the same one the credentials read. */
+  now: () => number;
 }
 
 let fake: Fake;
@@ -62,23 +66,31 @@ const githubFetch: typeof fetch = async (input, init) => {
   }
   if (url === `${API}/user`) return json({ login: fake.installations[0]?.account.login ?? 'nobody' });
   if (url.startsWith(`${API}/user/installations`)) {
-    return json({ total_count: fake.installations.length, installations: fake.installations });
+    return json({ total_count: fake.installations.length, installations: pageOf(url, fake.installations) });
   }
   const mint = /\/app\/installations\/(\d+)\/access_tokens$/.exec(url);
   if (mint) {
     const id = Number(mint[1]);
     fake.minted.push(id);
-    return json({ token: `ghs_${id}_${fake.minted.length}`, expires_at: new Date(Date.now() + 3600_000).toISOString() });
+    return json({ token: `ghs_${id}_${fake.minted.length}`, expires_at: new Date(fake.now() + 3600_000).toISOString() });
   }
   if (url.startsWith(`${API}/installation/repositories`)) {
     // Which installation is asking is in the bearer, which the mint above made `ghs_<id>_<n>`.
     const headers = (init?.headers ?? {}) as Record<string, string>;
     const id = Number(/ghs_(\d+)_/.exec(headers.authorization ?? '')?.[1] ?? 0);
-    const page = Number(new URL(url).searchParams.get('page') ?? '1');
-    return json({ repositories: page === 1 ? (fake.repos[id] ?? []) : [] });
+    if (fake.reposUnreadable) return json({ message: 'Not Found' }, 404);
+    return json({ repositories: pageOf(url, fake.repos[id] ?? []) });
   }
   return json({ message: `unexpected ${url}` }, 404);
 };
+
+/** GitHub's own `per_page`/`page` slicing, so a caller that stops paginating early is caught. */
+function pageOf<T>(url: string, all: T[]): T[] {
+  const params = new URL(url).searchParams;
+  const perPage = Number(params.get('per_page') ?? '30');
+  const page = Number(params.get('page') ?? '1');
+  return all.slice((page - 1) * perPage, page * perPage);
+}
 
 const REPOS = {
   7: [
@@ -93,6 +105,7 @@ beforeEach(async () => {
     installations: [{ id: 7, account: { id: 1, login: 'acme', type: 'Organization' } }],
     repos: { ...REPOS },
     minted: [],
+    now: Date.now,
   };
 });
 
@@ -129,6 +142,11 @@ async function connectState(): Promise<string> {
 /** The callback GitHub would send after an install. */
 const callback = (query: Record<string, string>) =>
   hub!.app.inject({ method: 'GET', url: `/api/github/callback?${new URLSearchParams(query)}` });
+
+/** The whole round trip a member makes: press Connect, come back from GitHub with that state. */
+async function connectInstallation(installationId = '7') {
+  return callback({ state: await connectState(), code: 'abc', installation_id: installationId, setup_action: 'install' });
+}
 
 describe('the app JWT', () => {
   it('is an RS256 token GitHub would accept: header, claims and a signature over both', () => {
@@ -236,27 +254,38 @@ describe('the callback', () => {
     expect((await hub!.app.inject({ method: 'GET', url: '/api/github/status' }).then((r) => r.json())).connected).toBe(false);
   });
 
-  it('refuses a tampered or expired state, and a callback with no code', async () => {
+  it('refuses a tampered or expired state, and a callback naming no installation', async () => {
     makeHub();
     const state = await connectState();
     const tampered = `${state.slice(0, -1)}${state.endsWith('0') ? '1' : '0'}`;
     expect((await callback({ state: tampered, code: 'abc', installation_id: '7' })).statusCode).toBe(400);
     expect((await callback({ state: 'nonsense', code: 'abc', installation_id: '7' })).statusCode).toBe(400);
-    expect((await callback({ state, installation_id: '7' })).statusCode).toBe(400);
     expect((await callback({ state, code: 'abc' })).statusCode).toBe(400);
   });
 
-  it('accepts a callback with no state at all — GitHub omits it on a later update', async () => {
+  it('refuses a code with no state — an install this hub did not start', async () => {
     makeHub();
-    const res = await callback({ code: 'abc', installation_id: '7', setup_action: 'update' });
+    // Without this, a callback URL someone else assembled (their code, their installation) would
+    // attach their installation to this account the moment the member opened it.
+    const res = await callback({ code: 'attacker', installation_id: '7', setup_action: 'install' });
+    expect(res.statusCode).toBe(400);
+    expect((await hub!.app.inject({ method: 'GET', url: '/api/github/status' }).then((r) => r.json())).connected).toBe(false);
+  });
+
+  it('sends a "redirect on update" home without storing anything', async () => {
+    makeHub();
+    // Changing which repositories an installation covers brings the member back with no `code`.
+    // It is not an error, and it is not something to act on either.
+    const res = await callback({ installation_id: '7', setup_action: 'update' });
     expect(res.statusCode).toBe(302);
-    expect((await hub!.app.inject({ method: 'GET', url: '/api/github/status' }).then((r) => r.json())).connected).toBe(true);
+    expect(res.headers.location).toBe('/?github=connected');
+    expect((await hub!.app.inject({ method: 'GET', url: '/api/github/status' }).then((r) => r.json())).connected).toBe(false);
   });
 
   it('surfaces a refused sign-in as a 502 rather than storing anything', async () => {
     makeHub();
     fake.badCode = true;
-    const res = await callback({ code: 'stale', installation_id: '7' });
+    const res = await callback({ state: await connectState(), code: 'stale', installation_id: '7' });
     expect(res.statusCode).toBe(502);
     expect(res.json().error).toMatch(/bad_verification_code/);
   });
@@ -266,7 +295,7 @@ describe('the repository picker', () => {
   it('is empty until something is connected, then newest first', async () => {
     makeHub();
     expect(await hub!.app.inject({ method: 'GET', url: '/api/github/repos' }).then((r) => r.json())).toEqual([]);
-    await callback({ code: 'abc', installation_id: '7' });
+    await connectInstallation();
     const repos = await hub!.app.inject({ method: 'GET', url: '/api/github/repos' }).then((r) => r.json());
     expect(repos).toEqual([
       { fullName: 'acme/site', private: false, defaultBranch: 'trunk', updatedAt: '2026-09-23T10:00:00Z' },
@@ -278,7 +307,7 @@ describe('the repository picker', () => {
 describe('disconnecting', () => {
   it('forgets the installation, and says so in the status', async () => {
     makeHub();
-    await callback({ code: 'abc', installation_id: '7' });
+    await connectInstallation();
     const res = await hub!.app.inject({ method: 'DELETE', url: '/api/github/installations/7' });
     expect(res.statusCode).toBe(200);
     expect((await hub!.app.inject({ method: 'GET', url: '/api/github/status' }).then((r) => r.json())).connected).toBe(false);
@@ -290,6 +319,8 @@ describe('disconnecting', () => {
 
 describe('AppCredentials', () => {
   const credentials = (now: () => number = Date.now) => {
+    // GitHub stamps its expiries with the same clock, or "an hour from now" would mean two things.
+    fake.now = now;
     const db = openDb(':memory:');
     const installations = new GithubInstallations(db);
     installations.upsert({ installationId: 7, user: 'admin', accountLogin: 'acme', accountType: 'Organization' });
@@ -297,10 +328,20 @@ describe('AppCredentials', () => {
     return new AppCredentials(client, installations, 'admin', now);
   };
 
-  it('mints a token for the installation whose account owns the repo, and caches it', async () => {
+  it('mints a token for the installation that lists the repo, and caches it', async () => {
     const creds = credentials();
     expect(await creds.tokenFor('acme', 'portal')).toBe('ghs_7_1');
     expect(await creds.tokenFor('acme', 'site')).toBe('ghs_7_1');
+    expect(fake.minted).toEqual([7]);
+  });
+
+  it('answers null for a repo on a connected account the installation does not cover', async () => {
+    // GitHub's install screen defaults to "only select repositories", so an installation on `acme`
+    // routinely covers some of `acme/*` and not the rest. Matching the account name would hand back
+    // a token that cannot read it — and would stop the chain before the personal access token.
+    const creds = credentials();
+    expect(await creds.tokenFor('acme', 'not-chosen')).toBeNull();
+    // The listing was read, so nothing was minted beyond the token that read it.
     expect(fake.minted).toEqual([7]);
   });
 
@@ -313,12 +354,31 @@ describe('AppCredentials', () => {
     expect(fake.minted).toEqual([7, 7]);
   });
 
-  it('falls back to the installation that lists the repository when no account matches', async () => {
-    fake.installations = [{ id: 7, account: { id: 1, login: 'acme', type: 'Organization' } }];
+  it('finds a repository an installation reaches under another account entirely', async () => {
     fake.repos[7] = [{ full_name: 'other/thing', private: false, default_branch: 'main', updated_at: '' }];
     const creds = credentials();
     expect(await creds.tokenFor('other', 'thing')).toBe('ghs_7_1');
     expect(await creds.tokenFor('nobody', 'nothing')).toBeNull();
+  });
+
+  it('uses the account name only when the listing could not be read at all', async () => {
+    fake.reposUnreadable = true;
+    const creds = credentials();
+    // Unreadable is not "no": a same-account installation is the better guess than nothing.
+    expect(await creds.tokenFor('acme', 'portal')).toBe('ghs_7_1');
+    // For an account nothing is installed on it is still null, so the chain carries on.
+    expect(await creds.tokenFor('someone', 'else')).toBeNull();
+  });
+
+  it('walks every page of an installation with more repositories than one page holds', async () => {
+    fake.repos[7] = Array.from({ length: 150 }, (_, i) => ({
+      full_name: `acme/repo-${String(i).padStart(3, '0')}`,
+      private: false, default_branch: 'main', updated_at: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T00:00:00Z`,
+    }));
+    const creds = credentials();
+    expect(await creds.repositoriesFor('admin')).toHaveLength(150);
+    // Including one only the second page could have produced.
+    expect(await creds.tokenFor('acme', 'repo-149')).toBe('ghs_7_1');
   });
 });
 
@@ -337,8 +397,10 @@ describe('credential precedence', () => {
     const both = new ChainedCredentials([app, pat]);
     expect(both.method).toBe('app');
     expect(await both.tokenFor(owner.owner, owner.repo)).toBe('ghs_7_1');
-    // A repository no installation covers falls through to the token rather than failing.
+    // A repository no installation covers falls through to the token rather than failing — and so
+    // does one on a connected account whose installation was not given it.
     expect(await both.tokenFor('someone', 'else')).toBe('ghp_test');
+    expect(await both.tokenFor('acme', 'not-chosen')).toBe('ghp_test');
 
     expect(new ChainedCredentials([pat]).method).toBe('token');
     expect(new Github({ credentials: new ChainedCredentials([pat]) }).status())

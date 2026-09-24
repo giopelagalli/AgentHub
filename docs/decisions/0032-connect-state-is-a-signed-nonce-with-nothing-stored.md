@@ -23,13 +23,27 @@ with `timingSafeEqual`, the expiry is inside the signed payload (so a forged tok
 nothing), and the key is `HUB_SESSION_SECRET` when there is one — a per-process random key
 otherwise, which is the same trade `Auth` already makes for sessions.
 
-The callback verifies `state` **when present** and requires the hub session **always**
-(`routeAccess` leaves everything under `/api/` as `owner`, and `SameSite=Lax` sends the session
-cookie on a top-level GET, which is what GitHub's redirect is). What the state adds on top of the
-session is that the install being reported started from this member's own press of the button.
-A `code` is required unconditionally, because without it there is no way to learn who is connecting
-and so no way to check that the installation is theirs (0031) — a callback without one is a 400
-saying to press Connect again.
+The callback requires a valid `state` for **every return that carries a `code`** — that is, every
+return that would bind an installation to a member. GitHub preserves `state` through
+`installations/new`, so a return without one is not a connect this hub started.
+
+A return with **no `code`** is the other shape GitHub sends: "redirect on update", when the member
+only changed which repositories an existing installation covers. There is no way to learn who is
+connecting without a `code`, so nothing is stored and nothing is checked — the browser is simply
+sent home. That branch comes first in the handler, so the `state` requirement cannot turn a routine
+update into an error.
+
+The hub session is required on top of all this, always (`routeAccess` leaves everything under
+`/api/` as `owner`, and `SameSite=Lax` sends the session cookie on a top-level GET, which is what
+GitHub's redirect is).
+
+## Correction (review, 2026-09-24)
+This record first said the callback "verifies `state` when present rather than requires it to
+exist", reasoning that the session covered the rest. That was wrong. A callback URL an attacker
+assembles — their `code`, their `installation_id`, no `state` — binds *their* installation to this
+account the moment the member opens it as a top-level GET, and on a hub running without
+`HUB_PASSWORD` it needs no member at all. The check is now unconditional wherever a `code` is
+present, and the test that asserted the lenient behaviour asserts the 400 instead.
 
 ## Consequences
 No table, no sweeper, no row to leak. A hub restart mid-connect invalidates the state only when

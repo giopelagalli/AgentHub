@@ -100,7 +100,8 @@ you land back on the hub with "GitHub connected".
 
 There is no token to make and nothing to paste. After that, the Repository field is a **picker** of
 the repositories you chose, newest first, with the branch shown; the text box stays beside it if
-you would rather type `owner/repo`.
+you would rather type `owner/repo`. The picker lists up to 500 repositories per connection — past
+that, type the name instead; importing it still works.
 
 **Changing your mind.** The repositories are yours to change at any time: **GitHub → Settings →
 Applications → Installed GitHub Apps → AgentHub → Configure**, or the **Manage on GitHub** link on

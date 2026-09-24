@@ -45,6 +45,8 @@ A **project page** has, top to bottom:
    - **Models** — which model this project uses. See *Models*.
    - **Auto-run** — off by default. Click to schedule turns. See *Auto-run*.
    - *hub N/24 turns left today* — the hub-wide daily budget.
+   - **Chat** — one-on-one with the project's Manager (`c`). The same drawer the Manager card in
+     the org chart opens, and it works while a turn is running.
    - **Pause / Resume**, **Run turn** (shows `Running · m:ss` while one runs), **Add employee**.
 2. **Four big buttons.** PRD, Roadmap, Docs, Activity. Each opens a full-screen sheet
    (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to

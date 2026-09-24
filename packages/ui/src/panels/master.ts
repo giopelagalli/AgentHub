@@ -51,12 +51,21 @@ function briefingCard(briefing: Briefing): HTMLElement {
   return card;
 }
 
+export interface MasterPanelOptions {
+  /**
+   * The drawer has gone, whichever way it was closed — its ×, Escape, or the handle the caller
+   * holds. The same contract as `ChatTarget.onClose`, so a caller tracking which drawer is open
+   * hears about this one on every route rather than only the one it drove itself.
+   */
+  onClose?: () => void;
+}
+
 /**
  * The master's drawer: read-only. What it publishes is the briefings every
  * project orchestrator filed, and the one lever is asking it to run a fresh
  * daily briefing over them.
  */
-export function openMasterPanel(host: HTMLElement): () => void {
+export function openMasterPanel(host: HTMLElement, options: MasterPanelOptions = {}): () => void {
   const panel = document.createElement('aside');
   panel.className = 'drawer';
 
@@ -71,9 +80,15 @@ export function openMasterPanel(host: HTMLElement): () => void {
   brief.textContent = 'Daily briefing';
   actions.appendChild(brief);
 
+  // The × below, Escape, and the handle returned to the caller all land here, so the guard is what
+  // makes `onClose` fire exactly once however many of them are used.
+  let closed = false;
   const dispose = (): void => {
+    if (closed) return;
+    closed = true;
     window.removeEventListener('keydown', onKey);
     panel.remove();
+    options.onClose?.();
   };
   const onKey = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') dispose();

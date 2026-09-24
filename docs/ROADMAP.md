@@ -23,6 +23,8 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - Cost accounting and the daily dollar cap: priced usage per request, cost in the picker, header,
   per turn and per employee, `MAX_CLOUD_USD_PER_DAY` (0019, 0022–0024, 0026).
 - The v2 PRD and plan with the owner's decisions (0012–0015, 0018, 0020, 0021).
+- A **Chat** button in the project header, opening the Manager's drawer (`c`, pressed while it is
+  up) — the org chart is no longer the only way to talk to a project.
 
 ## In progress
 

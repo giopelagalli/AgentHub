@@ -652,6 +652,20 @@ p {
   color: var(--text-dim);
 }
 
+/* Chat, lit while the manager's drawer is the one on screen — the same pressed tint the hire
+   avatars use, so the action row says what is open without a second kind of signal. */
+.detail__chat[aria-pressed='true'] {
+  color: var(--accent-hi);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* Out-specifies `.btn:hover`, which would otherwise wash the tint off under the pointer. */
+.detail__chat[aria-pressed='true']:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--accent-hi);
+}
+
 .hire {
   display: flex;
   flex-direction: column;

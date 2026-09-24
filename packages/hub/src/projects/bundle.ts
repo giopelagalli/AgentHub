@@ -1,9 +1,9 @@
 import { existsSync, type Dirent } from 'node:fs';
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { AutoRun, DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, TeamMember } from '@agenthub/shared';
+import type { AutoRun, DocPage, Milestone, ModelPolicy, Priority, ProjectIntake, ProjectSource, TeamMember } from '@agenthub/shared';
 import { auditPrd, prdScaffold } from './prd.js';
 import { newTeamMember, validateBriefing, validateDocSlug, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
@@ -307,6 +307,25 @@ export class ProjectBundle {
     await this.writeManifest(m);
   }
 
+  /**
+   * Records (or updates) where this project's code came from. Written by the import itself and by
+   * the two things that change afterwards — a push landing, and a pull request being opened.
+   */
+  async setSource(source: ProjectSource): Promise<void> {
+    const m = await this.manifest();
+    m.source = source;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /**
+   * Removes the scaffold's `workspace/.gitkeep` so a clone can land in the directory — git refuses a
+   * destination that is not empty. Nothing else in `workspace/` is touched.
+   */
+  async clearWorkspaceScaffold(): Promise<void> {
+    await rm(join(this.workspace, '.gitkeep'), { force: true });
+  }
+
   /** The owner's model choice for this project; `undefined` clears it back to the hub default. */
   async setModelPolicy(policy: ModelPolicy | undefined): Promise<void> {
     const m = await this.manifest();
@@ -558,7 +577,12 @@ export class ProjectBundle {
    * bundle; they belong to their own repos.
    */
   private async excludeNestedRepos(): Promise<void> {
-    const nested = await findNestedRepos(this.workspace);
+    // An imported project's workspace *is* a checkout (its own remote, its own history), so the
+    // whole of `workspace/` is excluded for exactly the reason a nested one is: `git add -A` would
+    // otherwise record it as a dangling gitlink instead of leaving it to its own repo.
+    const nested = existsSync(join(this.workspace, '.git'))
+      ? [this.workspace]
+      : await findNestedRepos(this.workspace);
     if (nested.length === 0) return;
     const gitignorePath = join(this.dir, '.gitignore');
     const existing = await readFile(gitignorePath, 'utf8').catch(() => '');
@@ -585,6 +609,15 @@ export class ProjectBundle {
    * Without a commit to measure from, every workspace file the bundle knows counts as changed.
    */
   async changedWorkspaceFiles(commit: string | undefined): Promise<string[]> {
+    // An imported project's workspace is its own checkout and the bundle's index ignores it, so
+    // there is no bundle commit to measure against. Its own index is the milestone boundary
+    // instead: everything the milestone touched is still uncommitted there, because the previous
+    // milestone's work was committed when it was pushed (0030).
+    if (existsSync(join(this.workspace, '.git'))) {
+      const out = await simpleGit(this.workspace)
+        .raw(['-c', 'core.quotePath=false', 'ls-files', '--modified', '--others', '--exclude-standard']);
+      return [...new Set(out.split('\n').map((l) => l.trim()).filter(Boolean))].sort();
+    }
     const prefix = 'workspace/';
     const lines = (out: string): string[] => out.split('\n').map((l) => l.trim()).filter((l) => l.startsWith(prefix));
     const diff = commit ? await this.git.diff(['--name-only', commit, '--', 'workspace']) : await this.git.raw(['ls-files', '--', 'workspace']);

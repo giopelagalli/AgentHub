@@ -1,11 +1,12 @@
 import type { ProjectManifest } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
-import { deriveSlug, intentFrom, slugProblem, type Source } from '../newproject.js';
+import { deriveSlug, repoProblem, slugProblem, wizardPayload, type Source } from '../newproject.js';
 import { streamPost } from '../stream.js';
 
 /**
- * The New Project wizard: a name, a slug, and either a paragraph to expand into a PRD or a PRD to
- * adopt. Continue creates the project and then drafts its PRD, streaming the draft into the same
+ * The New Project wizard: a name, a slug, and one of three starting points — a paragraph to expand
+ * into a PRD, a PRD to adopt, or a repository to import. Continue creates the project (cloning the
+ * repository first, when there is one) and then drafts its PRD, streaming the draft into the same
  * card so the owner watches the document being written rather than a spinner.
  *
  * The same card, opened with `existing`, is the "draft one" flow for a project that has no PRD
@@ -142,25 +143,53 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   let source: Source = 'idea';
   const idea = el('textarea', 'input wizard__source');
   idea.rows = 9;
-  idea.placeholder = 'What do you want to build? A paragraph is enough.';
   const prd = el('textarea', 'input wizard__source');
   prd.rows = 9;
   prd.placeholder = '# Product requirements\n\nPaste the document you already have.';
   prd.hidden = true;
+
+  // Import: the repository, the branch, and one line saying whether a private one can be reached.
+  // Free text today; a repo picker replaces this input later, with `repoProblem` still the
+  // fallback for a name typed by hand.
+  const repo = el('input', 'input mono');
+  repo.placeholder = 'owner/repo';
+  repo.spellcheck = false;
+  const branch = el('input', 'input mono');
+  branch.placeholder = 'default branch';
+  branch.spellcheck = false;
+  const repoField = field('Repository', repo);
+  const branchField = field('Branch', branch);
+  const tokenNote = el('p', 'modal__note', 'Private repos need a GitHub token on the hub.');
+  const repoFields = el('div');
+  const repoRow = el('div', 'wizard__row');
+  repoRow.append(repoField.wrap, branchField.wrap);
+  repoFields.append(repoRow, tokenNote);
+  repoFields.hidden = true;
+  repo.addEventListener('input', () => {
+    repoField.note.textContent = repo.value ? (repoProblem(repo.value) ?? '') : '';
+    say('');
+  });
 
   const choice = el('div', 'seg');
   choice.setAttribute('role', 'radiogroup');
   choice.setAttribute('aria-label', 'Where the PRD starts');
   const pick = (next: Source): void => {
     source = next;
-    idea.hidden = next !== 'idea';
+    // The paragraph box serves both the idea and the import; only what it asks for changes.
+    idea.hidden = next === 'prd';
+    idea.placeholder = next === 'repo'
+      ? 'What do you want done? A paragraph is enough.'
+      : 'What do you want to build? A paragraph is enough.';
     prd.hidden = next !== 'prd';
+    repoFields.hidden = next !== 'repo';
     for (const [id, node] of tabs) node.setAttribute('aria-checked', String(id === next));
     say('');
   };
   const tabs: [Source, HTMLButtonElement][] = ([
     ['idea', 'Start from an idea'],
     ['prd', 'Paste a PRD'],
+    // Drafting into a project that already exists has nothing to import into.
+    ...(options.existing ? [] : [['repo', 'Import a repo'] as [Source, string]]),
   ] as [Source, string][]).map(([id, label]) => {
     const node = button(label, 'seg__option');
     node.setAttribute('role', 'radio');
@@ -170,7 +199,7 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   });
 
   const sourceField = el('div', 'field');
-  sourceField.append(el('span', 'field__label', 'Where it starts'), choice, idea, prd);
+  sourceField.append(el('span', 'field__label', 'Where it starts'), choice, repoFields, idea, prd);
 
   const form = el('div', 'wizard');
   if (!options.existing) {
@@ -221,8 +250,10 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     const controller = new AbortController();
     draft = controller;
     try {
+      // An import's paragraph is an idea as far as the drafter is concerned — what it adds is the
+      // codebase, which the hub reads from the project itself rather than from this body.
       const done = await streamPost(
-        `/api/projects/${slugValue}/prd/draft`, { [source]: text }, controller.signal, write,
+        `/api/projects/${slugValue}/prd/draft`, { [source === 'prd' ? 'prd' : 'idea']: text }, controller.signal, write,
       );
       draft = null;
       const questions = Array.isArray(done.questions) ? done.questions : [];
@@ -236,10 +267,12 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   };
 
   go.addEventListener('click', () => {
-    const text = (source === 'idea' ? idea : prd).value.trim();
+    const box = source === 'prd' ? prd : idea;
+    const text = box.value.trim();
     if (!text) {
-      say(source === 'idea' ? 'Say what you want to build.' : 'Paste the PRD first.');
-      (source === 'idea' ? idea : prd).focus();
+      say(source === 'prd' ? 'Paste the PRD first.'
+        : source === 'repo' ? 'Say what you want done.' : 'Say what you want to build.');
+      box.focus();
       return;
     }
 
@@ -253,16 +286,18 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     const wanted = slug.value.trim() || deriveSlug(title);
     const bad = slugProblem(wanted);
     if (bad) { say(bad); slug.focus(); return; }
+    if (source === 'repo') {
+      const badRepo = repoProblem(repo.value);
+      if (badRepo) { say(badRepo); repo.focus(); return; }
+    }
 
     go.disabled = true;
     say('');
-    void sendJson('/api/projects', {
-      slug: wanted,
-      title,
-      intent: intentFrom(source, text),
-      priority: 'project',
-      [source]: text,
-    })
+    // The hub clones before it answers, so this call carries the 400/502 a bad repository earns —
+    // shown on the same error line as every other reason creation could fail.
+    void sendJson('/api/projects', wizardPayload({
+      source, slug: wanted, title, text, repo: repo.value, branch: branch.value,
+    }))
       .then(() => runDraft(wanted, text))
       .catch((error: unknown) => {
         go.disabled = false;
@@ -275,6 +310,17 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   pick('idea');
   host.appendChild(scrim);
   (options.existing ? idea : name).focus();
+
+  // Whether a private repository can be reached at all. The hub answers with a boolean and never
+  // the token; a hub too old to know the route simply leaves the line as it stands.
+  if (!options.existing) {
+    void getJson<{ configured: boolean }>('/api/github/status')
+      .then(({ configured }) => {
+        if (closed) return;
+        tokenNote.textContent = `Private repos need a GitHub token on the hub — ${configured ? 'configured' : 'not configured'}.`;
+      })
+      .catch(() => { /* leave the note as the plain sentence */ });
+  }
 
   // A re-draft for a project that already has an intake: prefill it, so a failed first draft
   // doesn't mean re-pasting the owner's idea or PRD.

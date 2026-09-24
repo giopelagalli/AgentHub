@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Job, JobResult, JobType, ShellTaskPayload } from '@agenthub/shared';
-import { resolveWorkspace, runShellTask } from './shell-task.js';
+import { resolveWorkspace, runShellTask, secretsStripped } from './shell-task.js';
 import { ComfyExecutionError, parseVideoPayload, runVideoGen } from './video-gen.js';
 
 type Execute = (job: Job, log: (line: string) => void) => Promise<JobResult>;
@@ -78,11 +78,15 @@ export class JobRunner {
     if (job.type === 'shell-task') {
       const payload = job.payload as ShellTaskPayload;
       if (!Array.isArray(payload?.cmd) || payload.cmd.length === 0) return Promise.reject(new InvalidPayloadError(job.type));
+      // A queued shell-task is an agent's command. On a control node this daemon is started from
+      // the same environment as the hub (0016), so it can be holding the hub's credentials — none
+      // of which the command may see.
       return runShellTask(payload, {
         workspaceRoot: this.opts.workspaceRoot,
         project: job.project,
         onLine: log,
         signal: this.currentAbort?.signal,
+        env: secretsStripped(),
       });
     }
     if (job.type === 'video-gen') {

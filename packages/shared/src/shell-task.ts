@@ -30,6 +30,36 @@ export function resolveWorkspace(root: string, project: string | undefined, cwd:
   return target;
 }
 
+/**
+ * The hub's own secrets, which no command an agent runs may see. Every one of these is a credential
+ * the hub holds on the owner's behalf — a model provider's key, the session and daemon secrets, the
+ * Telegram bot, and the GitHub token that can push to the owner's repositories. An agent shell is
+ * cwd-scoped, not sandboxed, so anything in its environment is something it can read and use
+ * (`printenv GITHUB_TOKEN`, then a push straight to the default branch).
+ */
+export const HUB_SECRET_ENV = [
+  'GITHUB_TOKEN', 'FIREWORKS_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+  'HUB_PASSWORD', 'HUB_SESSION_SECRET', 'DAEMON_TOKEN', 'TELEGRAM_BOT_TOKEN',
+  'XAI_API_KEY', 'X_API_KEY', 'GEMINI_API_KEY', 'SEARCH_API_KEY',
+];
+
+/** Credentials named by a prefix rather than exactly — the GitHub App's key, id and secret. */
+const HUB_SECRET_ENV_PREFIXES = ['GITHUB_APP_'];
+
+/**
+ * `env` without anything in `HUB_SECRET_ENV`. What every agent-run command is given in place of the
+ * hub's own environment: the shell still inherits `PATH`, `HOME` and everything a build needs, and
+ * inherits no credential.
+ */
+export function secretsStripped(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const secret = new Set(HUB_SECRET_ENV);
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      ([key]) => !secret.has(key) && !HUB_SECRET_ENV_PREFIXES.some((p) => key.startsWith(p)),
+    ),
+  );
+}
+
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 export const SHELL_TAIL_LENGTH = 2000;
 const KILL_ESCALATION_MS = 5000;
@@ -53,7 +83,18 @@ function lineSplitter(prefix: 'out' | 'err', onLine: (line: string) => void) {
 
 export async function runShellTask(
   payload: ShellTaskPayload,
-  opts: { workspaceRoot: string; project?: string; onLine: (line: string) => void; signal?: AbortSignal },
+  opts: {
+    workspaceRoot: string;
+    project?: string;
+    onLine: (line: string) => void;
+    signal?: AbortSignal;
+    /**
+     * The environment the command inherits, in place of this process's. Every caller that runs a
+     * command on an agent's behalf passes `secretsStripped()`; omitted, the child inherits
+     * everything this process has, which is only right for a command the owner ran themselves.
+     */
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<JobResult> {
   const cwd = resolveWorkspace(opts.workspaceRoot, opts.project, payload.cwd);
 
@@ -69,7 +110,7 @@ export async function runShellTask(
     // group id. That lets us kill the whole tree below it — including backgrounded grandchildren a
     // shell command may spawn (`x & sleep 100`, npm scripts, `make -j`) — via a negative-pid signal,
     // rather than only the immediate child.
-    const child = spawn(cmd, args, { cwd, env: { ...process.env, ...payload.env }, detached: true });
+    const child = spawn(cmd, args, { cwd, env: { ...(opts.env ?? process.env), ...payload.env }, detached: true });
 
     let settled = false; // the direct child has exited/errored; only guards the promise executor itself
     let resolved = false; // the JobResult has actually been produced; guards further onLine emission

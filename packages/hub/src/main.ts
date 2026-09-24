@@ -1,3 +1,6 @@
+// MUST stay the first import: it silences simple-git's debug logging before simple-git is loaded,
+// and `debug` reads its configuration when a logger is created. See debug-guard.ts.
+import './debug-guard.js';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { optionsFromEnv } from './options.js';

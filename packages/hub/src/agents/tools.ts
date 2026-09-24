@@ -2,7 +2,7 @@ import { readdir, readFile, mkdir, realpath, stat, writeFile } from 'node:fs/pro
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { JobResult, JobType, MilestoneStatus, ModelPolicy, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
-import { resolveWorkspace, runShellTask, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
+import { resolveWorkspace, runShellTask, secretsStripped, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
@@ -336,8 +336,10 @@ export function workspaceTools(opts: WorkspaceToolOptions = {}): Tool[] {
         const result = await runShellTask(
           { cmd, cwd, timeoutMs },
           // `'.'` as the project segment: the bundle workspace is already project-scoped, so the
-          // sandbox root is the workspace itself.
-          { workspaceRoot: workspace, project: '.', onLine: ctx.log, signal: ctx.signal },
+          // sandbox root is the workspace itself. The environment is the hub's minus its
+          // credentials — this is cwd-scoping, not a sandbox, so anything left in it is the
+          // model's to read and use.
+          { workspaceRoot: workspace, project: '.', onLine: ctx.log, signal: ctx.signal, env: secretsStripped() },
         );
         const after = await Promise.all(paths.map(fileStamp));
         paths.forEach((p, i) => {

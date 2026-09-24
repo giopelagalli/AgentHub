@@ -666,6 +666,26 @@ p {
   border-color: var(--accent-hi);
 }
 
+/* The imported repository, under the intent: where the code came from and its pull request. */
+.detail__source {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: -8px 0 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.detail__source-link {
+  color: var(--text-dim);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-lit);
+}
+
+.detail__source-link:hover {
+  color: var(--text);
+}
+
 .hire {
   display: flex;
   flex-direction: column;

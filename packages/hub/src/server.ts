@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
-import { MILESTONE_STATUSES, PRIORITY_RANK, videoPayloadFrom } from '@agenthub/shared';
+import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
@@ -32,6 +32,7 @@ import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
+import { Github, GithubError, PatCredentials, validBranch, type GithubOptions } from './projects/github.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
 import { currentMilestoneId, moveMilestone, patchMilestone } from './projects/roadmap.js';
@@ -225,6 +226,13 @@ export interface HubOptions {
   auth?: AuthOptions;
   /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
   external?: ExternalOptions;
+  /**
+   * How the hub reaches GitHub for imported projects. `token` is `GITHUB_TOKEN` from `hub.env` — the
+   * one credential, never logged and never sent to the UI; only `GET /api/github/status` says
+   * whether there is one. The rest are test seams (`cloneBase` points the clone at a bare repo on
+   * disk; `fetch`/`apiBase` at a stubbed REST API), so production only ever reaches github.com.
+   */
+  github?: Omit<GithubOptions, 'credentials'> & { token?: string };
   /** Video slot knobs: how long a node is passed over after a failed swap, and the clock that times it. */
   video?: { cooldownMs?: number; now?: () => number };
   /**
@@ -378,9 +386,15 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.external ? { options: opts.external } : { log: () => {} }),
   });
   const projectExternal = external.filter((t) => !t.outward);
+  // One GitHub client per hub: it holds the credential lookup and nothing else, so the token is read
+  // in exactly one place and never travels further than a git environment or a REST header.
+  const github = new Github({
+    ...(opts.github ?? {}),
+    ...(opts.github?.token ? { credentials: new PatCredentials(opts.github.token) } : {}),
+  });
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
-    loop, gateway, queue, registry, transcript, leases, browser, external: projectExternal,
+    loop, gateway, queue, registry, transcript, github, leases, browser, external: projectExternal,
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),
@@ -1253,8 +1267,11 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.get('/api/projects', async () => projects.list());
 
+  /** Whether a private repository can be imported at all. Never the token — only that there is one. */
+  app.get('/api/github/status', async () => github.status());
+
   app.post('/api/projects', async (req, reply) => {
-    const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority; idea: string; prd: string }> | undefined;
+    const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority; idea: string; prd: string; source: { url?: unknown; branch?: unknown } }> | undefined;
     if (!body || typeof body.slug !== 'string' || !SLUG_RE.test(body.slug)
       || typeof body.title !== 'string' || !body.title
       || typeof body.intent !== 'string' || !body.intent
@@ -1263,16 +1280,42 @@ export function createHub(opts: HubOptions = {}): Hub {
       || (body.prd !== undefined && typeof body.prd !== 'string')) {
       return reply.code(400).send({ error: 'invalid project' });
     }
+    // An imported project names a repository; the parser is the same one the wizard complains with,
+    // so anything it accepts here the wizard already accepted there — and nothing else gets cloned.
+    let source: { ref: { owner: string; repo: string }; branch?: string } | undefined;
+    if (body.source !== undefined) {
+      if (typeof body.source !== 'object' || body.source === null || typeof body.source.url !== 'string') {
+        return reply.code(400).send({ error: 'invalid source' });
+      }
+      const ref = parseGithubSource(body.source.url);
+      if (!ref) return reply.code(400).send({ error: 'not a GitHub repository: use owner/repo or its github.com URL' });
+      const branch = body.source.branch;
+      if (branch !== undefined && (typeof branch !== 'string' || (branch !== '' && !validBranch(branch)))) {
+        return reply.code(400).send({ error: 'invalid branch' });
+      }
+      source = { ref, ...(typeof branch === 'string' && branch ? { branch } : {}) };
+    }
     const duplicate = await projects.get(body.slug).then(() => true, () => false);
     if (duplicate) return reply.code(409).send({ error: 'project already exists' });
     // The idea (or a pasted PRD) is kept on the manifest and drafted from afterwards, by an explicit
-    // call to the draft route: creating a project must not wait on a model.
+    // call to the draft route: creating a project must not wait on a model. The clone is the one
+    // exception — a project whose code has not landed has nothing to draft from.
     const intake = { ...(body.idea ? { idea: body.idea } : {}), ...(body.prd ? { prd: body.prd } : {}) };
-    const manifest = await projects.create({
-      slug: body.slug, title: body.title, intent: body.intent,
-      ...(body.priority ? { priority: body.priority } : {}),
-      ...(Object.keys(intake).length ? { intake } : {}),
-    });
+    let manifest: ProjectManifest;
+    try {
+      manifest = await projects.create({
+        slug: body.slug, title: body.title, intent: body.intent,
+        ...(body.priority ? { priority: body.priority } : {}),
+        ...(Object.keys(intake).length ? { intake } : {}),
+        ...(source ? { source } : {}),
+      });
+    } catch (err) {
+      if (!(err instanceof GithubError)) throw err;
+      // A repository we cannot authenticate to is the owner's to fix (400); anything else went
+      // wrong between the hub and GitHub, which is an upstream failure (502).
+      const status = err.code === 'auth' || err.code === 'config' ? 400 : 502;
+      return reply.code(status).send({ error: err.message });
+    }
     await refreshProjects();
     return reply.code(201).send(manifest);
   });
@@ -1302,6 +1345,39 @@ export function createHub(opts: HubOptions = {}): Hub {
       return manifest;
     });
   }
+
+  /**
+   * Opens (or finds) the pull request for an imported project's `agenthub/<slug>` branch. The owner
+   * presses this; agents never do — merging into the repository's own branch stays the owner's call.
+   * Idempotent, because GitHub allows one open pull request per head and the owner may press it
+   * again after a later milestone.
+   */
+  app.post('/api/projects/:slug/pr', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    const manifest = await bundle.manifest();
+    const source = manifest.source;
+    if (!source) return reply.code(400).send({ error: 'this project was not imported from a repository' });
+    if (!source.pushedAt) return reply.code(400).send({ error: `nothing has been pushed to ${source.pushBranch} yet` });
+
+    const milestones = await bundle.roadmap();
+    const latest = [...milestones].reverse().find((m) => m.status === 'done');
+    const briefing = await bundle.latestBriefing();
+    try {
+      const url = await github.openPullRequest(source, {
+        title: latest ? `${manifest.title} — ${latest.title}` : manifest.title,
+        body: briefing?.summary ?? `Work by AgentHub on ${manifest.title}.`,
+      });
+      await bundle.setSource({ ...source, prUrl: url });
+      await bundle.commit(`hub: pull request for ${source.pushBranch}`);
+      await refreshProjects();
+      return { url };
+    } catch (err) {
+      if (!(err instanceof GithubError)) throw err;
+      return reply.code(err.code === 'config' ? 400 : 502).send({ error: err.message });
+    }
+  });
 
   app.post('/api/projects/:slug/priority', async (req, reply) => {
     const { slug } = req.params as { slug: string };

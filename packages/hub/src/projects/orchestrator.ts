@@ -12,6 +12,7 @@ import type { AgentRunResult } from '../agents/loop.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import type { ProjectBundle } from './bundle.js';
+import type { Github } from './github.js';
 import { planningContext } from './prd.js';
 import { orchestratorSystemPrompt } from './prompts.js';
 import type { Briefing, Manifest, TaskItem } from './schema.js';
@@ -36,6 +37,8 @@ export interface ProjectOrchestratorDeps {
   queue: JobQueue;
   registry: NodeRegistry;
   transcript: Transcript;
+  /** Present when the hub can talk to GitHub; a verified milestone on an imported project is pushed. */
+  github?: Github;
   /** Present once the hub wires the shared browser; absent, the orchestrator gets no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
@@ -59,7 +62,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, leases, browser, external, onBusy, onEvent } = this.deps;
+    const { bundle, loop, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -97,7 +100,7 @@ export class ProjectOrchestrator {
         ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
         spawnSubagentTool({ ...delegation, browser: browserDeps, external }),
-        completeMilestoneTool(delegation),
+        completeMilestoneTool(delegation, github),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },
       ...(orchestratorRoute ? { route: orchestratorRoute } : {}),

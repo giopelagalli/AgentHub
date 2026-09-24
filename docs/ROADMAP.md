@@ -26,6 +26,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - A **Chat** button in the project header, opening the Manager's drawer (`c`, pressed while it is
   up) — the org chart is no longer the only way to talk to a project.
 
+- Import a repo as a third way to start a project: clone into `workspace/`, a PRD drafted from the
+  code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
+  milestone and a pull request the owner opens (0028–0030).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.

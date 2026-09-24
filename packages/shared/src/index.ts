@@ -240,6 +240,66 @@ export interface ProjectManifest {
    * project's tests aren't a plain `npm test`. Absent, the command is inferred from the workspace.
    */
   verifyCmd?: string;
+  /** Present on a project imported from a repository; absent on one started from an idea or a PRD. */
+  source?: ProjectSource;
+}
+
+// --- imported repositories ------------------------------------------------------
+
+/**
+ * Where an imported project's code came from, and the one branch agents are allowed to push.
+ *
+ * `branch` is the repository's own branch — what was cloned and what a pull request targets; it is
+ * never written to. `pushBranch` (`agenthub/<slug>`) is the hub's, and the owner merges it through a
+ * pull request they open themselves.
+ */
+export interface ProjectSource {
+  kind: 'github';
+  owner: string;
+  repo: string;
+  branch: string;
+  /** HEAD of `branch` when the repository was cloned, so a diff has a starting point. */
+  importedCommit: string;
+  pushBranch: string;
+  /** When the hub last pushed `pushBranch`; absent until the first milestone was verified. */
+  pushedAt?: number;
+  /** The pull request open for `pushBranch`, once one has been opened. */
+  prUrl?: string;
+}
+
+/** A repository named as `owner/repo`, however the owner spelled it. */
+export interface GithubRepoRef {
+  owner: string;
+  repo: string;
+}
+
+// GitHub's own rules: an account name is alphanumeric with single dashes, at most 39 characters; a
+// repository name also allows `.` and `_`. Both are checked here rather than by the clone, so a
+// hostile "repo name" can never reach a git command line as an option or a path segment.
+const GH_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+const GH_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
+
+/**
+ * The repository an owner named, from any of the three spellings they are likely to paste: the
+ * browser URL (`https://github.com/owner/repo`, with or without `.git` or a trailing slash), the SSH
+ * remote (`git@github.com:owner/repo.git`), or the short `owner/repo`. Null for anything else —
+ * including a URL on another host, which is refused rather than cloned.
+ *
+ * Shared because both ends need it: the wizard so it can complain before posting, and the hub
+ * because it must validate whatever actually arrives.
+ */
+export function parseGithubSource(input: string): GithubRepoRef | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  const ssh = /^git@github\.com:(.+)$/.exec(raw);
+  const https = /^https?:\/\/(?:www\.)?github\.com\/(.+)$/i.exec(raw);
+  const path = ssh?.[1] ?? https?.[1] ?? raw;
+  const parts = path.replace(/\/+$/, '').split('/');
+  if (parts.length !== 2) return null;
+  const owner = parts[0];
+  const repo = parts[1].replace(/\.git$/i, '');
+  if (!GH_OWNER_RE.test(owner) || !GH_REPO_RE.test(repo) || repo === '.' || repo === '..') return null;
+  return { owner, repo };
 }
 
 // --- product plan: PRD, roadmap, docs ------------------------------------------

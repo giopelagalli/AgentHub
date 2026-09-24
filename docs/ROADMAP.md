@@ -30,6 +30,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
   milestone and a pull request the owner opens (0028–0030).
 
+- Workbench, first piece: **Preview** (FR-B1) — a project declares `preview { cmd, port, path? }`,
+  the hub supervises it in the workspace and proxies it at `/preview/<slug>/` (HTTP + WebSocket)
+  behind the session, with a sheet holding the iframe, start/stop/restart, settings and a log tail
+  (0031–0033).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -39,8 +44,8 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB); the hub's OpenAI-compatible door (FR-D6).
-2. Workbench: preview proxy, terminal, Code screen with the Guide chat, Code map and Tour
-   (FR-B1–B7).
+2. Workbench: terminal, Code screen with the Guide chat, Code map and Tour (FR-B2–B7); the
+   preview proxy (FR-B1) is done.
 3. Harnesses: the pi spike, then `pi` as the default employee harness and `claude-code` as an
    option (0013).
 4. JD drives the hub; the web door (FR-C1–C5).

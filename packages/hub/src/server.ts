@@ -32,6 +32,7 @@ import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
+import { previewRoutes } from './projects/preview.js';
 import { Github, GithubError, PatCredentials, validBranch, type GithubOptions } from './projects/github.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
@@ -554,9 +555,12 @@ export function createHub(opts: HubOptions = {}): Hub {
       }
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
-      // half-dead and hold `app.close()` open forever. Only the one route it owns, so an ordinary
-      // request carrying an `Upgrade` header is not hung up on.
-      if (route === '/ws' && req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
+      // half-dead and hold `app.close()` open forever. Only the two routes that take upgrades (the
+      // hub's own socket and a preview's hot reload), so an ordinary request carrying an `Upgrade`
+      // header is not hung up on.
+      if ((route === '/ws' || route?.startsWith('/preview/')) && req.headers.upgrade) {
+        reply.raw.on('finish', () => reply.raw.socket?.end());
+      }
       return reply.code(401).send({ error: 'unauthorized' });
     });
 
@@ -663,6 +667,9 @@ export function createHub(opts: HubOptions = {}): Hub {
       return null;
     }
   };
+
+  // FR-B1 — the preview: the owner's config and lifecycle routes, plus the `/preview/<slug>/` proxy.
+  void app.register(previewRoutes, { projects, refresh: refreshProjects });
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
   // hangs off it; briefings pass straight through to the service's own listeners, and a settled job

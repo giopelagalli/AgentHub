@@ -205,6 +205,35 @@ export interface AutoRun {
   maxTurnsPerDay: number;
 }
 
+/**
+ * A project's dev server: the argv the hub runs in `workspace/`, the port it listens on, and the
+ * path inside the app the preview opens on. The app is served to the browser under
+ * `/preview/<slug>/`, so the dev server has to be configured with that base path (Vite `base`,
+ * Next `basePath`) — see decision 0031.
+ */
+export interface PreviewConfig {
+  cmd: string[];
+  port: number;
+  /** Where the iframe opens, relative to the app's base; defaults to `/`. */
+  path?: string;
+}
+
+/** What `GET /api/projects/:slug/preview` answers: the config's state and the process's. */
+export interface PreviewStatus {
+  configured: boolean;
+  running: boolean;
+  port: number | null;
+  /** Where the proxy serves it, whether or not it is running. */
+  url: string;
+  startedAt: number | null;
+  /** The stored config, so the settings form and the iframe's path read from one answer. */
+  config: PreviewConfig | null;
+  /** True when the last run ended on its own rather than being stopped. */
+  crashed: boolean;
+  /** The tail of the process's output — the last 50 lines. */
+  log: string[];
+}
+
 /** Turns spent in the trailing 24h against the project's cap (null when unset) and the hub's. */
 export interface TurnBudget {
   usedToday: number;
@@ -242,6 +271,8 @@ export interface ProjectManifest {
   verifyCmd?: string;
   /** Present on a project imported from a repository; absent on one started from an idea or a PRD. */
   source?: ProjectSource;
+  /** The dev server the hub supervises and proxies at `/preview/<slug>/`. Absent means none. */
+  preview?: PreviewConfig;
 }
 
 // --- imported repositories ------------------------------------------------------

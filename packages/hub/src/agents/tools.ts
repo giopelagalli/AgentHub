@@ -9,6 +9,7 @@ import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
 import { subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
+import { validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import { SUBAGENT_TOOL_CALLS } from './budgets.js';
@@ -484,6 +485,30 @@ export function bundleTools(): Tool[] {
         await bundle.writeTasks({ tasks });
         await bundle.commit('agent: update tasks');
         return `tasks updated (${tasks.length})`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'set_preview',
+        description: 'Declare how this project\'s app is run so the owner can see it live. The hub runs `cmd` in ' +
+          'workspace/ on its own machine and serves it at /preview/<slug>/ — configure the dev server\'s base path ' +
+          'to match (Vite `base`, Next `basePath`). Set this once the dev server exists; calling it again replaces it.',
+        parameters: {
+          type: 'object',
+          properties: {
+            cmd: { type: 'array', items: { type: 'string' }, description: 'Argv, e.g. ["npm", "run", "dev"].' },
+            port: { type: 'number', description: 'The port the dev server listens on (1024-65535).' },
+          },
+          required: ['cmd', 'port'],
+        },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const validated = validatePreview(args);
+        if ('error' in validated) throw new Error(validated.error);
+        await bundle.setPreview(validated.preview);
+        await bundle.commit('agent: set preview');
+        return `preview set: ${validated.preview.cmd.join(' ')} on port ${validated.preview.port}`;
       },
     },
     {

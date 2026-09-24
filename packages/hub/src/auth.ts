@@ -92,6 +92,10 @@ export function daemonRouteSubject(method: string, route: string | undefined): N
 export function routeAccess(method: string, route: string | undefined): Access {
   if (route === undefined) return 'owner';
   if (route === '/ws') return 'owner';
+  // The preview proxy is not under /api/, but it is the owner's dev server: the whole point of
+  // running it behind the hub (decision 0021) is that it inherits the session rather than sitting
+  // on a raw port.
+  if (route.startsWith('/preview/')) return 'owner';
   if (route !== '/api' && !route.startsWith('/api/')) return 'none';
   if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
   if (method === 'POST' && route === '/api/login') return 'open';

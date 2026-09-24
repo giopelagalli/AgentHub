@@ -98,6 +98,16 @@ if it fails; `PrdDrafter` reads the clone so the PRD describes the product that 
 real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
 from that checkout's own index.
 
+**`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
+per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and
+`AGENTHUB_PREVIEW_BASE`, killed by process group, holding a 200-line log ring and stopping itself
+after 30 minutes with no proxied traffic (0033); every preview goes down with the hub via the
+plugin's `onClose`. The `previewRoutes` plugin carries the owner's routes
+(`GET/PUT/DELETE /api/projects/:slug/preview`, `POST …/preview/start|stop|restart`) and the proxy
+at `/preview/:slug/*` — `owner` in `routeAccess`, path forwarded verbatim (0031), hub cookie
+stripped, HTTP piped through `node:http` and the upgrade bridged to a `ws` client (0032). The
+manager sets a project's preview with the `set_preview` tool.
+
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 
 **`assistant/`, `telegram/`, `external/`, `resources.ts`, `control-switch.ts`** — the built-in

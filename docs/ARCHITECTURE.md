@@ -93,5 +93,7 @@ assistant with its markdown memory, the grammY bot with a confirmation gate, ext
 fetch the daemon from the hub, attach to an existing model server or register compute-only,
 enroll, install a launchd agent or systemd user unit (0016, 0017). **`deploy/spark/`** — the
 hub's and daemon's systemd user units and the box playbook. **`deploy/do/`** — the DigitalOcean
-Caddy edge. **`configs/`** — daemon configs; `spark.yaml` is the live one (attach mode, priority,
-thinking off for workers).
+Caddy edge, its offline page for upstream failures (`handle_errors`, 503), and the `hub-watch`
+timer/script that polls the hub and alerts Telegram on down/up transitions, keeping its own state
+file and an optional bot token. **`configs/`** — daemon configs; `spark.yaml` is the live one
+(attach mode, priority, thinking off for workers).

@@ -50,7 +50,7 @@ node, but with SSH behind Tailscale and a tag the ACL keys on:
 
     sudo tailscale up --ssh --advertise-tags=tag:proxy --accept-dns=true
 
-It is stateless — Caddy and tailscaled, nothing else — and it reaches the hub
+It is stateless — Caddy, tailscaled, and the hub watchdog timer, nothing else — and it reaches the hub
 by an *alias* (`hub.internal`, an `/etc/hosts` line or a custom DNS record in
 the admin console) rather than a machine name, because `/controlnode` moves the
 hub between the Mac mini and the Strix Halo. Repointing that alias after a

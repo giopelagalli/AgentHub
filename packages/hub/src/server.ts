@@ -11,6 +11,7 @@ import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom 
 import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
+import { door, openAiError } from './door.js';
 import {
   ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
 } from './enrollment.js';
@@ -538,7 +539,8 @@ export function createHub(opts: HubOptions = {}): Hub {
       // nothing at all. An unmatched request has no route and is denied.
       const route = req.routeOptions?.url;
       const access = routeAccess(req.method, route);
-      if (access === 'none' || access === 'open') return;
+      // The door checks its own bearer — a user API token, not the owner's cookie (`door.ts`).
+      if (access === 'none' || access === 'open' || access === 'door') return;
       if (auth.ownerOk(req.headers.cookie)) return;
       if (access === 'daemon') {
         // The shared DAEMON_TOKEN stays the admin's break-glass: it speaks for every node, and for
@@ -581,8 +583,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   // ever sees it.
   if (controlSwitch) {
     app.addHook('onRequest', async (req, reply) => {
-      if (!controlSwitch.switching || req.method === 'GET' || req.method === 'HEAD') return;
+      if (!controlSwitch.switching) return;
       const route = req.routeOptions?.url;
+      // The door writes on every request — a usage row, a token's last-used stamp, possibly cloud
+      // dollars — so it is refused whole, `GET /v1/models` included, unlike the read-only API.
+      const isDoor = routeAccess(req.method, route) === 'door';
+      if (!isDoor && (req.method === 'GET' || req.method === 'HEAD')) return;
+      if (isDoor) {
+        return reply.code(503).send(openAiError('control-node switch in progress', 'server_error', 'switching'));
+      }
       if (route === '/api' || route?.startsWith('/api/')) {
         return reply.code(503).send({ error: 'control-node switch in progress' });
       }
@@ -626,6 +635,8 @@ export function createHub(opts: HubOptions = {}): Hub {
   const busyAgents = new Set<number>();
   // Frames are only produced while somebody is watching the screening room, so the browser node is
   // left alone until the first `subscribe` and stops being polled after the last unsubscribe/close.
+  app.register(door, { db, gateway, registry, usage, ...(opts.auth?.now ? { now: opts.auth.now } : {}) });
+
   const { broadcastState, broadcast, broadcastTo } = registerWs(app, getState, () => [...busyAgents], {
     onTopicCount: (topic, count) => {
       if (topic !== 'browser') return;

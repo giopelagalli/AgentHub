@@ -99,6 +99,19 @@ CREATE TABLE IF NOT EXISTS usage (
   usd REAL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_at ON usage(at);
+-- The user API tokens that open the OpenAI-compatible door (PRD FR-D6). Hashed exactly like node
+-- tokens: the plaintext is returned once at mint and never stored. \`kind\` decides the vLLM priority
+-- a request through the door is sent with (0020); \`user\` is \`admin\` until accounts land (FR-F1).
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  label TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  revoked_at INTEGER
+);
 `;
 
 /** Adds `column` to `table` (via `ddl`, e.g. "TEXT NOT NULL DEFAULT '[]'") if it doesn't already exist. */

@@ -29,9 +29,10 @@ export interface AuthOptions {
 /**
  * How a route is guarded. `none` is unguarded (the static UI, which has to be reachable to render
  * the login box), `open` is a guarded prefix's explicit exception, `daemon` accepts the daemon
- * bearer *or* an owner session, and `owner` accepts the session cookie only.
+ * bearer *or* an owner session, `door` is the OpenAI-compatible door, whose own user-API-token
+ * bearer `door.ts` checks, and `owner` accepts the session cookie only.
  */
-export type Access = 'none' | 'open' | 'daemon' | 'owner';
+export type Access = 'none' | 'open' | 'daemon' | 'door' | 'owner';
 
 /**
  * Where a daemon route names the node it is about. A per-node token is only good for its own node,
@@ -92,6 +93,10 @@ export function daemonRouteSubject(method: string, route: string | undefined): N
 export function routeAccess(method: string, route: string | undefined): Access {
   if (route === undefined) return 'owner';
   if (route === '/ws') return 'owner';
+  // `/v1/*` is the OpenAI-compatible door (PRD FR-D6). It is not `none`: it is guarded, by a user
+  // API token the plugin that owns the routes checks itself, because only that plugin knows which
+  // token — and so which priority tier — the request speaks for.
+  if (route.startsWith('/v1/')) return 'door';
   if (route !== '/api' && !route.startsWith('/api/')) return 'none';
   if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
   if (method === 'POST' && route === '/api/login') return 'open';

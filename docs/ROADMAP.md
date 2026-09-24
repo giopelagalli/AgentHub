@@ -30,6 +30,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
   milestone and a pull request the owner opens (0028–0030).
 
+- The OpenAI-compatible door (FR-D6/FR-D7): user API tokens minted from the Cluster page,
+  `/v1/chat/completions` and `/v1/models` streaming through the gateway with the token's priority
+  tier, every request in the cost ledger (0034, 0035).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -38,7 +42,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 ## Next (in order)
 
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
-   Silicon 48 GB); the hub's OpenAI-compatible door (FR-D6).
+   Silicon 48 GB).
 2. Workbench: preview proxy, terminal, Code screen with the Guide chat, Code map and Tour
    (FR-B1–B7).
 3. Harnesses: the pi spike, then `pi` as the default employee harness and `claude-code` as an

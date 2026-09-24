@@ -123,8 +123,14 @@ export const TIER_MODELS: Record<string, Tier> = {
   'agenthub/worker': 'worker',
 };
 
-/** Which tier a request's `model` asks for, and how to route it; null when nothing serves it. */
-export function resolveModel(registry: NodeRegistry, model: string): { tier: Tier; route?: Route } | null {
+/**
+ * Which tier a request's `model` asks for, and how to route it; null when nothing serves it.
+ * `local` marks a request that must not be allowed to fall through to a cloud endpoint — see the
+ * capacity check in the route handler.
+ */
+export function resolveModel(
+  registry: NodeRegistry, model: string,
+): { tier: Tier; route?: Route; local?: true } | null {
   const tier = TIER_MODELS[model];
   if (tier) return { tier };
   // A concrete id: whatever endpoint is serving it right now fixes both the tier and the route. A
@@ -135,19 +141,19 @@ export function resolveModel(registry: NodeRegistry, model: string): { tier: Tie
       if (ep.model !== model) continue;
       return isCloudEndpoint(ep)
         ? { tier: ep.tier, route: { prefer: 'cloud', provider: ep.provider as CloudProvider, model: ep.model } }
-        : { tier: ep.tier, route: { prefer: 'local' } };
+        : { tier: ep.tier, route: { prefer: 'local' }, local: true };
     }
   }
   return null;
 }
 
 /** An OpenAI error body. `type` and `code` are what a client branches on; the message is for a human. */
-function errorBody(message: string, type: string, code?: string): { error: Record<string, unknown> } {
+export function openAiError(message: string, type: string, code?: string): { error: Record<string, unknown> } {
   return { error: { message, type, ...(code ? { code } : {}) } };
 }
 
 const badRequest = (reply: FastifyReply, message: string): FastifyReply =>
-  reply.code(400).send(errorBody(message, 'invalid_request_error'));
+  reply.code(400).send(openAiError(message, 'invalid_request_error'));
 
 /**
  * One message's text. A string is itself; the content-parts array every newer client sends is
@@ -191,8 +197,9 @@ export function toChatMessages(raw: unknown): { messages: ChatMessage[] } | { er
     if (!m || typeof m !== 'object' || typeof m.role !== 'string') return { error: 'each message needs a role' };
     const text = textOf(m.content);
     if (text === null) return { error: `unsupported content on a ${m.role} message` };
-    if (m.role === 'system' || m.role === 'user') {
-      messages.push({ role: m.role, content: text });
+    // `developer` is what newer OpenAI clients call a system message; it is the same thing here.
+    if (m.role === 'system' || m.role === 'developer' || m.role === 'user') {
+      messages.push({ role: m.role === 'developer' ? 'system' : m.role, content: text });
       continue;
     }
     if (m.role === 'assistant') {
@@ -274,21 +281,47 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
   /** The token behind a `/v1` request, or null — having already answered 401 with an OpenAI error. */
   const requireToken = (req: FastifyRequest, reply: FastifyReply): ApiTokenView | null => {
     const client = req.ip;
-    if (throttle.blocked(client)) {
-      reply.code(429).send(errorBody('too many bad tokens; try again later', 'invalid_request_error', 'rate_limit_exceeded'));
-      return null;
-    }
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
+    // The bearer is checked before the lockout, not after: the throttle exists to stop guessing,
+    // and a token that verifies is not a guess. Otherwise one misconfigured client behind a shared
+    // address (a NAT, the droplet's proxy) would lock out every other client on it.
     const token = bearer ? tokens.verify(bearer) : null;
-    if (!token) {
-      throttle.fail(client);
-      reply.code(401).send(errorBody('invalid api token', 'invalid_request_error', 'invalid_api_key'));
-      return null;
-    }
-    throttle.succeed(client);
-    return token;
+    // A hit does not clear the client's history the way a successful login does: the lockout only
+    // ever refuses bad bearers, so one holder of a valid token must not be able to wipe the
+    // counter a guesser on the same address is running up. It expires on its own window.
+    if (token) return token;
+    // A blocked client's attempt is refused without being counted, so a spray cannot keep extending
+    // its own lockout — the same bargain `POST /api/login` strikes.
+    const blocked = throttle.blocked(client);
+    if (!blocked) throttle.fail(client);
+    reply.code(blocked ? 429 : 401).send(blocked
+      ? openAiError('too many bad tokens; try again later', 'invalid_request_error', 'rate_limit_exceeded')
+      : openAiError('invalid api token', 'invalid_request_error', 'invalid_api_key'));
+    return null;
   };
+
+  // Everything Fastify itself rejects before a handler runs — malformed JSON (400), a body over
+  // the limit (413), an unparseable content type (415) — reaches a door client in its own error
+  // shape rather than Fastify's. `/api/tokens` is in this same plugin and keeps the hub's shape.
+  app.setErrorHandler((raw, req, reply) => {
+    const err = raw as { statusCode?: number; code?: string; message?: string };
+    const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500;
+    const message = err.message ?? 'internal error';
+    if (!req.url.startsWith('/v1/')) return reply.code(status).send({ error: message });
+    return reply.code(status).send(openAiError(message, status >= 500 ? 'api_error' : 'invalid_request_error', err.code));
+  });
+
+  // A path under `/v1` that is not one of the two routes. It is a real route rather than a
+  // not-found handler so that `routeAccess` still classifies it `door`: an unmatched request is
+  // denied by the hub's shared hook, and a token holder asking for `/v1/embeddings` deserves the
+  // door's own 404, not a bare `unauthorized`.
+  app.all('/v1/*', async (req, reply) => {
+    if (!requireToken(req, reply)) return reply;
+    return reply.code(404).send(openAiError(
+      `no route for ${req.method} ${req.url.split('?')[0]}`, 'invalid_request_error', 'unknown_endpoint',
+    ));
+  });
 
   // --- the owner's token routes -------------------------------------------------
 
@@ -338,7 +371,15 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
     if (body.stream !== undefined && typeof body.stream !== 'boolean') return badRequest(reply, 'stream must be a boolean');
     const resolved = resolveModel(opts.registry, body.model);
     if (!resolved) {
-      return reply.code(404).send(errorBody(`no model named ${body.model}`, 'invalid_request_error', 'model_not_found'));
+      return reply.code(404).send(openAiError(`no model named ${body.model}`, 'invalid_request_error', 'model_not_found'));
+    }
+    // A concrete local id means local, full stop: `prefer: 'local'` falls back to the cloud for a
+    // tier nothing local can serve, which would quietly bill the owner for a model they did not
+    // ask for. Refused here instead, before anything is spent.
+    if (resolved.local && !opts.gateway.localAvailable(resolved.tier)) {
+      return reply.code(503).send(openAiError(
+        `no local endpoint is serving ${body.model}`, 'server_error', 'no_capacity',
+      ));
     }
     const includeUsage = (body.stream_options as { include_usage?: unknown } | undefined)?.include_usage === true;
 
@@ -347,8 +388,11 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
     const ac = new AbortController();
     reply.raw.on('close', () => ac.abort());
     const streaming = body.stream === true;
-    const chunk = (payload: Record<string, unknown>): void => {
-      reply.raw.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model: body.model as string, ...payload })}\n\n`);
+    // Chunks name the model asked for until the request is over and the gateway says which one
+    // actually served it; the closing chunks carry that instead, so a streaming client learns the
+    // same thing a non-streaming one reads off `model`.
+    const chunk = (payload: Record<string, unknown>, model: string = body.model as string): void => {
+      reply.raw.write(`data: ${JSON.stringify({ id, object: 'chat.completion.chunk', created, model, ...payload })}\n\n`);
     };
 
     if (streaming) {
@@ -370,9 +414,11 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
         opts.usage.record({ ...result.usage, subject: `door:${token.label}`, sessionId: null, memberId: null, kind: 'door' });
       }
       const usage = wireUsage(result);
+      // What actually served the request, which for a tier name is only known now.
+      const served = result.usage?.model ?? (body.model as string);
       if (!streaming) {
         return reply.code(200).send({
-          id, object: 'chat.completion', created, model: result.usage?.model ?? (body.model as string),
+          id, object: 'chat.completion', created, model: served,
           choices: [{
             index: 0,
             message: {
@@ -390,8 +436,8 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
       if (result.toolCalls.length) {
         chunk({ choices: [{ index: 0, delta: { tool_calls: wireToolCallDeltas(result.toolCalls) }, finish_reason: null }] });
       }
-      chunk({ choices: [{ index: 0, delta: {}, finish_reason: result.finish }] });
-      if (includeUsage) chunk({ choices: [], usage: usage ?? null });
+      chunk({ choices: [{ index: 0, delta: {}, finish_reason: result.finish }] }, served);
+      if (includeUsage) chunk({ choices: [], usage: usage ?? null }, served);
       reply.raw.write('data: [DONE]\n\n');
       reply.raw.end();
       return reply;
@@ -399,7 +445,7 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
       const message = (err as Error).message;
       // "no capacity" is the hub saying later, not never — the status a client should retry on.
       const status = /no capacity for tier/.test(message) ? 503 : 502;
-      const payload = errorBody(message, status === 503 ? 'server_error' : 'api_error');
+      const payload = openAiError(message, status === 503 ? 'server_error' : 'api_error');
       if (!streaming) return reply.code(status).send(payload);
       // The head is long gone on a stream, so the error travels as a frame instead of a status.
       reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);

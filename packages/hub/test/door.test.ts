@@ -257,7 +257,7 @@ describe('POST /v1/chat/completions', () => {
     expect((await completions(base, token.token, { model: 'agenthub/worker', messages: hello })).status).toBe(401);
   });
 
-  it('locks a client out after repeated bad bearers, like the login throttle', async () => {
+  it('locks a client out after repeated bad bearers, but never a token that verifies', async () => {
     const { hub, base } = await harness();
     const good = await mint(hub, 'assistant', 'pi');
     for (let i = 0; i < 5; i++) {
@@ -265,8 +265,10 @@ describe('POST /v1/chat/completions', () => {
     }
     const blocked = await completions(base, 'ah_wrong', { model: 'agenthub/worker', messages: hello });
     expect(blocked.status).toBe(429);
-    // The lockout is the client's, not the token's: a good token waits too.
-    expect((await completions(base, good.token, { model: 'agenthub/worker', messages: hello })).status).toBe(429);
+    // The lockout is for guessing, and a real token is not a guess — a client sharing an address
+    // with a misconfigured one (a NAT, the droplet's proxy) keeps working.
+    expect((await completions(base, good.token, { model: 'agenthub/worker', messages: hello })).status).toBe(200);
+    expect((await completions(base, 'ah_wrong', { model: 'agenthub/worker', messages: hello })).status).toBe(429);
   });
 
   it('refuses a malformed request and an unknown model with OpenAI errors', async () => {
@@ -284,13 +286,83 @@ describe('POST /v1/chat/completions', () => {
     expect((await unknown.json() as any).error.code).toBe('model_not_found');
   });
 
-  it('flattens the content-parts array newer clients send', async () => {
-    const { hub, base } = await harness();
+  it('flattens the content-parts array newer clients send, and reads `developer` as a system turn', async () => {
+    const { hub, base, mock } = await harness();
     const token = await mint(hub, 'assistant', 'pi');
     const parts = await completions(base, token.token, {
-      model: 'agenthub/worker', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello there' }] }],
+      model: 'agenthub/worker',
+      messages: [
+        { role: 'developer', content: 'be brief' },
+        { role: 'user', content: [{ type: 'text', text: 'hello there' }] },
+      ],
     });
     expect((await parts.json() as any).choices[0].message.content).toBe('echo: hello there');
+    expect(mock.lastRequest().messages[0]).toEqual({ role: 'system', content: 'be brief' });
+  });
+
+  it('refuses a local model id no local endpoint can serve, rather than billing the cloud', async () => {
+    const { hub, base } = await harness();
+    const token = await mint(hub, 'assistant', 'pi');
+    await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/drain', payload: { on: true } });
+
+    const res = await completions(base, token.token, { model: 'local-worker', messages: hello });
+    expect(res.status).toBe(503);
+    expect((await res.json() as any).error).toMatchObject({ type: 'server_error', code: 'no_capacity' });
+    expect(hub.usage.cloudUsdSince(0)).toBe(0);
+    // The tier name still falls back to the cloud, which is what it is for.
+    expect((await completions(base, token.token, { model: 'agenthub/worker', messages: hello })).status).toBe(200);
+    expect(hub.usage.summary({ since: 0 }).byModel[0]).toMatchObject({ provider: 'fireworks' });
+  });
+
+  it('names the model that actually served the request on the closing stream chunks', async () => {
+    const { hub, base } = await harness();
+    const token = await mint(hub, 'assistant', 'pi');
+    const res = await completions(base, token.token, {
+      model: 'agenthub/worker', messages: hello, stream: true, stream_options: { include_usage: true },
+    });
+    const chunks = frames(await res.text());
+    expect(chunks[0].model).toBe('agenthub/worker');
+    expect(chunks.at(-1)!.model).toBe('local-worker');
+    expect(chunks.at(-2)!.model).toBe('local-worker');
+  });
+
+  it('answers an unknown /v1 path and a malformed body in the OpenAI error shape', async () => {
+    const { hub, base } = await harness();
+    const token = await mint(hub, 'assistant', 'pi');
+
+    const unknown = await fetch(`${base}/v1/embeddings`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token.token}` },
+      body: '{}',
+    });
+    expect(unknown.status).toBe(404);
+    expect((await unknown.json() as any).error).toMatchObject({ code: 'unknown_endpoint', type: 'invalid_request_error' });
+    expect((await fetch(`${base}/v1/embeddings`)).status).toBe(401);
+
+    const malformed = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token.token}` },
+      body: '{not json',
+    });
+    expect(malformed.status).toBe(400);
+    expect((await malformed.json() as any).error.type).toBe('invalid_request_error');
+
+    // A content type the hub parses nothing from leaves no body behind, which the route refuses
+    // like any other malformed request — still the door's shape, never Fastify's.
+    const wrongType = await fetch(`${base}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain', authorization: `Bearer ${token.token}` },
+      body: 'hello',
+    });
+    expect(wrongType.status).toBe(400);
+    expect((await wrongType.json() as any).error.type).toBe('invalid_request_error');
+
+    // The owner's own routes are in the same plugin and keep the hub's error shape.
+    const owner = await hub.app.inject({
+      method: 'POST', url: '/api/tokens', headers: { 'content-type': 'application/json' }, payload: '{not json',
+    });
+    expect(owner.statusCode).toBe(400);
+    expect(owner.json()).toEqual({ error: expect.any(String) });
   });
 
   it('reports a tier nothing can serve as a 503, streaming or not', async () => {

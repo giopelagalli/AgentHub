@@ -260,7 +260,9 @@ everyone):
 | `agent` | something running by itself — a coding harness, a batch | 10 (yields to the above) |
 
 **The base URL** is the hub's, plus `/v1`: `https://rosenroot.com/v1` from outside,
-`http://<hub>:4000/v1` on the tailnet.
+`http://<hub>:4000/v1` on the tailnet. Bad tokens are locked out per client address after five
+tries, so behind the droplet's proxy `TRUST_PROXY` must be set (`configs/hub.env`) or every
+outside client counts as one — a valid token is never affected either way.
 
 ```sh
 curl https://rosenroot.com/v1/chat/completions \

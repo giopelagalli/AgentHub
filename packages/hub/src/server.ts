@@ -11,7 +11,7 @@ import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom 
 import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
-import { door } from './door.js';
+import { door, openAiError } from './door.js';
 import {
   ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
 } from './enrollment.js';
@@ -583,8 +583,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   // ever sees it.
   if (controlSwitch) {
     app.addHook('onRequest', async (req, reply) => {
-      if (!controlSwitch.switching || req.method === 'GET' || req.method === 'HEAD') return;
+      if (!controlSwitch.switching) return;
       const route = req.routeOptions?.url;
+      // The door writes on every request — a usage row, a token's last-used stamp, possibly cloud
+      // dollars — so it is refused whole, `GET /v1/models` included, unlike the read-only API.
+      const isDoor = routeAccess(req.method, route) === 'door';
+      if (!isDoor && (req.method === 'GET' || req.method === 'HEAD')) return;
+      if (isDoor) {
+        return reply.code(503).send(openAiError('control-node switch in progress', 'server_error', 'switching'));
+      }
       if (route === '/api' || route?.startsWith('/api/')) {
         return reply.code(503).send({ error: 'control-node switch in progress' });
       }

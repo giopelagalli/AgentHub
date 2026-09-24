@@ -1,4 +1,4 @@
-# 0032 — A token's kind sets the request's priority, through a per-request override on the gateway
+# 0035 — A token's kind sets the request's priority, through a per-request override on the gateway
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted

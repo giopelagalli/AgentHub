@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { NodeInfo, UsageReport } from '@agenthub/shared';
-import { cloudSpendText, enrollmentExpiry, nodeActions } from '../src/pages/cluster.js';
+import { NEW_TOKEN_NOTE, cloudSpendText, enrollmentExpiry, nodeActions, tokenWhen } from '../src/pages/cluster.js';
 
 function node(overrides: Partial<NodeInfo> = {}): NodeInfo {
   return {
@@ -41,6 +41,18 @@ describe('enrollmentExpiry', () => {
   it('tells the owner to mint a new one once it has run out', () => {
     expect(inMinutes(0)).toBe('This command has expired — press Add node for a fresh one.');
     expect(inMinutes(-10)).toBe('This command has expired — press Add node for a fresh one.');
+  });
+});
+
+describe('API tokens panel', () => {
+  it('says the token is shown once and points at the door', () => {
+    expect(NEW_TOKEN_NOTE).toContain('last time it can be shown');
+    expect(NEW_TOKEN_NOTE).toContain('/v1');
+  });
+
+  it('prints a date for a token that has been used and says so when it has not', () => {
+    expect(tokenWhen(null)).toBe('never');
+    expect(tokenWhen(1_700_000_000_000)).toBe(new Date(1_700_000_000_000).toLocaleString());
   });
 });
 

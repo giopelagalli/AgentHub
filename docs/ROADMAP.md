@@ -32,7 +32,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 - The OpenAI-compatible door (FR-D6/FR-D7): user API tokens minted from the Cluster page,
   `/v1/chat/completions` and `/v1/models` streaming through the gateway with the token's priority
-  tier, every request in the cost ledger (0031, 0032).
+  tier, every request in the cost ledger (0034, 0035).
 
 ## In progress
 

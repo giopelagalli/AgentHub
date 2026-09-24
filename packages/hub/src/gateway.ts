@@ -302,6 +302,17 @@ export class ModelGateway {
     return Object.fromEntries(this.unhealthyUntil);
   }
 
+  /**
+   * Whether some local endpoint could serve `tier` right now — the exact condition under which
+   * `prefer: 'local'` means local *only* rather than local-first. A caller that must not be billed
+   * for the cloud fallback (the door, for a request naming a local model id) asks this first;
+   * capacity is deliberately not part of it, so a merely busy endpoint still counts as local
+   * serving and the caller waits for a slot rather than being turned away.
+   */
+  localAvailable(tier: Tier): boolean {
+    return this.eligible(tier).some((c) => !isCloudEndpoint(c.endpoint));
+  }
+
   pick(tier: Tier, route?: Route): PickResult | null {
     return this.pickFrom(tier, route, false);
   }

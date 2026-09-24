@@ -98,6 +98,20 @@ if it fails; `PrdDrafter` reads the clone so the PRD describes the product that 
 real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
 from that checkout's own index.
 
+**`projects/terminal.ts`** — FR-B2, the Terminal: one Fastify plugin, registered with a single
+line in `server.ts`, that owns `GET /api/projects/:slug/terminal` as a WebSocket upgrade. It spawns
+the owner's shell (`$SHELL`, else `/bin/sh`) through node-pty in the project's `workspace/` and
+joins pty and socket as binary frames both ways; the only text frames are `{type:'resize'}` up and a
+one-line notice down. The route is `owner` by `routeAccess`'s default, so the daemon bearer and
+per-node tokens cannot reach it, and the shell is handed `secretsStripped(process.env)` plus `TERM`
+and `AGENTHUB_PROJECT` — a terminal is not a way to read the hub's credentials out of its own
+process (0031). One socket is one shell: the process *group* is killed on close, so a backgrounded
+grandchild goes with it. Four sessions per hub, a 60-minute idle sweep, and a start/end log line
+that is a slug and a duration, never a transcript. The socket is paused until the pty and its
+listeners are wired, because the handshake completes before the handler runs and xterm's first frame
+is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
+addon, reconnect with a banner — a reconnect is a *new* shell and says so).
+
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 
 **`assistant/`, `telegram/`, `external/`, `resources.ts`, `control-switch.ts`** — the built-in

@@ -30,6 +30,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   code, a roadmap that leads with what already works, `agenthub/<slug>` pushed after each verified
   milestone and a pull request the owner opens (0028–0030).
 
+- Workbench, **Terminal** (FR-B2): a *Terminal* big button opens a real shell in the project's
+  `workspace/` on the hub host — node-pty over the hub's own WebSocket into xterm.js, owner-only,
+  four at a time, an hour's idle timeout (0031, 0032).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.

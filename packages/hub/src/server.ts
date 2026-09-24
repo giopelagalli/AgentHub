@@ -30,6 +30,7 @@ import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
+import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { Github, GithubError, PatCredentials, validBranch, type GithubOptions } from './projects/github.js';
@@ -554,9 +555,11 @@ export function createHub(opts: HubOptions = {}): Hub {
       }
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
-      // half-dead and hold `app.close()` open forever. Only the one route it owns, so an ordinary
+      // half-dead and hold `app.close()` open forever. Only the websocket routes, so an ordinary
       // request carrying an `Upgrade` header is not hung up on.
-      if (route === '/ws' && req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
+      if ((route === '/ws' || route === TERMINAL_ROUTE) && req.headers.upgrade) {
+        reply.raw.on('finish', () => reply.raw.socket?.end());
+      }
       return reply.code(401).send({ error: 'unauthorized' });
     });
 
@@ -635,6 +638,9 @@ export function createHub(opts: HubOptions = {}): Hub {
   const screencast = browser.screencast(opts.browser?.screencastIntervalMs);
   screencast.onFrame((frame) => broadcastTo('browser', { type: 'browser-frame', ...frame }));
   leases.onChange(() => broadcastState());
+  // After `registerWs`, which is what registers @fastify/websocket: a route may only ask for
+  // `websocket: true` once that plugin has booted, and plugins boot in the order they were added.
+  app.register(terminalRoutes, { projects });
 
   // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
   const refreshes = new Set<Promise<void>>();

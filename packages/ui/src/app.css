@@ -2953,3 +2953,49 @@ button.card__open:hover {
   margin-top: 10px;
   color: var(--red);
 }
+
+/* The Terminal sheet (FR-B2). A bar that stays empty until something is wrong, the screen taking
+   everything left over, and one line saying whose shell this is — it is the hub host's, not a
+   sandbox, and the footer is the only place the page says so. */
+
+.term {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 16px 10px;
+}
+
+.term__bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 28px;
+}
+
+.term__banner {
+  color: var(--amber);
+}
+
+.term__bar .btn {
+  margin-left: auto;
+}
+
+.term__screen {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.term__screen .xterm {
+  height: 100%;
+}
+
+.term__foot {
+  color: var(--text-mute);
+}

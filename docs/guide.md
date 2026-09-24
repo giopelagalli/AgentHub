@@ -48,7 +48,7 @@ A **project page** has, top to bottom:
    - **Chat** — one-on-one with the project's Manager (`c`). The same drawer the Manager card in
      the org chart opens, and it works while a turn is running.
    - **Pause / Resume**, **Run turn** (shows `Running · m:ss` while one runs), **Add employee**.
-2. **Four big buttons.** PRD, Roadmap, Docs, Activity. Each opens a full-screen sheet
+2. **The big buttons.** PRD, Roadmap, Docs, Activity, Terminal. Each opens a full-screen sheet
    (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
    the document's editor ("move milestone 4 before 2", "add a section on backups") and it
    changes the document in place.
@@ -248,6 +248,27 @@ release it; the **Computer** page shows who holds it, the queue, and lets you **
 (you drive, agents wait) and **Release**. Recordings of agent sessions are kept under the data
 root. Multiple simultaneous sessions are planned (Phase D).
 
+## The terminal
+
+The **Terminal** button on a project page opens a real shell in that project's `workspace/`, on the
+machine the hub runs on. `Esc` closes the sheet; the button underneath reads *open* or *closed*.
+
+- It is a proper terminal, not a command box: `vim`, `top`, an interactive rebase, tab completion
+  and colours all work, because a pseudo-terminal is what is on the other end.
+- **One sheet is one shell.** Close the sheet, or lose the connection, and the shell is killed —
+  along with anything it started in the background. Reconnecting gives you a *new* shell, which the
+  banner says; **New session** does the same on purpose.
+- Four terminals at a time across the whole hub, and one that sits untouched for an hour closes
+  itself.
+- The hub logs that a session happened — which project, how long — and never what you typed.
+
+**It is your shell, with your reach.** It is scoped to the workspace only in the sense that it
+*starts* there: everything the user running the hub can do, this can do. It is owner-only for that
+reason — the daemon token and a node's own token are refused at the door — and it stays owner-only
+until per-member access arrives, when a terminal will only ever open on a node you own. The one
+thing it cannot see is the hub's own secrets: model keys, the session secret and the GitHub token
+are stripped out of its environment, the same way they are for anything an agent runs.
+
 ## Chatting with the team
 
 Click an employee or the Manager. The drawer shows their status, their sessions, and a chat that
@@ -271,6 +292,12 @@ Two systemd *user* units, installed from `deploy/spark/`:
 | Config | `~/AgentHub/configs/hub.env` — never committed |
 | Data | `DATA_ROOT` (`~/agenthub-data`): `projects/<slug>/`, the hub database, memory, recordings |
 | Update | `cd ~/AgentHub && git pull && npm run build:ui && systemctl --user restart agenthub-hub` |
+
+**The terminal needs node-pty.** It ships prebuilt binaries for macOS and 64-bit Linux (the Spark
+included), so a normal `npm ci` is all it takes. Anywhere else it compiles on install and needs
+build tools — Xcode command line tools on a Mac (`xcode-select --install`), `build-essential` and
+`python3` on Debian or Ubuntu. If `npm ci` fails on node-pty, that is what is missing; the hub does
+not start without it.
 
 **Restarting the hub cuts any running turn short.** Check the project header for
 `Running · m:ss` first, or expect a "cut short" briefing.

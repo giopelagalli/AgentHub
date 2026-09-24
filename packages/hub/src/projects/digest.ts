@@ -9,8 +9,8 @@ const HEAD_LINE_LIMIT = 80;
 const DIGEST_TRUNCATED = '\n[digest truncated]';
 
 /** Never descended into: dependency trees, build output and nested checkouts are not the project's own files. */
-const SKIPPED_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'target', '__pycache__', '.next', 'coverage']);
-const SKIPPED_FILES = new Set(['.gitkeep']);
+export const SKIPPED_DIRS = new Set(['node_modules', '.git', '.venv', 'venv', 'dist', 'build', 'target', '__pycache__', '.next', 'coverage']);
+export const SKIPPED_FILES = new Set(['.gitkeep']);
 
 /** Files whose first line says something about them — a comment, a shebang, a heading. */
 const SOURCE_EXTENSIONS = new Set([

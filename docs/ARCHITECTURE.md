@@ -29,9 +29,10 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
 the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs and activity; a drawer per agent with a live *Now* feed and a chat. Pure model functions
-(`turns.ts`, `models.ts`, `org.ts`, `rail.ts`) are separated from DOM code so they are testable
-without a browser.
+docs, activity and code; a drawer per agent with a live *Now* feed and a chat. Pure model functions
+(`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, `code/model.ts`) are separated from DOM code so they
+are testable without a browser. One runtime dependency, CodeMirror, and it is loaded only when the
+Code sheet opens (0031).
 
 ## Hub modules (`packages/hub/src`)
 
@@ -97,6 +98,19 @@ if it fails; `PrdDrafter` reads the clone so the PRD describes the product that 
 `GET /api/github/status` answers `{ configured, method }` and never the token. The workspace is a
 real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
 from that checkout's own index.
+
+**`projects/code.ts`** — the Code screen's hub half (FR-B3–B5), registered into the server with one
+line. Five owner-only routes under `/api/projects/:slug/code`: the tree (the workspace as one flat
+sorted list, `.git`/`node_modules`/`dist`/… never descended into because `digest.ts` already decided
+what is not the project's own code, binary and >2 MB files listed but marked unopenable, 5,000
+entries then it says it stopped), one file read (UTF-8 only, decoded strictly so a mislabelled
+binary is a 415 rather than a lossy round trip), one file written, and *Refresh map*. It shares the
+agents' containment check — `workspacePath` in `agents/tools.ts` — rather than keeping a second one:
+a path an agent may not reach is a path the owner's editor may not write either. A save commits
+where the workspace actually lives, the clone for an imported project and the bundle otherwise
+(0032). *Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`,
+which is `docs/code-map.md` and nothing more exotic (0034). The guide it sits beside is a persona in
+`chat.ts`, read-only by construction (0033).
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

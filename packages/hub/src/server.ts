@@ -32,6 +32,7 @@ import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
+import { codeRoutes } from './projects/code.js';
 import { Github, GithubError, PatCredentials, validBranch, type GithubOptions } from './projects/github.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
@@ -1797,6 +1798,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { pages } = await bundle.docs();
     return { slug: page, title: pages.find((p) => p.slug === page)?.title ?? page, markdown };
   });
+
+  // --- the Code screen ------------------------------------------------------------
+
+  codeRoutes(app, { resolveProject, loop });
 
   app.get('/api/briefings', async () => projects.briefings());
 

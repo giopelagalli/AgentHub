@@ -7,7 +7,7 @@ import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
-import { subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
+import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
@@ -172,10 +172,21 @@ function needHub(ctx: ToolContext): HubDeps {
   return ctx.hub;
 }
 
-// Workspace paths resolve inside `<bundle>/workspace`; `'.'` stands in for the daemon's per-project
-// segment because the bundle workspace is already project-scoped.
+/**
+ * Resolves a workspace-relative path inside `workspace`, throwing when it escapes — the one
+ * containment check the workspace tools make, exported so the Code screen's file routes make
+ * exactly the same one rather than a second, subtly different version of it. Lexical, like the
+ * tools': `..` and an absolute path are refused, a symlink inside the workspace is not followed.
+ */
+export function workspacePath(workspace: string, path: string | undefined): string {
+  // `'.'` stands in for the daemon's per-project segment because the bundle workspace is already
+  // project-scoped.
+  return resolveWorkspace(workspace, '.', path);
+}
+
+// Workspace paths resolve inside `<bundle>/workspace`.
 function inWorkspace(ctx: ToolContext, path: string | undefined): string {
-  return resolveWorkspace(needBundle(ctx).workspace, '.', path);
+  return workspacePath(needBundle(ctx).workspace, path);
 }
 
 const strProp = (description: string) => ({ type: 'string', description });
@@ -389,8 +400,8 @@ function parseTasks(args: unknown): TaskItem[] {
   });
 }
 
-/** The two document tools a turn gets: it keeps the docs true and moves the roadmap along. */
-const TURN_DOC_TOOLS = ['write_doc', 'set_milestone_status'];
+/** The document tools a turn gets: it keeps the docs true, refreshes the code map, and moves the roadmap along. */
+const TURN_DOC_TOOLS = ['write_doc', 'write_code_map', 'set_milestone_status'];
 
 /** What `set_milestone_status` accepts: everything but `done`, which only a verification grants. */
 const SETTABLE_MILESTONE_STATUSES = MILESTONE_STATUSES.filter((s) => s !== 'done');
@@ -703,6 +714,22 @@ export function docTools(actor: DocActor = 'agent'): Tool[] {
         await bundle.writeDoc(page, str(args, 'markdown'));
         await bundle.commit(`${prefix}write doc ${page}`);
         return `docs/${page}.md written`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'write_code_map',
+        description: `Replace the code map (docs/${CODE_MAP_PAGE}.md): the reader's way into this codebase, chapters from the ` +
+          'entry points down, every item a `path:line` link the owner can click open. Write the whole page; it replaces ' +
+          `what is there. Keep it under ${CODE_MAP_MAX_LINES} lines.`,
+        parameters: { type: 'object', properties: { markdown: strProp('The whole code map as markdown.') }, required: ['markdown'] },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const markdown = str(args, 'markdown');
+        await bundle.writeDoc(CODE_MAP_PAGE, markdown.endsWith('\n') ? markdown : `${markdown}\n`);
+        await bundle.commit(`${prefix}write code map`);
+        return `docs/${CODE_MAP_PAGE}.md written (${markdown.split('\n').length} lines)`;
       },
     },
   ];

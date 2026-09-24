@@ -1,16 +1,17 @@
+import type { CodeSummaryDoc } from './code/model.js';
 import { docsEntries, type DocsIndex } from './docs.js';
 import { auditStrip, type PrdDoc } from './prd.js';
 import type { TeamRoster } from '@agenthub/shared';
 import { roadmapRows, type RoadmapDoc } from './roadmap.js';
-import { activityHint, type TurnRecord, type TurnsState } from './turns.js';
+import { activityHint, formatElapsed, type TurnRecord, type TurnsState } from './turns.js';
 
 /**
- * The four big buttons above the org chart. Pure — each one turns a document the hub sent into
- * the one line the button shows, so the owner can tell what state the PRD, the roadmap, the docs
- * and the team's current turn are in without opening any of them.
+ * The big buttons above the org chart. Pure — each one turns a document the hub sent into the one
+ * line the button shows, so the owner can tell what state the PRD, the roadmap, the docs, the
+ * team's current turn and the workspace are in without opening any of them.
  */
 
-export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity';
+export type ArtifactId = 'prd' | 'roadmap' | 'docs' | 'activity' | 'code';
 
 /** Where each button's document is in its own fetch. */
 export type DocState = 'loading' | 'ready' | 'failed';
@@ -36,6 +37,7 @@ const CAPTIONS: Record<ArtifactId, string> = {
   roadmap: 'The order it gets built',
   docs: 'What the team wrote down',
   activity: 'What the team is doing',
+  code: 'Read and change the workspace',
 };
 
 export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
@@ -43,6 +45,7 @@ export const ARTIFACT_LABELS: Record<ArtifactId, string> = {
   roadmap: 'Roadmap',
   docs: 'Docs',
   activity: 'Activity',
+  code: 'Code',
 };
 
 /** The heading the artifact wears once it is open in the sheet. */
@@ -51,6 +54,7 @@ export const ARTIFACT_TITLES: Record<ArtifactId, string> = {
   roadmap: 'Roadmap',
   docs: 'Docs',
   activity: 'Activity',
+  code: 'Code',
 };
 
 function plural(count: number, noun: string): string {
@@ -106,6 +110,19 @@ export function docsSummary(state: DocState, doc: DocsIndex | null): ArtifactSum
   );
   if (!written.length) return shell('docs', 'No pages yet', false);
   return shell('docs', plural(written.length, 'page'), true);
+}
+
+/**
+ * The code button: how many files the workspace has, and how fresh the map into them is. An empty
+ * workspace reads quiet — there is nothing to open until a turn has written something.
+ */
+export function codeSummary(state: DocState, doc: CodeSummaryDoc | null, now: number): ArtifactSummary {
+  const waiting = pending('code', state);
+  if (waiting) return waiting;
+  if (!doc || !doc.files) return shell('code', 'Nothing in the workspace yet', false);
+  const files = `${plural(doc.files, 'file')}${doc.truncated ? '+' : ''}`;
+  const map = doc.map ? `map updated ${formatElapsed(Math.max(0, now - doc.map.updatedAt))} ago` : 'no map yet';
+  return shell('code', `${files} · ${map}`, true);
 }
 
 /** The activity button: the turn in progress and who is on it, or how the last one went. */

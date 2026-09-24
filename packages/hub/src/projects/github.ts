@@ -126,7 +126,7 @@ const isBlockTimeout = (err: unknown): boolean => /block timeout reached/i.test(
  * The identity the hub commits a milestone's work under. The clone is the owner's repository, so
  * nothing is written into its `.git/config`; these travel per invocation instead.
  */
-const COMMITTER_ENV = {
+export const COMMITTER_ENV = {
   GIT_AUTHOR_NAME: 'AgentHub Bot',
   GIT_AUTHOR_EMAIL: 'agent@agenthub.local',
   GIT_COMMITTER_NAME: 'AgentHub Bot',

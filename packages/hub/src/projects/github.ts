@@ -165,11 +165,25 @@ const GIT_BLOCK_TIMEOUT_MS = 120_000;
  * It is a convention, not a classifier: a secret under another name still goes (see 0030), and a
  * tracked `.env.example` is held back with the rest.
  */
-const COMMIT_EXCLUDES = [
+export const COMMIT_EXCLUDES = [
   ':(glob,exclude)**/.env*',
   ':(glob,exclude)**/*.pem',
   ':(glob,exclude)**/*.key',
 ];
+
+/**
+ * The same convention as a predicate, for the callers that stage one named path instead of the
+ * whole tree — the Code screen's owner edit (0044). A pathspec exclusion only subtracts from a
+ * wider `add`; `git add -- path` with the exclusions appended still stages `path`, so a caller
+ * naming a file has to ask this first.
+ *
+ * It is deliberately the same three rules, read off the basename, so "what never gets committed"
+ * has one answer in this module rather than one per caller.
+ */
+export function isCommitExcluded(path: string): boolean {
+  const name = path.split('/').pop() ?? '';
+  return name.startsWith('.env') || name.endsWith('.pem') || name.endsWith('.key');
+}
 
 export class Github {
   private readonly credentials: GithubCredentials | undefined;

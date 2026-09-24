@@ -12,3 +12,9 @@ export const MASTER_COMMAND_TOOL_CALLS = 8;
 export const CHAT_TOOL_CALLS = 6;
 /** A document persona reads its document, edits it and checks the result — more room than a chat. */
 export const DOC_PERSONA_TOOL_CALLS = 8;
+/**
+ * *Refresh map* has to read its way around a codebase before it can chart one — the digest names
+ * the files, but the chapters and the line numbers come from opening them — so it gets far more
+ * room than a chat and still less than a turn, which also has work to delegate.
+ */
+export const CODE_MAP_TOOL_CALLS = 20;

@@ -1,4 +1,4 @@
-# 0031 — CodeMirror 6 for the Code screen, loaded on demand
+# 0043 — CodeMirror 6 for the Code screen, loaded on demand
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted
@@ -25,10 +25,11 @@ weight for features this screen does not offer. `packages/ui/src/code/editor.ts`
 that imports any of it, and `views/code.ts` reaches it through `import()`.
 
 ## Consequences
-Measured against the same build before this change: the main bundle goes 121.6 kB → 131.4 kB
-(43.2 kB → 46.8 kB gzipped) — the Code screen's own code — and CodeMirror lands in a separate
+Measured against the same build before this change: the main bundle goes 121.6 kB → 132.4 kB
+(43.2 kB → 47.2 kB gzipped) — the Code screen's own code — and CodeMirror lands in a separate
 564.99 kB chunk (200.95 kB gzipped) that is fetched the first time the sheet is opened and never
-on any other page. CSS goes 35.9 kB → 37.9 kB.
+on any other page. CSS goes 35.9 kB → 38.0 kB. A chunk that fails to load is reported where the
+editor would be, rather than left as a viewer that never finishes opening a file.
 
 The precedent is the part that matters: a heavy widget is allowed, in its own module, behind a
 dynamic import, with its bundle delta recorded. The eleven packages are also eleven supply-chain

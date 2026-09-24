@@ -2,14 +2,14 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { simpleGit } from 'simple-git';
-import { CHAT_TOOL_CALLS } from '../agents/budgets.js';
+import { simpleGit, type SimpleGit } from 'simple-git';
+import { CODE_MAP_TOOL_CALLS } from '../agents/budgets.js';
 import type { AgentLoop } from '../agents/loop.js';
-import { bundleTools, docTools, workspacePath, workspaceTools, type Tool } from '../agents/tools.js';
+import { bundleTools, docTools, realWorkspacePath, workspaceTools, type Tool } from '../agents/tools.js';
 import { routeFor } from '../gateway.js';
 import type { ProjectBundle } from './bundle.js';
 import { SKIPPED_DIRS, SKIPPED_FILES } from './digest.js';
-import { COMMITTER_ENV } from './github.js';
+import { COMMITTER_ENV, isCommitExcluded } from './github.js';
 import { CODE_MAP_INSTRUCTION, CODE_MAP_PAGE, codeMapPrompt } from './prompts.js';
 import { guideContext } from './chat.js';
 
@@ -124,7 +124,7 @@ export type CodeFileError = { status: 404 | 415; error: string };
  * would save the losses back over the original.
  */
 export async function readCodeFile(workspace: string, path: string): Promise<CodeFile | CodeFileError> {
-  const full = workspacePath(workspace, path);
+  const full = await realWorkspacePath(workspace, path);
   const info = await stat(full).catch(() => null);
   if (!info) return { status: 404, error: 'no such file' };
   if (!info.isFile()) return { status: 415, error: 'not a file' };
@@ -150,12 +150,34 @@ const commitEnv = (): Record<string, string> => ({
   PATH: process.env.PATH ?? '',
   ...(process.env.HOME ? { HOME: process.env.HOME } : {}),
   GIT_TERMINAL_PROMPT: '0',
+  // Neither `/etc/gitconfig` nor `~/.gitconfig` configures a commit the hub makes: an `insteadOf`
+  // rewrite, a credential helper or a hook template there belongs to whoever runs this machine,
+  // not to this commit. Same reasoning as `Github.gitEnv` (0028).
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_GLOBAL: '/dev/null',
   ...COMMITTER_ENV,
 });
 
-/** A path the owner's editor may not write, whatever the containment check says about it. */
+/** A path the owner's editor may not read or write, whatever the containment check says about it. */
 const isProtectedPath = (path: string): boolean =>
   path.split('/').some((segment) => SKIPPED_DIRS.has(segment));
+
+const NOT_OWN_CODE = "path is not the project's own code";
+
+/** Where a saved file's commit went, and `'none'` when there was deliberately no commit. */
+export type CommitTarget = 'workspace' | 'bundle' | 'none';
+
+/**
+ * True when this checkout's ignore rules already say the file is not versioned.
+ *
+ * Read off the *output*, not the exit code: `check-ignore` exits 1 for "not ignored", and
+ * simple-git reports that as success with an empty string rather than as a failure. It prints the
+ * path when a rule matches and nothing when none does, which is unambiguous either way. A file
+ * that is already tracked is never reported, which is what we want — it is committed as usual.
+ */
+async function isIgnored(git: SimpleGit, path: string): Promise<boolean> {
+  return git.raw(['check-ignore', '--', path]).then((out) => out.trim().length > 0, () => false);
+}
 
 /**
  * Writes one file and records it as the owner's own commit.
@@ -166,33 +188,70 @@ const isProtectedPath = (path: string): boolean =>
  * owner's repository. A scaffolded workspace has no repository of its own and is versioned by the
  * bundle. Either way the edit is a commit before the next turn reads the file, which is the point:
  * an owner edit the agents can't see is an owner edit that gets overwritten.
+ *
+ * Two kinds of file are written and *not* committed, reported as `'none'` rather than as a failure:
+ * one that matches the credential convention `Github` holds out of a milestone push
+ * (`isCommitExcluded` — committing a `.env.production` here would put it in the history the next
+ * push sends to the owner's repository), and one the repository's own ignore rules already exclude.
+ * Both are ordinary things for the owner to edit; neither belongs in a commit.
  */
-export async function writeCodeFile(bundle: ProjectBundle, path: string, text: string): Promise<'workspace' | 'bundle'> {
-  const full = workspacePath(bundle.workspace, path);
+export async function writeCodeFile(bundle: ProjectBundle, path: string, text: string): Promise<CommitTarget> {
+  const full = await realWorkspacePath(bundle.workspace, path);
   await mkdir(dirname(full), { recursive: true });
   await writeFile(full, text, 'utf8');
   const message = `Owner edit: ${path}`;
+  if (isCommitExcluded(path)) return 'none';
 
   if (!existsSync(join(bundle.workspace, '.git'))) {
+    // The bundle stages the whole tree, so an ignored file simply never reaches the index and the
+    // commit is a no-op. Compare the head to say which of the two happened.
+    const before = await bundle.head();
     await bundle.commit(message);
-    return 'bundle';
+    return (await bundle.head()) === before ? 'none' : 'bundle';
   }
   // The clone is the owner's repository: no identity is written into its config (0028), and its
-  // hooks — which agents can write — stay out of a commit the hub makes. `allowUnsafeHooksPath` is
-  // what lets `core.hooksPath` be set at all, and it is used here to take hooks away, not add them.
-  const git = simpleGit(bundle.workspace, { unsafe: { allowUnsafeHooksPath: true } }).env(commitEnv());
-  await git.raw(['-c', 'core.hooksPath=/dev/null', 'add', '--', path]);
-  const staged = (await git.raw(['diff', '--cached', '--name-only', '--', path])).trim();
-  if (staged) await git.raw(['-c', 'core.hooksPath=/dev/null', 'commit', '--no-verify', '-m', message]);
+  // hooks — which agents can write — stay out of a commit the hub makes. `allowUnsafeHooksPath` and
+  // `allowUnsafeConfigPaths` are what let `core.hooksPath` and `GIT_CONFIG_GLOBAL` be set at all,
+  // and both are used here to take configuration away rather than to add it.
+  const git = simpleGit(bundle.workspace, {
+    unsafe: { allowUnsafeHooksPath: true, allowUnsafeConfigPaths: true },
+  }).env(commitEnv());
+  // `:(literal)` so a path containing `*`, `[` or a leading `:` is a filename and not a pathspec.
+  const pathspec = `:(literal)${path}`;
+  if (await isIgnored(git, path)) return 'none';
+  await git.raw(['-c', 'core.hooksPath=/dev/null', 'add', '--', pathspec]);
+  const staged = (await git.raw(['diff', '--cached', '--name-only', '--', pathspec])).trim();
+  if (!staged) return 'none';
+  await git.raw(['-c', 'core.hooksPath=/dev/null', 'commit', '--no-verify', '-m', message]);
   return 'workspace';
 }
 
-/** The read tools the map task gets: the same ones the guide has, and `write_code_map` to finish with. */
-function codeMapTools(): Tool[] {
+/**
+ * The read tools the map task gets: the same ones the guide has, and `write_code_map` to finish
+ * with — wrapped so the route can say whether the page was actually rewritten. A run that spends
+ * its budget reading and never writes is a run that changed nothing, and the owner is told that
+ * rather than "refreshed".
+ */
+function codeMapTools(onWrite: () => void): Tool[] {
   const reads = workspaceTools().filter((t) => ['read_file', 'list_dir'].includes(t.def.name));
   const bundleReads = bundleTools().filter((t) => t.def.name === 'read_bundle');
-  const write = docTools('owner').filter((t) => t.def.name === 'write_code_map');
+  const write = docTools('owner')
+    .filter((t) => t.def.name === 'write_code_map')
+    .map((tool): Tool => ({
+      ...tool,
+      run: async (args, ctx) => {
+        const result = await tool.run(args, ctx);
+        onWrite();
+        return result;
+      },
+    }));
   return [...reads, ...bundleReads, ...write];
+}
+
+/** What *Refresh map* comes back with: the page as it now stands, and whether this run wrote it. */
+export interface CodeMapResult {
+  markdown: string;
+  written: boolean;
 }
 
 /**
@@ -202,18 +261,22 @@ function codeMapTools(): Tool[] {
  * the owner shouldn't have to run a turn to get an up-to-date way into the code. Returns the page
  * as it stands afterwards, which is the old one when the model declined to write a new one.
  */
-export async function refreshCodeMap(loop: AgentLoop, bundle: ProjectBundle, slug: string): Promise<string> {
+export async function refreshCodeMap(
+  loop: AgentLoop, bundle: ProjectBundle, slug: string, signal?: AbortSignal,
+): Promise<CodeMapResult> {
   const route = routeFor((await bundle.manifest()).modelPolicy, 'orchestrator');
+  let written = false;
   await loop.run({
     kind: 'chat', subject: `${slug}:${CODE_MAP_PAGE}`, tier: 'orchestrator',
     system: codeMapPrompt(await guideContext(bundle)),
     user: CODE_MAP_INSTRUCTION,
-    tools: codeMapTools(),
+    tools: codeMapTools(() => { written = true; }),
     ctx: { bundle },
-    maxToolCalls: CHAT_TOOL_CALLS,
+    maxToolCalls: CODE_MAP_TOOL_CALLS,
     ...(route ? { route } : {}),
+    ...(signal ? { signal } : {}),
   });
-  return (await bundle.doc(CODE_MAP_PAGE)) ?? '';
+  return { markdown: (await bundle.doc(CODE_MAP_PAGE)) ?? '', written };
 }
 
 export interface CodeRouteDeps {
@@ -253,6 +316,8 @@ export function codeRoutes(app: FastifyInstance, deps: CodeRouteDeps): void {
     const { slug } = req.params as { slug: string };
     const { path } = (req.query ?? {}) as Partial<{ path: string }>;
     if (typeof path !== 'string' || !path) return reply.code(400).send({ error: 'invalid path' });
+    // The tree never lists these, so a request naming one did not come from the screen.
+    if (isProtectedPath(path)) return reply.code(400).send({ error: NOT_OWN_CODE });
     const bundle = await deps.resolveProject(slug, reply);
     if (!bundle) return reply;
     let result: CodeFile | CodeFileError;
@@ -265,13 +330,15 @@ export function codeRoutes(app: FastifyInstance, deps: CodeRouteDeps): void {
     return result;
   });
 
-  app.put('/api/projects/:slug/code/file', async (req, reply) => {
+  // Fastify's 1 MB default body limit sits below the 2 MB file the viewer will happily open, so a
+  // large file would open, edit and then fail to save. The slack covers the JSON escaping of it.
+  app.put('/api/projects/:slug/code/file', { bodyLimit: FILE_MAX_BYTES + 64 * 1024 }, async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const body = (req.body ?? {}) as Partial<{ path: string; text: string }>;
     if (typeof body.path !== 'string' || !body.path || typeof body.text !== 'string') {
       return reply.code(400).send({ error: 'invalid file' });
     }
-    if (isProtectedPath(body.path)) return reply.code(400).send({ error: 'path is not the project\'s own code' });
+    if (isProtectedPath(body.path)) return reply.code(400).send({ error: NOT_OWN_CODE });
     const bundle = await deps.resolveProject(slug, reply);
     if (!bundle) return reply;
     try {
@@ -282,11 +349,29 @@ export function codeRoutes(app: FastifyInstance, deps: CodeRouteDeps): void {
     }
   });
 
+  /**
+   * One map refresh per project at a time. Two presses of *Refresh map* would otherwise be two
+   * model runs writing the same page, and the second one's commit would land on top of a page the
+   * first was still deciding about.
+   */
+  const refreshing = new Map<string, Promise<CodeMapResult>>();
+
   app.post('/api/projects/:slug/code/map', async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const bundle = await deps.resolveProject(slug, reply);
     if (!bundle) return reply;
-    const markdown = await refreshCodeMap(deps.loop, bundle, slug);
-    return { markdown };
+    const running = refreshing.get(slug);
+    if (running) return reply.code(409).send({ error: 'a map refresh is already running for this project' });
+    // A client that navigates away or closes the sheet should not leave a model run finishing for
+    // nobody — the same wiring the chat and plan routes use.
+    const ac = new AbortController();
+    req.raw.on('close', () => ac.abort());
+    const run = refreshCodeMap(deps.loop, bundle, slug, ac.signal);
+    refreshing.set(slug, run);
+    try {
+      return await run;
+    } finally {
+      refreshing.delete(slug);
+    }
   });
 }

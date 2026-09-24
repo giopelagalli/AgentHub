@@ -265,11 +265,17 @@ bundle otherwise. That commit is the point: the next turn reads the workspace, s
 recorded is an edit the agents overwrite. A dot beside the filename means unsaved changes, and
 leaving the file asks before discarding them.
 
+Two kinds of file save but are not committed, and the toast says so: a `.env`, `.pem` or `.key`
+(never committed, so a secret can't ride a milestone push to your GitHub repository) and anything
+the repository's own `.gitignore` excludes. Those edits are on disk but not in history, so a later
+turn may overwrite them without knowing.
+
 **The Guide.** A chat with one job: explaining this codebase. Ask it what a file does, how a request
 gets from the UI to the database, or why something is the way it is. It answers "why" from what the
 project actually recorded — a decision-log entry, a PRD requirement number — and says so plainly
 when nothing recorded a reason, rather than making one up. It can read anything and change nothing:
-if something needs fixing, it says so and you either fix it yourself here or run a turn.
+if something needs fixing, it says so and you either fix it yourself here or run a turn. Its replies
+cite files as `` `path:line` `` — click one and it opens here, the same as a link in the Map.
 
 **Map.** The second tab is `docs/code-map.md`: chapters from the entry points down, each item a
 `` `path:line` `` link. Click one and the file opens at that line. The Manager refreshes the map

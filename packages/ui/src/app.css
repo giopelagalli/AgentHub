@@ -2396,13 +2396,17 @@ button.card__open:hover {
   overflow: auto;
 }
 
-/* A `path:line` citation from the guide or the map: it opens the file here. */
-.md__ref {
+/* A `path:line` citation. The renderer marks every one, but only the two places that can actually
+   open a file — the Map tab and the guide's replies — look clickable; the same span in the PRD or
+   a docs page is left reading as the code span it is. */
+.code__map .md__ref,
+.sheet__chat .chat__said .md__ref {
   cursor: pointer;
   border-bottom: 1px solid var(--line-lit);
 }
 
-.md__ref:hover code {
+.code__map .md__ref:hover code,
+.sheet__chat .chat__said .md__ref:hover code {
   color: var(--accent-hi);
 }
 

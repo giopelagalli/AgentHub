@@ -1,6 +1,7 @@
 import type { ChatMessage, TeamMemberView } from '@agenthub/shared';
 import { getJson } from '../api.js';
 import { latestWorkMessages } from '../activity.js';
+import { renderMarkdown } from '../markdown.js';
 import { parseSseFrames } from '../sse.js';
 import { mountNow, type NowDeps, type NowHandle } from './now.js';
 
@@ -36,6 +37,15 @@ export interface ChatTarget {
    * roadmap or docs the agent has just edited; an aborted send (the drawer closed) doesn't fire.
    */
   onReply?: () => void;
+  /**
+   * Set by a caller that can open a file: this agent's replies are rendered as markdown rather
+   * than plain text, and a `` `path:line` `` citation in one becomes a link that calls this.
+   *
+   * Only the Code screen's guide passes it. Every other chat stays plain text on purpose — a
+   * reply is a reply, not a document, and rendering agent output as markup is a decision to take
+   * once, where there is something for the reader to click.
+   */
+  onCodeRef?: (path: string, line: number) => void;
   /**
    * The drawer has gone, whichever way it was closed. The sheet uses it to give the space back to
    * the document; a caller that closed the drawer itself hears about it too.
@@ -116,6 +126,16 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     if (wasFollowing) log.scrollTop = log.scrollHeight;
   };
 
+  /**
+   * A finished agent reply, written into its bubble. Markdown only where the caller asked for it
+   * (`onCodeRef`) and only for the agent's own words — what the owner typed is never re-rendered
+   * as markup, and neither is a stream still arriving token by token.
+   */
+  const setSaid = (node: HTMLElement, speaker: string, text: string): void => {
+    if (target.onCodeRef && speaker !== 'You') node.innerHTML = renderMarkdown(text);
+    else node.textContent = text;
+  };
+
   /** Returns the element the caller keeps writing text into. */
   const addMessage = (speaker: string, text: string, forcePin = false): HTMLElement => {
     const following = forcePin || atBottom();
@@ -126,12 +146,23 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
     who.textContent = speaker;
     const said = document.createElement('span');
     said.className = 'chat__said';
-    said.textContent = text;
+    // A placeholder ("queued…") is this panel's own word, not the agent's; it is replaced by the
+    // done frame, which is where the reply is rendered.
+    if (text) setSaid(said, speaker, text); else said.textContent = '';
     message.append(who, said);
     log.appendChild(message);
     pinIfFollowing(following);
     return said;
   };
+
+  // A `path:line` link in a rendered reply. Delegated, so replies that arrive later are covered.
+  log.addEventListener('click', (event) => {
+    if (!target.onCodeRef) return;
+    const link = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-path]');
+    if (!link?.dataset.path) return;
+    event.preventDefault();
+    target.onCodeRef(link.dataset.path, Number(link.dataset.line ?? 1));
+  });
 
   const note = (text: string): void => {
     const line = document.createElement('p');
@@ -312,8 +343,9 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
             reply.textContent += event.token;
           }
           if (event.error !== undefined) fail(event.error);
-          // The done frame carries the whole reply: trust it over the pieces.
-          if (event.done && typeof event.full === 'string') reply.textContent = event.full;
+          // The done frame carries the whole reply: trust it over the pieces, and it is the point
+          // at which a rendered reply is rendered — half a markdown document is not markdown.
+          if (event.done && typeof event.full === 'string') setSaid(reply, target.name, event.full);
           pinIfFollowing(following);
           if (event.done && event.pending?.length) addPending(event.pending);
         }

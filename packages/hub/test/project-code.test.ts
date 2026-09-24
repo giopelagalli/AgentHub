@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
@@ -108,6 +108,11 @@ describe('reading one file', () => {
   it('refuses a path that leaves the workspace', async () => {
     await expect(readCodeFile(bundle.workspace, '../manifest.yaml')).rejects.toThrow(/escapes workspace/);
   });
+
+  it('refuses a symlink that points out of the workspace', async () => {
+    await symlink(bundle.dir, join(bundle.workspace, 'out'));
+    await expect(readCodeFile(bundle.workspace, 'out/prd.md')).rejects.toThrow(/escapes workspace/);
+  });
 });
 
 describe('writing one file', () => {
@@ -136,6 +141,30 @@ describe('writing one file', () => {
 
   it('refuses a path that leaves the workspace', async () => {
     await expect(writeCodeFile(bundle, '../prd.md', 'nope')).rejects.toThrow(/escapes workspace/);
+  });
+
+  it('writes a credential-by-convention file but never commits it', async () => {
+    for (const path of ['.env.production', 'server/tls.pem', 'deploy/id.key']) {
+      expect(await writeCodeFile(bundle, path, 'secret\n'), path).toBe('none');
+      expect(await readCodeFile(bundle.workspace, path)).toMatchObject({ text: 'secret\n' });
+    }
+    // Nothing reached the history: the next milestone push would have carried it to GitHub.
+    expect((await simpleGit(bundle.dir).log()).latest?.message).toBe('chore: scaffold project bundle');
+  });
+
+  it('writes a gitignored file and reports that it was not committed', async () => {
+    const ws = bundle.workspace;
+    await writeFile(join(ws, '.gitignore'), 'build/\n', 'utf8');
+    const git = simpleGit(ws);
+    await git.init();
+    await git.addConfig('user.name', 'Test');
+    await git.addConfig('user.email', 'test@example.com');
+    await git.add(['-A']);
+    await git.commit('seed');
+
+    expect(await writeCodeFile(bundle, 'build/out.js', 'built\n')).toBe('none');
+    expect(await readCodeFile(ws, 'build/out.js')).toMatchObject({ text: 'built\n' });
+    expect((await simpleGit(ws).log()).latest?.message).toBe('seed');
   });
 });
 
@@ -208,11 +237,17 @@ describe('the code routes', () => {
   });
 
   it('404s a missing file and 400s one that climbs out of the workspace', async () => {
+    await fillWorkspace();
     const target = hub!;
     expect((await target.app.inject({ method: 'GET', url: '/api/projects/demo/code/file?path=ghost.ts' })).statusCode).toBe(404);
     const escape = await target.app.inject({ method: 'GET', url: '/api/projects/demo/code/file?path=../prd.md' });
     expect(escape.statusCode).toBe(400);
     expect(escape.json().error).toMatch(/escapes workspace/);
+    // The tree never lists these, so reading one is refused before the filesystem is touched.
+    for (const path of ['.git/config', 'node_modules/left-pad/index.js']) {
+      const bad = await target.app.inject({ method: 'GET', url: `/api/projects/demo/code/file?path=${path}` });
+      expect(bad.statusCode, path).toBe(400);
+    }
   });
 
   it('saves an edit and refuses one aimed outside the project\'s own code', async () => {
@@ -230,12 +265,40 @@ describe('the code routes', () => {
     }
   });
 
-  it('refreshes the map through a one-off task', async () => {
+  it('saves a credential-by-convention file without committing it', async () => {
+    const target = hub!;
+    const saved = await target.app.inject({
+      method: 'PUT', url: '/api/projects/demo/code/file', payload: { path: '.env.local', text: 'TOKEN=1\n' },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toEqual({ path: '.env.local', committed: 'none' });
+  });
+
+  it('takes a file larger than Fastify\'s default body limit', async () => {
+    const target = hub!;
+    const big = await target.app.inject({
+      method: 'PUT', url: '/api/projects/demo/code/file', payload: { path: 'big.txt', text: 'x'.repeat(1_500_000) },
+    });
+    expect(big.statusCode).toBe(200);
+  });
+
+  it('refreshes the map through a one-off task and says it was written', async () => {
     const target = hub!;
     const done = await target.app.inject({ method: 'POST', url: '/api/projects/demo/code/map' });
     expect(done.statusCode).toBe(200);
-    expect(done.json().markdown).toBe(MAP);
+    expect(done.json()).toEqual({ markdown: MAP, written: true });
     expect(await bundle.doc('code-map')).toBe(MAP);
+  });
+
+  it('runs one map refresh per project at a time', async () => {
+    const target = hub!;
+    const first = target.app.inject({ method: 'POST', url: '/api/projects/demo/code/map' });
+    // Long enough for the first request to reach the model call it is going to sit on, and well
+    // short of the scripted reply it is waiting for.
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    const second = await target.app.inject({ method: 'POST', url: '/api/projects/demo/code/map' });
+    expect(second.statusCode).toBe(409);
+    expect((await first).statusCode).toBe(200);
   });
 
   it('keeps every code route to the owner', () => {

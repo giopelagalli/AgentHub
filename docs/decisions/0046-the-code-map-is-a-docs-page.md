@@ -1,4 +1,4 @@
-# 0034 — The code map is a docs page, and `path:line` is the link format
+# 0046 — The code map is a docs page, and `path:line` is the link format
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted

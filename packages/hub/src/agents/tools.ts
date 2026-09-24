@@ -173,15 +173,32 @@ function needHub(ctx: ToolContext): HubDeps {
 }
 
 /**
- * Resolves a workspace-relative path inside `workspace`, throwing when it escapes — the one
- * containment check the workspace tools make, exported so the Code screen's file routes make
- * exactly the same one rather than a second, subtly different version of it. Lexical, like the
- * tools': `..` and an absolute path are refused, a symlink inside the workspace is not followed.
+ * Resolves a workspace-relative path inside `workspace`, throwing when it escapes.
+ *
+ * This is the *lexical* half of the check, and only that: `..` and an absolute path are refused by
+ * comparing strings, so a symlink inside the workspace that points out of it still resolves. It is
+ * what `read_file`, `write_file` and `list_dir` have always done. A caller that needs the symlink
+ * closed too — the Code screen's file routes — calls `realWorkspacePath` below instead.
  */
 export function workspacePath(workspace: string, path: string | undefined): string {
   // `'.'` stands in for the daemon's per-project segment because the bundle workspace is already
   // project-scoped.
   return resolveWorkspace(workspace, '.', path);
+}
+
+/**
+ * `workspacePath` with the symlinks closed: both sides are resolved with `realpath` and compared,
+ * so a link inside the workspace pointing at `/etc/passwd` (or at the bundle's own `prd.md`) is
+ * refused rather than followed. `realPathish` resolves the deepest existing ancestor when the file
+ * itself does not exist yet, which is the ordinary case for a write.
+ *
+ * The workspace root is resolved too: on macOS it usually sits under a symlinked `/var`, so
+ * comparing a real path against an unresolved root would refuse every path in it.
+ */
+export async function realWorkspacePath(workspace: string, path: string | undefined): Promise<string> {
+  const target = workspacePath(workspace, path);
+  assertInside(await realPathish(workspace), await realPathish(target), 'path escapes workspace');
+  return target;
 }
 
 // Workspace paths resolve inside `<bundle>/workspace`.

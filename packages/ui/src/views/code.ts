@@ -23,6 +23,15 @@ import { note, type ViewContext } from './parts.js';
 /** The docs page the map lives on; the hub writes it with `write_code_map`. */
 const MAP_PAGE = 'code-map';
 
+/** Shown where the editor would be when its chunk did not load — a file cannot be opened at all. */
+const EDITOR_MISSING = 'The editor could not be loaded. Reload the page and try again.';
+
+/** What a save comes back with: `committed: 'none'` is a file the hub deliberately did not commit. */
+interface SaveResult {
+  path: string;
+  committed: 'workspace' | 'bundle' | 'none';
+}
+
 type Pane = 'files' | 'map';
 type Fetch = 'loading' | 'ready' | 'failed';
 
@@ -92,7 +101,7 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
 
   /**
    * CodeMirror is loaded when this screen is opened, not when the app is. It is by far the heaviest
-   * thing the UI depends on (see decision 0031), and every other page would otherwise pay for it on
+   * thing the UI depends on (see decision 0043), and every other page would otherwise pay for it on
    * first paint. Nothing but this view imports it, so the bundler gives it a chunk of its own.
    */
   let editor: EditorHandle | null = null;
@@ -103,8 +112,8 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       onSave: () => save(),
     });
     return editor;
-  }).catch((error: unknown) => {
-    if (alive) openNothing(`The editor could not be loaded: ${String(error)}`);
+  }).catch(() => {
+    if (alive) openNothing(EDITOR_MISSING);
     return null;
   });
 
@@ -199,7 +208,9 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       editorReady,
     ])
       .then(([doc, ed]) => {
-        if (mine !== fileToken || !alive || !ed) return;
+        if (mine !== fileToken || !alive) return;
+        // The chunk never arrived: say so, rather than leaving "Opening…" on screen forever.
+        if (!ed) { openNothing(EDITOR_MISSING); return; }
         open = doc;
         dirty = false;
         // The editor is measured as it is filled, so the column it lives in is shown first.
@@ -219,12 +230,16 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
     const text = editor.text();
     saving = true;
     renderHead();
-    void sendJson(`/api/projects/${ctx.slug}/code/file`, { path: target, text }, 'PUT')
-      .then(() => {
+    void sendJson<SaveResult>(`/api/projects/${ctx.slug}/code/file`, { path: target, text }, 'PUT')
+      .then((result) => {
         if (!alive) return;
         // Only this file's own edits are clean now: the owner may have moved on while it saved.
         if (open && open.path === target) { dirty = false; open = { ...open, text }; }
-        toast(`Saved ${target}`);
+        // A file the hub holds out of version control — a `.env`, or one the repository ignores —
+        // is saved and says so, because "saved" alone would imply the next turn will see it.
+        toast(result?.committed === 'none'
+          ? `Saved ${target} — not committed: it is excluded from version control.`
+          : `Saved ${target}`);
       })
       .catch((error: unknown) => { if (alive) toast(`Could not save ${target}: ${String(error)}`, 'error'); })
       .finally(() => { if (alive) { saving = false; renderHead(); } });
@@ -276,13 +291,15 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
     refreshing = true;
     refreshButton.disabled = true;
     refreshButton.textContent = 'Refreshing…';
-    void sendJson<{ markdown: string }>(`/api/projects/${ctx.slug}/code/map`)
+    void sendJson<{ markdown: string; written: boolean }>(`/api/projects/${ctx.slug}/code/map`)
       .then((doc) => {
         if (!alive) return;
         mapMarkdown = doc?.markdown ?? '';
         mapState = mapMarkdown.trim() ? 'ready' : 'missing';
         renderMap();
-        toast(mapMarkdown.trim() ? 'Code map refreshed.' : 'The map came back empty.');
+        // `written` is the hub saying write_code_map actually ran: a run that spent its budget
+        // reading and never wrote leaves the old page on screen, and saying "refreshed" would lie.
+        toast(doc?.written ? 'Code map refreshed.' : 'The map was not rewritten — try again.', doc?.written ? 'info' : 'error');
       })
       .catch((error: unknown) => { if (alive) toast(`Could not refresh the map: ${String(error)}`, 'error'); })
       .finally(() => {
@@ -299,6 +316,8 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       subtitle: `${ctx.title} · the code`,
       endpoint: `/api/projects/${ctx.slug}/chat/guide/messages`,
       historyEndpoint: `/api/projects/${ctx.slug}/chat/guide`,
+      // The guide is told to cite files as `path:line`; this is what makes those citations open.
+      onCodeRef: (target, line) => reveal(target, line),
     });
   };
 

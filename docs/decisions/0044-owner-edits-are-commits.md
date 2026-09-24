@@ -1,4 +1,4 @@
-# 0032 — An owner edit is a commit, in whichever repository the workspace is
+# 0044 — An owner edit is a commit, in whichever repository the workspace is
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted
@@ -29,8 +29,22 @@ hub's own: `GIT_EDITOR`, `GIT_DIR` or a credential helper inherited from the pro
 else's configuration. `core.hooksPath=/dev/null` and `--no-verify` keep the repository's own hooks
 out of it, for the reason 0028 gives — `workspace/.git/hooks` is a directory agents write.
 
+Two kinds of file are written and deliberately *not* committed, reported to the UI as
+`committed: 'none'` rather than as a failed save:
+
+- One matching the credential convention `Github.pushWorkspace` already holds out of a milestone
+  push (`isCommitExcluded`: `.env*`, `*.pem`, `*.key`). Committing a `.env.production` here would
+  put it in the history that the next verified milestone pushes to the owner's repository — the
+  exclusion at push time would not save it, because by then it is in a parent commit.
+- One the repository's own ignore rules already exclude. `git check-ignore` is asked first, so a
+  build artefact the owner opened and tweaked saves cleanly instead of failing after the write.
+
 ## Consequences
-Every owner edit is one commit, and an imported project's edits ride the same branch the milestone
-push uses, so the owner's pull request contains them. A noisy history is the cost: saving five times
-makes five commits. Paths containing a `.git` or `node_modules` segment are refused outright — the
-tree does not show them, so editing them is not something the screen offers.
+Every owner edit that belongs in history is one commit, and an imported project's edits ride the
+same branch the milestone push uses, so the owner's pull request contains them. A noisy history is
+the cost: saving five times makes five commits. Paths containing a `.git` or `node_modules` segment
+are refused outright, on read as well as write — the tree does not show them, so a request naming
+one did not come from the screen.
+
+An edit that was not committed is one the next turn may overwrite without knowing, which is why the
+UI says so in the save toast rather than reporting a plain "Saved".

@@ -32,7 +32,7 @@ the socket; pages (projects, computer, cluster, allocation, help); sheets for th
 docs, activity and code; a drawer per agent with a live *Now* feed and a chat. Pure model functions
 (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, `code/model.ts`) are separated from DOM code so they
 are testable without a browser. One runtime dependency, CodeMirror, and it is loaded only when the
-Code sheet opens (0031).
+Code sheet opens (0043).
 
 ## Hub modules (`packages/hub/src`)
 
@@ -105,12 +105,16 @@ sorted list, `.git`/`node_modules`/`dist`/… never descended into because `dige
 what is not the project's own code, binary and >2 MB files listed but marked unopenable, 5,000
 entries then it says it stopped), one file read (UTF-8 only, decoded strictly so a mislabelled
 binary is a 415 rather than a lossy round trip), one file written, and *Refresh map*. It shares the
-agents' containment check — `workspacePath` in `agents/tools.ts` — rather than keeping a second one:
-a path an agent may not reach is a path the owner's editor may not write either. A save commits
-where the workspace actually lives, the clone for an imported project and the bundle otherwise
-(0032). *Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`,
-which is `docs/code-map.md` and nothing more exotic (0034). The guide it sits beside is a persona in
-`chat.ts`, read-only by construction (0033).
+agents' containment check rather than keeping a second one — `realWorkspacePath` in
+`agents/tools.ts`, which is the tools' own lexical check with `realpath` on both sides so a symlink
+inside the workspace cannot point out of it: a path an agent may not reach is a path the owner's
+editor may not write either. A save commits where the workspace actually lives, the clone for an
+imported project and the bundle otherwise, and reports `committed: 'none'` for the files it holds
+out of history on purpose — credentials by convention, and whatever the repository ignores (0044).
+*Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`, which is
+`docs/code-map.md` and nothing more exotic (0046); it is one run per project at a time, aborts with
+the request, and reports whether the page was actually rewritten. The guide it sits beside is a
+persona in `chat.ts`, read-only by construction (0045).
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

@@ -48,10 +48,10 @@ A **project page** has, top to bottom:
    - **Chat** — one-on-one with the project's Manager (`c`). The same drawer the Manager card in
      the org chart opens, and it works while a turn is running.
    - **Pause / Resume**, **Run turn** (shows `Running · m:ss` while one runs), **Add employee**.
-2. **The big buttons.** PRD, Roadmap, Docs, Activity, Terminal. Each opens a full-screen sheet
-   (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
+2. **The big buttons.** PRD, Roadmap, Docs, Activity, Code, Terminal, Preview. Each opens a
+   full-screen sheet (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
    the document's editor ("move milestone 4 before 2", "add a section on backups") and it
-   changes the document in place.
+   changes the document in place. Code docks the Guide the same way — see *Code* below.
 3. **The org chart.** You → Assistant / Master → the project's Manager → its employees. Click any
    card to open that person: what they are doing, their history, and a chat.
 
@@ -378,6 +378,39 @@ until per-member access arrives, when a terminal will only ever open on a node y
 thing it cannot see is the hub's own secrets: model keys, the session secret and the GitHub token
 are stripped out of its environment, the same way they are for anything an agent runs.
 
+## Code
+
+The **Code** button opens the project's workspace: the file tree on the left, the file you picked
+in the middle, and the **Guide** docked on the right. The button's line says how many files the
+workspace has and how long ago the map was refreshed.
+
+**Files.** Click a folder to fold it open or shut, a file to read it. Arrow keys walk the tree and
+Enter opens what is selected. Binary files and anything over 2 MB are listed but say *not text* —
+they are there so you know they exist, not to be opened. Dependencies, build output and `.git` are
+never listed at all.
+
+**Editing.** The file is editable as it stands. **Save** (or `Cmd`/`Ctrl`-`S`) writes it and commits
+it as `Owner edit: <path>` — to the project's own repository if it was imported from GitHub, to the
+bundle otherwise. That commit is the point: the next turn reads the workspace, so an edit nobody
+recorded is an edit the agents overwrite. A dot beside the filename means unsaved changes, and
+leaving the file asks before discarding them.
+
+Two kinds of file save but are not committed, and the toast says so: a `.env`, `.pem` or `.key`
+(never committed, so a secret can't ride a milestone push to your GitHub repository) and anything
+the repository's own `.gitignore` excludes. Those edits are on disk but not in history, so a later
+turn may overwrite them without knowing.
+
+**The Guide.** A chat with one job: explaining this codebase. Ask it what a file does, how a request
+gets from the UI to the database, or why something is the way it is. It answers "why" from what the
+project actually recorded — a decision-log entry, a PRD requirement number — and says so plainly
+when nothing recorded a reason, rather than making one up. It can read anything and change nothing:
+if something needs fixing, it says so and you either fix it yourself here or run a turn. Its replies
+cite files as `` `path:line` `` — click one and it opens here, the same as a link in the Map.
+
+**Map.** The second tab is `docs/code-map.md`: chapters from the entry points down, each item a
+`` `path:line` `` link. Click one and the file opens at that line. The Manager refreshes the map
+when a milestone lands; **Refresh map** does it on demand, which takes a model call or two.
+
 ## Chatting with the team
 
 Click an employee or the Manager. The drawer shows their status, their sessions, and a chat that
@@ -489,7 +522,7 @@ DATA_ROOT/
     project.md  tasks.yaml  the manager's board
     team.yaml               employees
     decisions.log.md        the why
-    docs/                   the team's pages
+    docs/                   the team's pages (code-map.md is the Code screen's Map tab)
     briefings/              one per turn
     workspace/              the code — its own git repo when the team inits one
   memory/                   the built-in assistant's notes

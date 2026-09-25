@@ -36,6 +36,7 @@ import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { previewRoutes } from './projects/preview.js';
+import { codeRoutes } from './projects/code.js';
 import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
 import {
   AppCredentials, ConnectState, GithubAppClient, GithubAppError, type GithubAppConfig,
@@ -1977,6 +1978,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { pages } = await bundle.docs();
     return { slug: page, title: pages.find((p) => p.slug === page)?.title ?? page, markdown };
   });
+
+  // --- the Code screen ------------------------------------------------------------
+
+  codeRoutes(app, { resolveProject, loop });
 
   app.get('/api/briefings', async () => projects.briefings());
 

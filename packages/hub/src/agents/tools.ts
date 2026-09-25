@@ -7,7 +7,7 @@ import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
-import { subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
+import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
@@ -173,10 +173,38 @@ function needHub(ctx: ToolContext): HubDeps {
   return ctx.hub;
 }
 
-// Workspace paths resolve inside `<bundle>/workspace`; `'.'` stands in for the daemon's per-project
-// segment because the bundle workspace is already project-scoped.
+/**
+ * Resolves a workspace-relative path inside `workspace`, throwing when it escapes.
+ *
+ * This is the *lexical* half of the check, and only that: `..` and an absolute path are refused by
+ * comparing strings, so a symlink inside the workspace that points out of it still resolves. It is
+ * what `read_file`, `write_file` and `list_dir` have always done. A caller that needs the symlink
+ * closed too — the Code screen's file routes — calls `realWorkspacePath` below instead.
+ */
+export function workspacePath(workspace: string, path: string | undefined): string {
+  // `'.'` stands in for the daemon's per-project segment because the bundle workspace is already
+  // project-scoped.
+  return resolveWorkspace(workspace, '.', path);
+}
+
+/**
+ * `workspacePath` with the symlinks closed: both sides are resolved with `realpath` and compared,
+ * so a link inside the workspace pointing at `/etc/passwd` (or at the bundle's own `prd.md`) is
+ * refused rather than followed. `realPathish` resolves the deepest existing ancestor when the file
+ * itself does not exist yet, which is the ordinary case for a write.
+ *
+ * The workspace root is resolved too: on macOS it usually sits under a symlinked `/var`, so
+ * comparing a real path against an unresolved root would refuse every path in it.
+ */
+export async function realWorkspacePath(workspace: string, path: string | undefined): Promise<string> {
+  const target = workspacePath(workspace, path);
+  assertInside(await realPathish(workspace), await realPathish(target), 'path escapes workspace');
+  return target;
+}
+
+// Workspace paths resolve inside `<bundle>/workspace`.
 function inWorkspace(ctx: ToolContext, path: string | undefined): string {
-  return resolveWorkspace(needBundle(ctx).workspace, '.', path);
+  return workspacePath(needBundle(ctx).workspace, path);
 }
 
 const strProp = (description: string) => ({ type: 'string', description });
@@ -390,8 +418,8 @@ function parseTasks(args: unknown): TaskItem[] {
   });
 }
 
-/** The two document tools a turn gets: it keeps the docs true and moves the roadmap along. */
-const TURN_DOC_TOOLS = ['write_doc', 'set_milestone_status'];
+/** The document tools a turn gets: it keeps the docs true, refreshes the code map, and moves the roadmap along. */
+const TURN_DOC_TOOLS = ['write_doc', 'write_code_map', 'set_milestone_status'];
 
 /** What `set_milestone_status` accepts: everything but `done`, which only a verification grants. */
 const SETTABLE_MILESTONE_STATUSES = MILESTONE_STATUSES.filter((s) => s !== 'done');
@@ -732,6 +760,22 @@ export function docTools(actor: DocActor = 'agent'): Tool[] {
         await bundle.writeDoc(page, str(args, 'markdown'));
         await bundle.commit(`${prefix}write doc ${page}`);
         return `docs/${page}.md written`;
+      },
+    },
+    {
+      def: {
+        type: 'tool', name: 'write_code_map',
+        description: `Replace the code map (docs/${CODE_MAP_PAGE}.md): the reader's way into this codebase, chapters from the ` +
+          'entry points down, every item a `path:line` link the owner can click open. Write the whole page; it replaces ' +
+          `what is there. Keep it under ${CODE_MAP_MAX_LINES} lines.`,
+        parameters: { type: 'object', properties: { markdown: strProp('The whole code map as markdown.') }, required: ['markdown'] },
+      },
+      run: async (args, ctx) => {
+        const bundle = needBundle(ctx);
+        const markdown = str(args, 'markdown');
+        await bundle.writeDoc(CODE_MAP_PAGE, markdown.endsWith('\n') ? markdown : `${markdown}\n`);
+        await bundle.commit(`${prefix}write code map`);
+        return `docs/${CODE_MAP_PAGE}.md written (${markdown.split('\n').length} lines)`;
       },
     },
   ];

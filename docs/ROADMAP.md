@@ -48,6 +48,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   start/stop/restart, settings, reset-link and a log tail (0037–0040). Same-origin CSRF guard on the
   hub's own writes came with it.
 
+- The **Code** screen (FR-B3–B5): the workspace as a tree, a CodeMirror viewer/editor whose saves
+  commit as `Owner edit: <path>`, the read-only **Guide** docked beside it, and `docs/code-map.md`
+  with `path:line` links that open a file at that line (0043–0046).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -60,8 +64,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    Code want it too.
 2. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-3. Workbench: the Code screen with the Guide chat and the Code map (in review), then the Tour
-   (FR-B6).
+3. Workbench: the Tour over the Code map (FR-B6, FR-B7).
 4. Harnesses: the pi spike, then `pi` as the default employee harness and `claude-code` as an
    option (0013).
 5. JD drives the hub; the web door (FR-C1–C5).

@@ -29,12 +29,14 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
 the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs, activity, the terminal and the preview; a drawer per agent with a live *Now* feed and a chat. Pure model
-functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, and the terminal's frame helpers) are
-separated from DOM code so they are testable without a browser — the UI's tests run in node, and
-nothing that needs a DOM is tested at all. No framework, but no longer no runtime dependencies:
-`@xterm/xterm` and `@xterm/addon-fit` are the terminal's, and they are imported eagerly, which is
-what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on ROADMAP).
+docs, activity, code, the terminal and the preview; a drawer per agent with a live *Now* feed and a
+chat. Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, `code/model.ts`, and the
+terminal's frame helpers) are separated from DOM code so they are testable without a browser — the
+UI's tests run in node, and nothing that needs a DOM is tested at all. No framework, but no longer
+no runtime dependencies: CodeMirror is the Code sheet's and is loaded only when that sheet opens
+(0043); `@xterm/xterm` and `@xterm/addon-fit` are the terminal's, and they are imported eagerly,
+which is what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on
+ROADMAP).
 
 ## Hub modules (`packages/hub/src`)
 
@@ -163,6 +165,23 @@ piped with `stream.pipeline` and upgrades are spliced at the TCP level (0038). T
 plugin carries the owner's routes on the hub — `GET/PUT/DELETE /api/projects/:slug/preview`,
 `POST …/preview/start|stop|restart|rotate` — and answers with the preview's absolute URL. The
 manager sets a project's preview with the `set_preview` tool.
+
+**`projects/code.ts`** — the Code screen's hub half (FR-B3–B5), registered into the server with one
+line. Five owner-only routes under `/api/projects/:slug/code`: the tree (the workspace as one flat
+sorted list, `.git`/`node_modules`/`dist`/… never descended into because `digest.ts` already decided
+what is not the project's own code, binary and >2 MB files listed but marked unopenable, 5,000
+entries then it says it stopped), one file read (UTF-8 only, decoded strictly so a mislabelled
+binary is a 415 rather than a lossy round trip), one file written, and *Refresh map*. It shares the
+agents' containment check rather than keeping a second one — `realWorkspacePath` in
+`agents/tools.ts`, which is the tools' own lexical check with `realpath` on both sides so a symlink
+inside the workspace cannot point out of it: a path an agent may not reach is a path the owner's
+editor may not write either. A save commits where the workspace actually lives, the clone for an
+imported project and the bundle otherwise, and reports `committed: 'none'` for the files it holds
+out of history on purpose — credentials by convention, and whatever the repository ignores (0044).
+*Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`, which is
+`docs/code-map.md` and nothing more exotic (0046); it is one run per project at a time, aborts with
+the request, and reports whether the page was actually rewritten. The guide it sits beside is a
+persona in `chat.ts`, read-only by construction (0045).
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

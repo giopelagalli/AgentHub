@@ -2234,6 +2234,183 @@ button.card__open:hover {
   box-shadow: none;
 }
 
+/* --- code: the workspace screen -------------------------------------------- */
+
+/* Tabs across the top, then either the two file columns or the map. The guide
+   takes the sheet's own chat column, so the screen reads as three. */
+.code {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* `hidden` has to win over the display rules below, or a hidden pane still lays out. */
+.code [hidden] {
+  display: none;
+}
+
+.code__bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.code__tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.code__tab {
+  padding: 5px 12px;
+  font: inherit;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+
+.code__tab:hover {
+  color: var(--text);
+}
+
+.code__tab[aria-current='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.code__panes {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.code__tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 0;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+}
+
+.code__row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 3px 10px 3px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+  color: var(--text-dim);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.code__row:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.code__row[aria-current='true'] {
+  color: var(--text);
+  background: var(--bg2);
+}
+
+.code__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code__size {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-mute);
+}
+
+.code__view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.code__head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.code__path {
+  flex: 1;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.code__dirty {
+  color: var(--amber);
+}
+
+.code__note {
+  padding: 18px 16px;
+  color: var(--text-mute);
+}
+
+/* CodeMirror fills what is left, and scrolls inside it rather than growing the sheet. */
+.code__editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.code__editor .cm-editor {
+  height: 100%;
+  font-size: 12px;
+}
+
+.code__editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+.code__map {
+  flex: 1;
+  max-width: 78ch;
+  padding: 20px 22px;
+  margin: 0 auto;
+  overflow: auto;
+}
+
+/* A `path:line` citation. The renderer marks every one, but only the two places that can actually
+   open a file — the Map tab and the guide's replies — look clickable; the same span in the PRD or
+   a docs page is left reading as the code span it is. */
+.code__map .md__ref,
+.sheet__chat .chat__said .md__ref {
+  cursor: pointer;
+  border-bottom: 1px solid var(--line-lit);
+}
+
+.code__map .md__ref:hover code,
+.sheet__chat .chat__said .md__ref:hover code {
+  color: var(--accent-hi);
+}
+
 /* --- activity: the turn panel --------------------------------------------- */
 
 /* Turns on the left, the selected turn's feed on the right. Each column scrolls

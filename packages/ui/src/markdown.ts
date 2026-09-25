@@ -43,6 +43,34 @@ export function headingId(text: string): string {
   return slug ? `md-${slug}` : 'md-section';
 }
 
+/**
+ * A `path:line` code span — `packages/hub/src/server.ts:412` — as the guide and the code map write
+ * them (FR-B4, FR-B5). An extension is required so ordinary prose in backticks (`Note:12`, `a:b`)
+ * stays a code span, and so does a bare word with a colon in it.
+ */
+const CODE_REF = /^([A-Za-z0-9._\-/]+\.[A-Za-z0-9]+):([0-9]{1,7})$/;
+
+/**
+ * The file and line a code span points at, or null when it points at nothing. Pure, and it runs on
+ * *escaped* text — the same text the span will render as — so what the link carries is exactly
+ * what the reader sees.
+ */
+export function codeRef(text: string): { path: string; line: number } | null {
+  const match = CODE_REF.exec(text);
+  return match ? { path: match[1], line: Number(match[2]) } : null;
+}
+
+/**
+ * A code span, turned into a link when it names a file and a line. No `href`: it opens the Code
+ * screen's viewer, which reads `data-path`/`data-line` — an anchor with nowhere to navigate would
+ * be a broken link in every other context this markdown is rendered in.
+ */
+function codeSpan(escaped: string): string {
+  const ref = codeRef(escaped);
+  if (!ref) return `<code>${escaped}</code>`;
+  return `<a class="md__ref" data-path="${ref.path}" data-line="${ref.line}"><code>${escaped}</code></a>`;
+}
+
 // Inline spans, in precedence order: code first (nothing formats inside it), then links, then the
 // two emphasis pairs. `_` needs word boundaries or `snake_case_names` would sprout italics.
 // A fresh regex per call, because `inline` recurses and a shared `lastIndex` would never finish.
@@ -61,7 +89,7 @@ function inline(text: string, depth = 0): string {
     out += text.slice(last, match.index);
     last = match.index + match[0].length;
     const [whole, code, linkText, url, strongStar, strongBar, emStar, emBar] = match;
-    if (code !== undefined) out += `<code>${code}</code>`;
+    if (code !== undefined) out += codeSpan(code);
     else if (url !== undefined) {
       // An unsafe or unrecognised target keeps its source spelling — visible, inert, honest.
       out += SAFE_URL.test(url)

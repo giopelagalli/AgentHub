@@ -113,6 +113,8 @@ function planningSection(planning: PlanningContext): string[] {
     `  update_project_md when behaviour or architecture changed — but only after complete_milestone`,
     `  returns, and keep each to a few lines: one turn, one milestone. write_skill is worth it only`,
     `  when the same procedure will recur.`,
+    `- Docs pages start with \`section: <name>\` on the first line when they belong to a group, use`,
+    `  \`## \`/\`### \` headings, and callouts as \`:::info\` / \`:::tip\` / \`:::warning\` blocks.`,
     `- Start a milestone with set_milestone_status(id, "in-progress"). When an employee reports its`,
     `  work done, call complete_milestone(id) next, before any other check: it runs the project's`,
     `  tests and has the reviewer read the changes, marking the milestone done only when both pass —`,
@@ -292,6 +294,8 @@ const DOC_PERSONA_PROMPTS: Record<DocPersona, string[]> = {
     `- Never delete history. When something is no longer true, supersede it with a dated note saying`,
     `  what changed and why, and leave what was there.`,
     `- Use list_docs and read_doc before you write, and make the edit yourself with write_doc.`,
+    `- Docs pages start with \`section: <name>\` on the first line when they belong to a group, use`,
+    `  \`## \`/\`### \` headings, and callouts as \`:::info\` / \`:::tip\` / \`:::warning\` blocks.`,
   ],
 };
 

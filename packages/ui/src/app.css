@@ -33,6 +33,25 @@
   --amber: #f59e0b;
   --red: #f87171;
 
+  /* The documentation shell keeps its colours in its own set. Nothing below is
+     a new hue — each one points at a console token — but naming them here means
+     a light theme is a swap of this block and nothing else. */
+  --doc-heading: var(--text);
+  --doc-text: var(--text-dim);
+  --doc-mute: var(--text-mute);
+  --doc-line: var(--line);
+  --doc-line-lit: var(--line-lit);
+  --doc-code-bg: var(--bg0);
+  --doc-rail-bg: transparent;
+  --doc-current: var(--accent-hi);
+  --doc-current-bg: var(--accent-soft);
+  --doc-current-line: var(--accent);
+  --adm-info: var(--accent);
+  --adm-tip: var(--accent);
+  --adm-note: var(--line-lit);
+  --adm-warning: var(--amber);
+  --adm-danger: var(--red);
+
   --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Helvetica Neue', sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --card-w: 216px;
@@ -1644,54 +1663,9 @@ button.card__open:hover {
 
 /* --- help ------------------------------------------------------------------ */
 
+/* The guide is the docs shell's; this only gives it the page's margins. */
 .help {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-  padding: 20px 24px;
-}
-
-.help__toc {
-  position: sticky;
-  top: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.help__toc a {
-  padding: 4px 0;
-  color: var(--text-dim);
-  text-decoration: none;
-}
-
-.help__toc a:hover {
-  color: var(--text);
-}
-
-.help__toc a.help__toc--sub {
-  padding-left: 14px;
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-.help__body {
-  max-width: 760px;
-}
-
-@media (max-width: 900px) {
-  .help {
-    display: block;
-  }
-
-  .help__toc {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    margin-bottom: 16px;
-  }
+  padding: 22px 26px 40px;
 }
 
 /* --- drawer --------------------------------------------------------------- */
@@ -2952,4 +2926,587 @@ button.card__open:hover {
 .login__error {
   margin-top: 10px;
   color: var(--red);
+}
+
+/* --- docs shell ------------------------------------------------------------
+   One documentation layout for the Docs sheet, the PRD sheet and Help: pages on
+   the left, the document in the middle at a reading measure, its own headings on
+   the right. This is the one place in the console where type is allowed to get
+   large — a document is read, not scanned — so the scale here is its own, scoped
+   to .doc-md, and the 13px interface around it is untouched.
+
+   The breakpoints are container queries: the sheet loses a third of its width the
+   moment the chat docks beside it, and the layout answers to the shell's width,
+   not the window's. */
+
+/* The shell brings its own measure, so a host that centres a reading column
+   (the sheet's body) stands down for it. */
+.docshell-host {
+  max-width: none;
+}
+
+/* The queried container. The grid is its child, because a container query styles
+   a container's descendants and never the container itself. */
+.docshell-box {
+  container-type: inline-size;
+}
+
+.docshell {
+  display: grid;
+  grid-template-areas: 'rail main toc';
+  grid-template-columns: 232px minmax(0, 1fr) 210px;
+  gap: 0 34px;
+  align-items: start;
+}
+
+/* --- docs shell: the rail -------------------------------------------------- */
+
+.docshell__rail {
+  position: sticky;
+  top: 0;
+  grid-area: rail;
+  max-height: calc(100vh - 150px);
+  padding-right: 18px;
+  overflow: auto;
+  background: var(--doc-rail-bg);
+  border-right: 1px solid var(--doc-line);
+}
+
+/* Open at full width (the script holds it so), a disclosure when the shell is
+   narrow enough that the rail has to fold away. */
+.docshell__rail-head,
+.docshell__toc-head {
+  display: none;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+  cursor: pointer;
+}
+
+.docshell__filter {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--doc-code-bg);
+  border: 1px solid var(--doc-line);
+  border-radius: var(--radius);
+}
+
+.docshell__filter::placeholder {
+  color: var(--doc-mute);
+}
+
+.docshell__filter:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.docshell__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.docshell__group-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--doc-mute);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.docshell__group-head:hover {
+  color: var(--doc-heading);
+}
+
+.docshell__group-head svg {
+  flex: none;
+  transition: transform 0.12s ease;
+}
+
+.docshell__group-head[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.docshell__group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 4px;
+}
+
+.docshell__link {
+  padding: 5px 10px;
+  font: inherit;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--doc-text);
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  cursor: pointer;
+}
+
+.docshell__link:hover {
+  color: var(--doc-heading);
+  background: var(--hover);
+}
+
+.docshell__link[aria-current='page'] {
+  font-weight: 500;
+  color: var(--doc-current);
+  background: var(--doc-current-bg);
+  border-left-color: var(--doc-current-line);
+}
+
+.docshell__none {
+  padding: 6px 2px;
+  color: var(--doc-mute);
+}
+
+/* --- docs shell: the document ---------------------------------------------- */
+
+.docshell__main {
+  grid-area: main;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.docshell__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--doc-mute);
+}
+
+.docshell__crumb {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+}
+
+.docshell__crumb--home {
+  cursor: pointer;
+}
+
+.docshell__crumb--home:hover {
+  color: var(--doc-current);
+}
+
+.docshell__crumbs .docshell__crumb:last-child {
+  color: var(--doc-text);
+}
+
+.docshell__sep {
+  color: var(--doc-line-lit);
+}
+
+.docshell__title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  margin-bottom: 22px;
+}
+
+.docshell__title h1 {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--doc-heading);
+}
+
+.docshell__badge {
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--doc-current);
+  background: var(--doc-current-bg);
+  border: 1px solid color-mix(in srgb, var(--doc-current-line) 45%, transparent);
+  border-radius: 999px;
+}
+
+/* One long document read as sections: the h2 rule already separates them. */
+.docshell__section + .docshell__section {
+  margin-top: 4px;
+}
+
+/* --- docs shell: the reading scale ----------------------------------------- */
+
+.doc-md {
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--doc-text);
+}
+
+.doc-md :is(h1, h2, h3, h4) {
+  scroll-margin-top: 18px;
+  color: var(--doc-heading);
+}
+
+.doc-md h1 {
+  margin: 34px 0 12px;
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.doc-md h2 {
+  margin: 44px 0 14px;
+  padding-top: 22px;
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  border-top: 1px solid var(--doc-line);
+  border-bottom: 0;
+}
+
+.doc-md > :first-child:is(h1, h2) {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.docshell__section:first-child > h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.doc-md h3 {
+  margin: 28px 0 8px;
+  font-size: 1.16rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.doc-md h4 {
+  margin: 22px 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--doc-text);
+}
+
+.doc-md p {
+  margin: 0 0 16px;
+}
+
+.doc-md ul,
+.doc-md ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.doc-md li {
+  margin-bottom: 7px;
+}
+
+.doc-md li::marker {
+  color: var(--doc-mute);
+}
+
+.doc-md code {
+  font-size: 0.86em;
+}
+
+.doc-md pre {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--doc-code-bg);
+  border: 1px solid var(--doc-line);
+  border-radius: 8px;
+}
+
+.doc-md blockquote {
+  margin: 0 0 18px;
+  padding: 2px 0 2px 16px;
+  font-style: italic;
+  border-left: 3px solid var(--doc-line-lit);
+}
+
+.doc-md hr {
+  margin: 30px 0;
+}
+
+/* A block box so a wide table scrolls inside the reading column instead of
+   widening it — the guide's troubleshooting table is five columns of prose. */
+.doc-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 20px;
+  overflow-x: auto;
+  font-size: 13px;
+  border: 1px solid var(--doc-line);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.doc-md th,
+.doc-md td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--doc-line);
+}
+
+.doc-md thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doc-heading);
+  background: var(--doc-code-bg);
+  white-space: nowrap;
+}
+
+.doc-md tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* --- docs shell: admonitions ----------------------------------------------- */
+
+.adm {
+  --adm: var(--adm-info);
+
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  color: var(--doc-text);
+  background: color-mix(in srgb, var(--adm) 9%, transparent);
+  border-left: 3px solid var(--adm);
+  border-radius: 0 8px 8px 0;
+}
+
+.adm--tip { --adm: var(--adm-tip); }
+.adm--note { --adm: var(--adm-note); }
+.adm--warning { --adm: var(--adm-warning); }
+.adm--danger { --adm: var(--adm-danger); }
+
+.adm__head {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--adm);
+}
+
+.adm--note .adm__head {
+  color: var(--doc-heading);
+}
+
+.adm__icon {
+  flex: none;
+}
+
+.adm__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- docs shell: prev / next ------------------------------------------------ */
+
+.docshell__pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  max-width: 72ch;
+  margin-top: 44px;
+  padding-top: 22px;
+  border-top: 1px solid var(--doc-line);
+}
+
+.docshell__step {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px;
+  font: inherit;
+  text-align: left;
+  color: var(--doc-heading);
+  background: none;
+  border: 1px solid var(--doc-line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.docshell__step:hover {
+  border-color: var(--doc-current-line);
+}
+
+.docshell__step--next {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.docshell__step-way {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+}
+
+.docshell__step-title {
+  font-weight: 500;
+  color: var(--doc-current);
+}
+
+/* --- docs shell: on this page ----------------------------------------------- */
+
+.docshell__toc {
+  position: sticky;
+  top: 0;
+  grid-area: toc;
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+}
+
+.docshell__toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px solid var(--doc-line);
+}
+
+.docshell__toc-list::before {
+  content: 'On this page';
+  padding: 0 0 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+}
+
+.docshell__toc-link {
+  padding: 3px 0 3px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--doc-text);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  margin-left: -1px;
+}
+
+.docshell__toc-link--sub {
+  padding-left: 24px;
+  color: var(--doc-mute);
+}
+
+.docshell__toc-link:hover {
+  color: var(--doc-heading);
+}
+
+.docshell__toc-link.is-current {
+  color: var(--doc-current);
+  border-left-color: var(--doc-current-line);
+}
+
+/* --- docs shell: narrower than a desk --------------------------------------- */
+
+/* The contents list folds into a disclosure above the document; the rail keeps
+   its column. */
+@container (max-width: 1100px) {
+  .docshell {
+    grid-template-areas: 'rail toc' 'rail main';
+    grid-template-columns: 224px minmax(0, 1fr);
+    gap: 0 28px;
+  }
+
+  .docshell__toc {
+    position: static;
+    max-height: none;
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+  }
+
+  .docshell__toc-head {
+    display: list-item;
+    margin-bottom: 0;
+  }
+
+  .docshell__toc[open] .docshell__toc-head {
+    margin-bottom: 8px;
+  }
+
+  .docshell__toc-list {
+    border-left: 0;
+  }
+
+  .docshell__toc-list::before {
+    display: none;
+  }
+}
+
+/* A phone: everything stacks, and the rail is a drawer at the top. */
+@container (max-width: 800px) {
+  .docshell {
+    grid-template-areas: 'rail' 'toc' 'main';
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docshell__rail {
+    position: static;
+    max-height: none;
+    margin-bottom: 18px;
+    padding: 0 0 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--doc-line);
+  }
+
+  .docshell__rail-head {
+    display: list-item;
+    margin-bottom: 0;
+  }
+
+  .docshell__rail[open] .docshell__rail-head {
+    margin-bottom: 12px;
+  }
+
+  .docshell__title h1 {
+    font-size: 1.9rem;
+  }
+
+  .docshell__pager {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docshell__group-head svg {
+    transition: none;
+  }
 }

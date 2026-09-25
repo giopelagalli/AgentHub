@@ -227,3 +227,112 @@ export function renderMarkdown(src: string): string {
 
   return out.join('\n');
 }
+
+/* --- documentation extras ---------------------------------------------------
+ *
+ * Everything below is additive: `renderMarkdown` above is untouched, and a caller that wants the
+ * plain renderer still gets exactly it. The docs shell calls `renderDocMarkdown` instead, which
+ * understands one block the plain renderer does not — the Docusaurus-style admonition:
+ *
+ *     :::warning Don't do this
+ *     Body markdown.
+ *     :::
+ *
+ * The block is peeled off the source *before* anything is rendered, and its body is then handed to
+ * `renderMarkdown` like any other document, so the escape-first rule holds unchanged: no raw HTML
+ * reaches the output, and the only markup around the body is the wrapper this file writes.
+ */
+
+export type AdmonitionKind = 'info' | 'tip' | 'note' | 'warning' | 'danger';
+
+const ADMONITION_KINDS: AdmonitionKind[] = ['info', 'tip', 'note', 'warning', 'danger'];
+
+const ADMONITION_LABELS: Record<AdmonitionKind, string> = {
+  info: 'Info',
+  tip: 'Tip',
+  note: 'Note',
+  warning: 'Warning',
+  danger: 'Danger',
+};
+
+/**
+ * One glyph per kind, drawn here rather than fetched: a circle for the neutral three, a triangle
+ * for warning, an octagon for danger. `currentColor` throughout, so the label's colour carries the
+ * icon with it.
+ */
+const ADMONITION_ICONS: Record<AdmonitionKind, string> = {
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.5v5"/><path d="M12 7.6h.01"/>',
+  tip: '<path d="M9.5 18h5"/><path d="M10.5 21h3"/><path d="M12 3a6 6 0 0 1 3.5 10.9c-.3.2-.5.6-.5 1V15H9v-.1c0-.4-.2-.8-.5-1A6 6 0 0 1 12 3z"/>',
+  note: '<rect x="4.5" y="3" width="15" height="18" rx="2"/><path d="M8.5 8.5h7"/><path d="M8.5 12.5h7"/><path d="M8.5 16.5h4"/>',
+  warning: '<path d="M12 4 2.9 20h18.2L12 4z"/><path d="M12 10.5v4"/><path d="M12 17.4h.01"/>',
+  danger: '<path d="M8.6 3h6.8L20 7.6v6.8L15.4 19H8.6L4 14.4V7.6L8.6 3z"/><path d="M12 7.5v5"/><path d="M12 15.6h.01"/>',
+};
+
+/** A stretch of the source: either plain markdown, or one admonition and its body. */
+export interface DocBlock {
+  kind: AdmonitionKind | null;
+  /** The heading an admonition wears; '' when the author gave none. Ignored when `kind` is null. */
+  title: string;
+  markdown: string;
+}
+
+const ADMONITION_OPEN = /^ {0,3}:::[ \t]*([a-z]+)[ \t]*(.*?)[ \t]*$/;
+const ADMONITION_CLOSE = /^ {0,3}:::[ \t]*$/;
+
+/**
+ * Splits `src` into plain stretches and admonitions, in document order. Fenced code is stepped
+ * over, so a `:::` inside a code block stays code, and an unclosed block runs to the end of the
+ * document — the same forgiving rule the fence parser already uses. Pure; the renderer and its
+ * test both go through it.
+ */
+export function splitCallouts(src: string): DocBlock[] {
+  const lines = src.replace(/\r\n?/g, '\n').split('\n');
+  const blocks: DocBlock[] = [];
+  let plain: string[] = [];
+  let fenced = false;
+
+  const flush = (): void => {
+    if (plain.join('\n').trim()) blocks.push({ kind: null, title: '', markdown: plain.join('\n') });
+    plain = [];
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (FENCE.test(line)) fenced = !fenced;
+    const open = fenced ? null : ADMONITION_OPEN.exec(line);
+    const kind = open?.[1] as AdmonitionKind | undefined;
+    if (!open || !kind || !ADMONITION_KINDS.includes(kind)) { plain.push(line); continue; }
+
+    flush();
+    const body: string[] = [];
+    let inner = false;
+    index++;
+    while (index < lines.length) {
+      if (FENCE.test(lines[index])) inner = !inner;
+      if (!inner && ADMONITION_CLOSE.test(lines[index])) break;
+      body.push(lines[index]);
+      index++;
+    }
+    blocks.push({ kind, title: open[2], markdown: body.join('\n') });
+  }
+
+  flush();
+  return blocks;
+}
+
+/** Markdown → HTML, with `:::info` and its four siblings rendered as admonitions. */
+export function renderDocMarkdown(src: string): string {
+  return splitCallouts(src)
+    .map((block) => {
+      if (!block.kind) return renderMarkdown(block.markdown);
+      const label = escapeHtml(block.title.trim() || ADMONITION_LABELS[block.kind]);
+      const icon = '<svg class="adm__icon" viewBox="0 0 24 24" width="15" height="15" fill="none"'
+        + ' stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"'
+        + ` aria-hidden="true">${ADMONITION_ICONS[block.kind]}</svg>`;
+      return `<aside class="adm adm--${block.kind}" role="note">`
+        + `<p class="adm__head">${icon}<span>${label}</span></p>`
+        + `<div class="adm__body">${renderMarkdown(block.markdown)}</div>`
+        + '</aside>';
+    })
+    .join('\n');
+}

@@ -1,4 +1,4 @@
-# 0049 — happy-dom for the UI's DOM tests, scoped per file
+# 0052 — happy-dom for the UI's DOM tests, scoped per file
 Date: 2026-10-01
 Decided by: senior-coder
 Status: accepted

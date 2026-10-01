@@ -298,7 +298,7 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
     if (narrow?.matches) {
       drawerOpen = !drawerOpen;
       layout();
-      if (drawerOpen) search.focus();
+      if (drawerOpen) host.querySelector<HTMLElement>('[aria-current="page"], .sidebar__row')?.focus({ preventScroll: true });
       return;
     }
     collapsed = !collapsed;

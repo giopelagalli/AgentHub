@@ -311,13 +311,13 @@
     width: min(300px, 86vw);
     background: var(--bg-chrome-solid);
     border-right: 1px solid var(--sep);
-    box-shadow: var(--shadow-sheet);
     transform: translateX(-102%);
     transition: transform 220ms var(--ease);
   }
 
   .app--drawer .sidebar {
     transform: none;
+    box-shadow: var(--shadow-sheet);
   }
 
   .app--drawer .page::after {
@@ -332,10 +332,12 @@
     grid-column: 1;
   }
 
+  /* Two rows: the title and actions in 48px, the segments in 36px under them. */
   .toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 48px;
     height: auto;
-    min-height: var(--toolbar-h);
+    min-height: 48px;
     padding: 0 var(--sp-2) 0 var(--sp-3);
     row-gap: 0;
   }
@@ -350,6 +352,7 @@
     grid-row: 2;
     grid-column: 1 / -1;
     justify-content: stretch;
+    height: 36px;
     padding-bottom: var(--sp-2);
     overflow-x: auto;
   }
@@ -368,11 +371,11 @@
   }
 
   .view__body {
-    padding-top: var(--toolbar-h);
+    padding-top: 48px;
   }
 
   .view:has(.toolbar__center:not(:empty)) > .view__body {
-    padding-top: calc(var(--toolbar-h) + 38px);
+    padding-top: calc(48px + 36px);
   }
 
   .view__content {

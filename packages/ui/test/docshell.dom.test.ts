@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mountDocShell, type DocPage, type DocShellHandle, type DocShellOptions } from '../src/panels/docshell.js';
 
 /**
- * The docs shell in a DOM (happy-dom, this file only — decision 0049). The two observers are
+ * The docs shell in a DOM (happy-dom, this file only — decision 0052). The two observers are
  * stubbed: happy-dom does no layout, so the tests drive their callbacks by hand.
  */
 

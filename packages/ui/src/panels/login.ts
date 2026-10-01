@@ -12,11 +12,11 @@ export function openLoginPanel(host: HTMLElement, onSuccess: () => void): void {
   screen.appendChild(panel);
 
   const heading = document.createElement('h2');
-  heading.textContent = 'Locked';
+  heading.textContent = 'AgentHub';
 
   const hint = document.createElement('p');
   hint.className = 'login__hint';
-  hint.textContent = 'AgentHub is closed to visitors.';
+  hint.textContent = 'Enter the hub’s password to continue.';
 
   const form = document.createElement('form');
   form.className = 'chat__form';

@@ -685,6 +685,21 @@
   }
 
   .subbar {
-    padding: 0 var(--sp-3);
+    flex-wrap: wrap;
+    gap: 6px var(--sp-3);
+    padding: 6px var(--sp-3);
+  }
+
+  .subbar__actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+  }
+
+  .subbar__actions:empty {
+    display: none;
+  }
+
+  .project__pane {
+    top: calc(48px + 36px);
   }
 }

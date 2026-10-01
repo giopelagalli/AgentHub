@@ -54,7 +54,7 @@ Docs sheet, the PRD sheet and the Help page. `mountDocShell(host, options)` retu
 documents and the rail swaps between them (Docs, the PRD read section by section); in `scroll`
 mode they are the `##` sections of one document on screen at once, and the rail scrolls to them
 (Help). Its parsing helpers (`parseFrontMatter`, `groupPages`, `splitSections`, `docToc`) are pure;
-the shell itself is tested in happy-dom (0049). `renderDocMarkdown` (callouts:
+the shell itself is tested in happy-dom (0052). `renderDocMarkdown` (callouts:
 `:::info|tip|note|warning|danger`) sits beside `renderMarkdown` in `markdown.ts`.
 
 ## Hub modules (`packages/hub/src`)

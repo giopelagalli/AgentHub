@@ -13,7 +13,8 @@ import type { PrdDoc } from '../../prd.js';
 import type { RoadmapDoc } from '../../roadmap.js';
 import { turnsOf, type UiState } from '../../store.js';
 import {
-  activityHint, doingCaption, formatElapsed, formatTime, formatUsd, openSubagents, runningTurn, truncate, turnDuration,
+  activeWho, doingCaption, formatElapsed, formatTime, formatUsd, openSubagents, runningTurn, truncate, turnDuration, whoView,
+  type TurnRecord,
 } from '../../turns.js';
 
 /**
@@ -62,6 +63,13 @@ const GLANCE: { summary: (d: OverviewData) => ArtifactSummary; icon: IconName; t
   { summary: (d) => previewSummary(d.preview.state, d.preview.doc), icon: 'globe', tab: 'code', part: 'preview' },
 ];
 
+/** Who is doing what in a running turn, as a sentence: "Ada is reading src/app.ts". */
+function liveLine(turn: TurnRecord, roster: TeamRoster | null): string {
+  const who = activeWho(turn);
+  const doing = doingCaption(turn, who, 80);
+  return doing ? `${whoView(who, roster).name} is ${doing}` : 'Starting…';
+}
+
 const INVITE_ICONS: Record<OverviewInvite['kind'], IconName> = { prd: 'sparkle', roadmap: 'queue', turn: 'play' };
 
 function section(title: string, aside?: HTMLElement): { root: HTMLElement; body: HTMLElement } {
@@ -96,14 +104,13 @@ function nowNode(data: OverviewData, invite: OverviewInvite | null, actions: Ove
   const box = el('div', 'ov__now');
   const eyebrow = el('p', 'ov__eyebrow', running ? 'Working on' : now.milestoneCurrent ? 'Current milestone' : 'Next up');
   box.appendChild(eyebrow);
-  box.appendChild(el('h3', 'ov__milestone', now.milestone ?? 'No milestone in progress'));
+  box.appendChild(el('h3', 'ov__milestone', now.milestone ?? (running ? 'The team is working' : 'No milestone in progress')));
 
   if (running) {
     const line = el('p', 'ov__live');
-    const hint = activityHint(held.state, held.turns, data.roster, Date.now());
     const clock = el('span', 'num', formatElapsed(Date.now() - running.startedAt));
     clock.dataset.elapsed = String(running.startedAt);
-    line.append(el('span', 'dot dot--working dot--pulse'), el('span', 'ov__livetext', hint.hint), clock);
+    line.append(el('span', 'dot dot--working dot--pulse'), el('span', 'ov__livetext', liveLine(running, data.roster)), clock);
     box.appendChild(line);
   }
 
@@ -224,7 +231,7 @@ function activityNode(data: OverviewData, actions: OverviewActions): HTMLElement
     line.dataset.key = `turn-${turn.sessionId}`;
     const dot = el('span', `dot ${tone === 'running' ? 'dot--working dot--pulse' : tone === 'failed' ? 'dot--error' : 'dot--idle'}`);
     const text = tone === 'running'
-      ? (activityHint(held.state, held.turns, data.roster, Date.now()).hint)
+      ? liveLine(turn, data.roster)
       : (turn.summary ? truncate(turn.summary, 140) : (turn.outcome ?? 'Ended'));
     const meta = el('span', 'ov__turnmeta num');
     const dur = el('span', undefined, formatElapsed(turnDuration(turn, Date.now())));
@@ -275,10 +282,14 @@ export function renderOverview(host: HTMLElement, data: OverviewData, actions: O
     held.state === 'ready' ? held.turns.length : held.state === 'failed' ? 1 : null,
   );
 
+  // A running turn leads, whatever is still missing; otherwise the invitation does, and the Now
+  // block carries "Run the first turn" itself.
   const now = nowNode(data, invite, actions);
+  const running = !!runningTurn(held.turns);
+  if (running && now) root.appendChild(now);
   if (invite && invite.kind !== 'turn') root.appendChild(inviteNode(invite, actions));
-  else if (now) root.appendChild(now);
-  else if (invite) root.appendChild(inviteNode(invite, actions));
+  else if (now && !running) root.appendChild(now);
+  else if (invite && !now) root.appendChild(inviteNode(invite, actions));
 
   const team = section('Team');
   team.body.appendChild(teamNode(data, actions));

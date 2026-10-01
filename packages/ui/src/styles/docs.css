@@ -400,9 +400,12 @@
 
 /* --- the docs shell, re-dressed --------------------------------------------------------------- */
 
-.docshell {
-  gap: 0 40px;
-  grid-template-columns: 220px minmax(0, 1fr) 200px;
+/* Wide only: below this the shell's own container queries lay it out (and must not be overridden). */
+@container (min-width: 1101px) {
+  .docshell {
+    gap: 0 40px;
+    grid-template-columns: 220px minmax(0, 1fr) 200px;
+  }
 }
 
 /* The rails stick under the toolbar — and under the bar below it, where there is one. */

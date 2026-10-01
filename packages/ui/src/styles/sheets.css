@@ -441,6 +441,49 @@
   }
 }
 
+/* --- the front door --------------------------------------------------------------------------- */
+
+.login {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-4);
+  background: var(--bg-grouped);
+}
+
+.login__box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(360px, 100%);
+  padding: 32px 28px 26px;
+  text-align: center;
+  background: var(--bg-raised);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-pop);
+}
+
+.login__box h2 {
+  font-family: var(--display);
+  font-size: var(--fs-title);
+}
+
+.login__hint {
+  margin-bottom: var(--sp-4);
+  color: var(--label-2);
+}
+
+.login__box .chat__form {
+  padding: 0;
+}
+
+.login__error {
+  margin-top: var(--sp-2);
+  color: var(--red);
+}
+
 /* --- text being written: a draft, a plan --------------------------------------------------------- */
 
 .stream {

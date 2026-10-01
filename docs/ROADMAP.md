@@ -66,6 +66,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   five project tabs (Overview · Plan · Docs · Code · Activity), a settings sheet for the project's
   levers, Machines (Nodes · Browser · Queue · Access) in place of Cluster/Computer/Allocation, a
   three-choice New project sheet, and the docs shell (0047, 0052) for the PRD, Docs and Help.
+- The two API pieces the redesign wanted (0053): each project's `lastTurn` outcome in
+  `/api/state` (so the sidebar dot is red after a failure without the browser holding the turns),
+  and `POST /roadmap/move` accepting `{ id, to }` so a drag is one request.
 
 ## In progress
 
@@ -84,7 +87,3 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 5. Media on the 7900 XTX (FR-E1–E4).
 6. Browser pool (FR-D8).
 7. Accounts, grants, per-member JD, the public site (FR-F1–F6).
-8. A hub branch for two things the redesign wants from the API (0053): each project's last turn
-   outcome in `/api/state`, so every sidebar dot can be red after a failure and not only for
-   projects whose turns the browser has loaded; and a move-to-index roadmap route, so a drag is
-   one request rather than one per step.

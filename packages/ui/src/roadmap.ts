@@ -100,6 +100,11 @@ export function roadmapEmptyState(prdDrafted: boolean): RoadmapEmptyState {
     };
 }
 
+/** The one request that drops `row` onto `onto`'s place: the hub takes the 0-based target index. */
+export function dropMove(row: RoadmapRow, onto: RoadmapRow): { id: string; to: number } {
+  return { id: row.id, to: onto.order - 1 };
+}
+
 /** The rows the view draws, in the order the hub gave them. */
 export function roadmapRows(doc: RoadmapDoc | null): RoadmapRow[] {
   const milestones = doc?.milestones ?? [];

@@ -45,7 +45,7 @@ import {
 import { GithubInstallations } from './projects/github-installations.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
-import { currentMilestoneId, moveMilestone, patchMilestone } from './projects/roadmap.js';
+import { currentMilestoneId, moveMilestone, moveMilestoneTo, patchMilestone } from './projects/roadmap.js';
 import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE, type Briefing } from './projects/schema.js';
 import { LeaseManager, type Requester } from './browser/lease.js';
 import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
@@ -731,10 +731,20 @@ export function createHub(opts: HubOptions = {}): Hub {
   // and a shell is not something to offer on an unguarded hub.
   if (auth) app.register(terminalRoutes, { projects });
 
+  /** The manifests, each with how its latest manager turn ended — one transcript query for all of them. */
+  const listProjects = async (): Promise<ProjectManifest[]> => {
+    const listed = await projects.list();
+    const last = transcript.lastOutcomeBySubject('orchestrator');
+    return listed.map((p) => (last.has(p.slug) ? { ...p, lastTurn: last.get(p.slug)! } : p));
+  };
+
   // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
   const refreshes = new Set<Promise<void>>();
   const refreshProjects = (): Promise<void> => {
-    const refresh: Promise<void> = (async () => { projectList = await projects.list(); broadcastState(); })()
+    const refresh: Promise<void> = (async () => {
+      projectList = await listProjects();
+      broadcastState();
+    })()
       .catch((err) => { app.log.error(`failed to refresh projects: ${(err as Error).message}`); })
       .finally(() => { refreshes.delete(refresh); });
     refreshes.add(refresh);
@@ -1182,7 +1192,7 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.get('/api/state', async () => {
     sweepAndRequeue();
-    projectList = await projects.list();
+    projectList = await listProjects();
     return getState();
   });
 
@@ -1961,8 +1971,9 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.post('/api/projects/:slug/roadmap/move', async (req, reply) => {
     const { slug } = req.params as { slug: string };
-    const body = (req.body ?? {}) as Partial<{ id: string; direction: 'up' | 'down' }>;
-    if (typeof body.id !== 'string' || (body.direction !== 'up' && body.direction !== 'down')) {
+    const body = (req.body ?? {}) as Partial<{ id: string; direction: 'up' | 'down'; to: number }>;
+    const byIndex = body.to !== undefined;
+    if (typeof body.id !== 'string' || (byIndex ? !Number.isInteger(body.to) : body.direction !== 'up' && body.direction !== 'down')) {
       return reply.code(400).send({ error: 'invalid move' });
     }
     const bundle = await resolveProject(slug, reply);
@@ -1970,10 +1981,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     const milestones = await bundle.roadmap();
     if (!milestones.some((m) => m.id === body.id)) return reply.code(400).send({ error: 'unknown milestone' });
     // A move at either edge is a no-op, not an error: the owner asked for an order it already has.
-    const moved = moveMilestone(milestones, body.id, body.direction);
+    const moved = byIndex ? moveMilestoneTo(milestones, body.id, body.to!) : moveMilestone(milestones, body.id, body.direction!);
     if (moved !== milestones) {
       await bundle.writeRoadmap(moved);
-      await bundle.commit(`owner: move milestone ${body.id} ${body.direction}`);
+      await bundle.commit(`owner: move milestone ${body.id} ${byIndex ? `to ${body.to}` : body.direction}`);
     }
     return { milestones: moved };
   });

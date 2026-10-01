@@ -72,8 +72,8 @@ export function railModel(page: PageId, collapsed: boolean): RailModel {
 }
 
 /**
- * A project's dot: green while a turn runs, amber when it is blocked on the owner, red when its
- * last turn failed, a hollow ring while paused, grey otherwise. A turn is only known about for a
+ * A project's dot: green while a turn runs, amber when it is blocked on the owner or its last turn was cut short, red when its
+ * last turn failed (from the hub's own record until the browser has the turns), a hollow ring while paused, grey otherwise. A turn is only known about for a
  * project whose turns have reached the store, which is every one the socket has reported on.
  */
 export type ProjectDot = 'working' | 'needs' | 'error' | 'paused' | 'idle' | 'done';
@@ -84,8 +84,11 @@ export function projectDot(project: ProjectManifest, state: UiState): ProjectDot
   if (project.status === 'paused') return 'paused';
   if (project.status === 'done') return 'done';
   if (project.status === 'blocked') return 'needs';
-  const last = turns[0];
-  if (last?.outcome && /fail|error|abort/i.test(last.outcome)) return 'error';
+  // The browser's own turns are fresher than the hub's snapshot, so the snapshot is only the fallback.
+  const outcome = turns.length ? turns[0].outcome : project.lastTurn?.outcome;
+  if (outcome && /fail|error/i.test(outcome)) return 'error';
+  // A cut-short turn (a restart marks the interrupted ones `aborted`) isn't a failure: it wants a look, not an alarm.
+  if (outcome && /abort/i.test(outcome)) return 'needs';
   return 'idle';
 }
 

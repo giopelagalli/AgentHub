@@ -25,6 +25,17 @@ export function moveMilestone(milestones: Milestone[], id: string, direction: 'u
   return next;
 }
 
+/** Moves one milestone to the 0-based index `to`, clamped to the list. Already there (or unknown) leaves the order alone. */
+export function moveMilestoneTo(milestones: Milestone[], id: string, to: number): Milestone[] {
+  const from = milestones.findIndex((m) => m.id === id);
+  const target = Math.min(Math.max(to, 0), milestones.length - 1);
+  if (from < 0 || target === from) return milestones;
+  const next = [...milestones];
+  const [moved] = next.splice(from, 1);
+  next.splice(target, 0, moved);
+  return next;
+}
+
 /**
  * Applies an edit to one milestone — the owner's, or a turn's status change with the evidence behind
  * it. Ids are positional handles the roadmap is ordered by, so they are never patched; everything

@@ -291,6 +291,12 @@ export interface ProjectManifest {
   source?: ProjectSource;
   /** The dev server the hub supervises and proxies at `/preview/<slug>/`. Absent means none. */
   preview?: PreviewConfig;
+  /**
+   * How the project's latest finished manager turn ended. Not part of the stored manifest: the hub
+   * adds it to the entries of `HubState.projects`, from the transcript, so the sidebar can show a
+   * failed turn before the browser has loaded any turns for the project.
+   */
+  lastTurn?: { outcome: string; endedAt: number };
 }
 
 // --- imported repositories ------------------------------------------------------

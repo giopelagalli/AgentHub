@@ -3,7 +3,7 @@ import { button, el } from '../dom.js';
 import type { PrdDoc } from '../prd.js';
 import { icon } from '../icons.js';
 import { menuButton } from '../menu.js';
-import { MILESTONE_STATUSES, STATUS_WORDS, roadmapEmptyState, roadmapRows, verificationChips, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
+import { MILESTONE_STATUSES, STATUS_WORDS, dropMove, roadmapEmptyState, roadmapRows, verificationChips, type RoadmapDoc, type RoadmapRow } from '../roadmap.js';
 import { streamPost } from '../stream.js';
 import { toast } from '../toast.js';
 import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
@@ -152,22 +152,21 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext, options: Roadm
     item.addEventListener('drop', (event) => {
       event.preventDefault();
       item.classList.remove('milestone--over');
-      if (dragging && dragging.id !== row.id) moveBy(dragging, row.order - dragging.order);
+      if (dragging && dragging.id !== row.id) moveRow(dragging, dropMove(dragging, row), `to place ${row.order}`);
     });
     return item;
   };
 
-  /** Moves `row` by `steps` places (negative is up), one hub step after another, then re-reads. */
+  /** Moves `row` one place (negative is up) from the keyboard or a button. */
   const moveBy = (row: RoadmapRow, steps: number): void => {
     const direction = steps < 0 ? 'up' : 'down';
-    const count = Math.abs(steps);
-    if (!count) return;
-    let chain: Promise<unknown> = Promise.resolve();
-    for (let i = 0; i < count; i++) {
-      chain = chain.then(() => sendJson(`/api/projects/${ctx.slug}/roadmap/move`, { id: row.id, direction }, 'POST'));
-    }
-    void chain
-      .catch((error: unknown) => toast(`Could not move ${row.title} ${direction}: ${String(error)}`, 'error'))
+    moveRow(row, { id: row.id, direction }, direction);
+  };
+
+  /** Sends one move to the hub, then re-reads the roadmap. */
+  const moveRow = (row: RoadmapRow, body: { id: string; direction: 'up' | 'down' } | { id: string; to: number }, where: string): void => {
+    sendJson(`/api/projects/${ctx.slug}/roadmap/move`, body, 'POST')
+      .catch((error: unknown) => toast(`Could not move ${row.title} ${where}: ${String(error)}`, 'error'))
       .finally(() => { if (alive) load(); });
   };
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import type { Job, MediaAsset, MediaList } from '@agenthub/shared';
 import { createHub, type Hub } from '../src/server.js';
-import { MediaDesk } from '../src/projects/media.js';
+import { commitLabel, landMedia, MediaDesk } from '../src/projects/media.js';
 import { mediaTools } from '../src/agents/media-tools.js';
 import { subagentSystemPrompt } from '../src/projects/prompts.js';
 import { routeAccess } from '../src/auth.js';
@@ -98,6 +98,7 @@ describe('project media', () => {
     const got = await h.app.inject({ method: 'GET', url: `/api/projects/app/media/image-${job.id}.png` });
     expect(got.statusCode).toBe(200);
     expect(got.headers['content-type']).toBe('image/png');
+    expect(got.headers['x-content-type-options']).toBe('nosniff');
     expect(got.rawPayload).toEqual(PNG);
 
     const bundle = await h.projects.get('app');
@@ -119,6 +120,32 @@ describe('project media', () => {
     expect(none.statusCode).toBe(409);
     expect(none.json().error).toMatch(/no machine can render images/);
     expect((await list(h)).renderers).toEqual({ image: false, video: false });
+  });
+
+  it('never writes through a symlink: not a media/ that leaves the bundle, not a link at the target name', async () => {
+    const h = await setup();
+    const job = (await h.app.inject({ method: 'POST', url: '/api/projects/app/media', payload: { kind: 'image', prompt: 'x' } })).json() as Job;
+    const bundle = await h.projects.get('app');
+    const outside = await mkdtemp(join(tmpdir(), 'agenthub-outside-'));
+    dirs.push(outside);
+
+    await writeFile(join(outside, 'victim.png'), 'keep');
+    await mkdir(join(bundle.dir, 'media'), { recursive: true });
+    await symlink(join(outside, 'victim.png'), join(bundle.dir, 'media', `image-${job.id}.png`));
+    await landMedia(bundle, job, PNG, 'pc');
+    expect(await readFile(join(outside, 'victim.png'), 'utf8')).toBe('keep');
+    expect((await lstat(join(bundle.dir, 'media', `image-${job.id}.png`))).isSymbolicLink()).toBe(false);
+    expect((await readdir(join(bundle.dir, 'media'))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+
+    await rm(join(bundle.dir, 'media'), { recursive: true });
+    await symlink(outside, join(bundle.dir, 'media'));
+    await expect(landMedia(bundle, job, PNG, 'pc')).rejects.toThrow(/outside the bundle/);
+    expect(await readdir(outside)).toEqual(['victim.png']);
+  });
+
+  it('puts the prompt on one line in the commit subject', () => {
+    expect(commitLabel('  a\n\ncat\t on  a mat ')).toBe('a cat on a mat');
+    expect(commitLabel('x'.repeat(80))).toBe(`${'x'.repeat(57)}…`);
   });
 
   it('is owner-only', () => {

@@ -1,4 +1,4 @@
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises';
 import { join, sep } from 'node:path';
 import {
   imagePayloadFrom, isMediaJob, VIDEO_ASPECTS, VIDEO_MEDIA_DEFAULTS, videoPayloadFrom,
@@ -67,6 +67,30 @@ export async function findMediaByJob(bundleDir: string, jobId: number): Promise<
 }
 
 /**
+ * `media/`'s real path, refused (thrown) when it resolves outside the bundle — `media` itself can be
+ * a symlink in a cloned bundle, and then neither serving from it nor writing into it is safe.
+ */
+async function mediaDirIn(bundleDir: string): Promise<string> {
+  const root = await realpath(bundleDir);
+  const dir = await realpath(join(bundleDir, MEDIA_DIR));
+  if (!dir.startsWith(root + sep)) throw new Error(`${MEDIA_DIR}/ resolves outside the bundle`);
+  return dir;
+}
+
+/** Writes beside the target and renames over it: never through a symlink, never a half-written file. */
+async function replaceFile(dir: string, name: string, data: Buffer | string): Promise<void> {
+  const temp = join(dir, `.${name}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(temp, data);
+  await rename(temp, join(dir, name));
+}
+
+/** A prompt as one line for a commit subject: whitespace collapsed, at most 60 characters. */
+export function commitLabel(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, ' ').trim();
+  return flat.length > 60 ? `${flat.slice(0, 57)}…` : flat;
+}
+
+/**
  * The absolute path of a servable file under `media/`, or null. The name must be a plain file name
  * with a media extension, and its real path (symlinks followed) must still sit inside `media/` —
  * a bundle is a git repo that can be cloned, so a link out of it is not ruled out by the name alone.
@@ -76,7 +100,7 @@ export async function mediaFilePath(bundleDir: string, file: string): Promise<{ 
   const contentType = MEDIA_CONTENT_TYPES[file.slice(file.lastIndexOf('.') + 1).toLowerCase()];
   if (!contentType) return null;
   try {
-    const dir = await realpath(join(bundleDir, MEDIA_DIR));
+    const dir = await mediaDirIn(bundleDir);
     const path = await realpath(join(dir, file));
     if (!path.startsWith(dir + sep) || !(await lstat(path)).isFile()) return null;
     return { path, contentType };
@@ -92,8 +116,8 @@ export async function mediaFilePath(bundleDir: string, file: string): Promise<{ 
  * rather than overwriting the old one.
  */
 export async function landMedia(bundle: ProjectBundle, job: Job, bytes: Buffer, node: string, now = Date.now()): Promise<MediaAsset> {
-  const dir = join(bundle.dir, MEDIA_DIR);
-  await mkdir(dir, { recursive: true });
+  await mkdir(join(bundle.dir, MEDIA_DIR), { recursive: true });
+  const dir = await mediaDirIn(bundle.dir);
   let id = `${mediaKind(job.type)}-${job.id}`;
   const existing = await readSidecar(join(dir, `${id}.json`));
   if (existing && existing.jobId !== job.id) id = `${id}-${job.createdAt.toString(36)}`;
@@ -105,10 +129,9 @@ export async function landMedia(bundle: ProjectBundle, job: Job, bytes: Buffer, 
     durationMs: Math.max(0, now - job.updatedAt),
     createdAt: now, bytes: bytes.length,
   };
-  await writeFile(join(dir, asset.file), bytes);
-  await writeFile(join(dir, `${id}.json`), `${JSON.stringify(asset, null, 2)}\n`, 'utf8');
-  const label = asset.prompt.length > 60 ? `${asset.prompt.slice(0, 57)}…` : asset.prompt;
-  await bundle.commit(`media: ${asset.file} — ${label}`);
+  await replaceFile(dir, asset.file, bytes);
+  await replaceFile(dir, `${id}.json`, `${JSON.stringify(asset, null, 2)}\n`);
+  await bundle.commit(`media: ${asset.file} — ${commitLabel(asset.prompt)}`);
   return asset;
 }
 

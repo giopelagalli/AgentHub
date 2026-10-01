@@ -45,7 +45,9 @@ export async function mediaRoutes(app: FastifyInstance, opts: MediaRoutesOptions
     const found = await mediaFilePath(bundle.dir, file);
     if (!found) return reply.code(404).send({ error: 'no such media file' });
     // A generated file never changes under its name; the UI's grid can keep it.
-    return reply.type(found.contentType).header('cache-control', 'private, max-age=3600').send(createReadStream(found.path));
+    // nosniff: the bytes are a render, never a document — a browser must not guess them into HTML.
+    return reply.type(found.contentType).header('cache-control', 'private, max-age=3600')
+      .header('x-content-type-options', 'nosniff').send(createReadStream(found.path));
   });
 
   app.post('/api/projects/:slug/media', async (req, reply) => {

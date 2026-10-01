@@ -317,6 +317,14 @@ whatever it's already running finishes, and **Undrain** reverses it. **Remove** 
 outright — its daemon exits once the hub tells it so — so getting it back means re-running its
 service or install.
 
+**⋯ → Pause models** is the narrower lever: the node stays online, keeps heartbeating and keeps
+claiming jobs, but the model gateway stops picking its serving endpoints, so chat and agent turns go
+elsewhere. **Resume models** puts them back. Use it to stop generating on a local model without
+taking the machine offline; use **Drain** when the machine should take no work at all. With every
+local model paused, projects set to Auto fall through to the cloud tier, subject to
+`MAX_CLOUD_USD_PER_DAY`, while projects set to Local fail with "no capacity … (local models paused)"
+rather than spend.
+
 A node is *offline* when its heartbeats stop; the hub requeues its jobs and routes around it.
 
 The one-command installer is `curl -fsSL <hub>/install.sh | sh -s -- --hub <hub> --token <token>`,
@@ -482,6 +490,19 @@ cite files as `` `path:line` `` — click one and it opens here, the same as a l
 **Map.** The second tab is `docs/code-map.md`: chapters from the entry points down, each item a
 `` `path:line` `` link. Click one and the file opens at that line. The Manager refreshes the map
 when a milestone lands; **Refresh map** does it on demand, which takes a model call or two.
+
+**Tour.** **Start tour** on the Map walks the codebase one map link at a time, in the map's order.
+Each step shows the code on the left — the whole file, read-only, with the step's lines tinted — and
+the Guide's explanation on the right: what the lines do, a few at a time, and why they were done
+that way, citing the decision-log entry or PRD requirement when one says, and *no recorded reason*
+when none does. **Back** and **Next** move between steps (*Step 3 of 14*); **Open in editor** takes
+you to the file in Files to change it; **Ask about this** opens the Guide with the lines already
+named in its message box. The third tab, **Tour**, brings you back to the step you left.
+
+A step's lines run from the linked line to the end of that block, judged by indentation and capped
+at 60 lines. The first time anyone opens a step the Guide writes its explanation (a few seconds of
+"reading this step…"); it is saved as a page under `docs/tour/` in the project and committed, so
+every later reader gets it instantly. Edit those lines and the next visit explains them afresh.
 
 ## Chatting with the team
 

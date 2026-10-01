@@ -66,6 +66,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   five project tabs (Overview · Plan · Docs · Code · Activity), a settings sheet for the project's
   levers, Machines (Nodes · Browser · Queue · Access) in place of Cluster/Computer/Allocation, a
   three-choice New project sheet, and the docs shell (0047, 0052) for the PRD, Docs and Help.
+- The two API pieces the redesign wanted (0053): each project's `lastTurn` outcome in
+  `/api/state` (so the sidebar dot is red after a failure without the browser holding the turns),
+  and `POST /roadmap/move` accepting `{ id, to }` so a drag is one request.
+
+- The Code Tour: steps from the Code map, explanations cached as docs pages (0056–0058).
 
 - pi in an OS sandbox (0055): Seatbelt on macOS (verified with the real pi), bubblewrap on Linux
   with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
@@ -78,22 +83,15 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 ## Next (in order)
 
-1. Load xterm lazily: a dynamic `import()` in `mountTerminal` so the Terminal's 337 kB leaves the
-   main bundle (123.50 → 460.53 kB today, 0041). Settle the lazy-mount shape once — Preview and
-   Code want it too.
-2. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
+1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-3. Workbench: the Tour over the Code map (FR-B6, FR-B7).
-4. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
+2. Workbench: a per-project live browser view on the Code tab (FR-B7).
+3. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
-   hiding credential directories from pi's reads, a project-level Harness select in the header,
-   `claude-code` (FR-G3), and the installer putting pi (and `bubblewrap`) on a node.
-5. JD drives the hub; the web door (FR-C1–C5).
-6. Media on the 7900 XTX (FR-E1–E4).
-7. Browser pool (FR-D8).
-8. Accounts, grants, per-member JD, the public site (FR-F1–F6).
-9. A hub branch for two things the redesign wants from the API (0053): each project's last turn
-   outcome in `/api/state`, so every sidebar dot can be red after a failure and not only for
-   projects whose turns the browser has loaded; and a move-to-index roadmap route, so a drag is
-   one request rather than one per step.
+   a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
+   pi (and `bubblewrap`) on a node.
+4. JD drives the hub; the web door (FR-C1–C5).
+5. Media on the 7900 XTX (FR-E1–E4).
+6. Browser pool (FR-D8).
+7. Accounts, grants, per-member JD, the public site (FR-F1–F6).

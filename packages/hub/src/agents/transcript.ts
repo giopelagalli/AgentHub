@@ -112,6 +112,18 @@ export class Transcript {
     return row ? row.content.trim() : '';
   }
 
+  /**
+   * For each subject, how its latest ended session of `kind` finished — one query for every
+   * project, for the state broadcast. A session still running (no `ended_at`) doesn't count.
+   */
+  lastOutcomeBySubject(kind: SessionKind = 'orchestrator'): Map<string, { outcome: string; endedAt: number }> {
+    const rows = this.db.prepare(
+      `SELECT subject, outcome, ended_at AS endedAt FROM sessions
+       WHERE id IN (SELECT MAX(id) FROM sessions WHERE kind=? AND ended_at IS NOT NULL AND outcome IS NOT NULL GROUP BY subject)`,
+    ).all(kind) as { subject: string; outcome: string; endedAt: number }[];
+    return new Map(rows.map((r) => [r.subject, { outcome: r.outcome, endedAt: r.endedAt }]));
+  }
+
   messages(sessionId: number): ChatMessage[] {
     const rows = this.db.prepare(`SELECT role, content, tool_call_json FROM messages WHERE session_id=? AND role<>'event' ORDER BY id`)
       .all(sessionId) as MessageRow[];

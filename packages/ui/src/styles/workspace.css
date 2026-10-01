@@ -215,6 +215,105 @@
   color: var(--accent-text);
 }
 
+/* The tour: where you are and the way on across the top, the snippet and its explanation side by
+   side underneath — code left like the Files tab, prose right at a reading measure. */
+.tour {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tour__head {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--sep);
+}
+
+.tour__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tour__count {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--label-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tour__title {
+  margin: 0;
+  font-size: var(--fs-read);
+  font-weight: 600;
+  color: var(--label);
+}
+
+.tour__path {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label-2);
+}
+
+.tour__nav .icon {
+  flex: none;
+}
+
+.tour__panes {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.tour__code {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--sep);
+}
+
+.tour__text {
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-5);
+  overflow: auto;
+}
+
+.tour__text .md__ref {
+  cursor: pointer;
+  border-bottom: 1px solid var(--sep-strong);
+}
+
+.tour__text .md__ref:hover code {
+  color: var(--accent-text);
+}
+
+.tour__text > .btn {
+  margin-top: var(--sp-2);
+}
+
+.tour__empty {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: var(--sp-6);
+}
+
 /* --- Terminal --------------------------------------------------------------------------------- */
 
 .term {
@@ -468,6 +567,16 @@
   }
 
   .code__tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--sep);
+  }
+
+  .tour__panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(160px, 45%) minmax(0, 1fr);
+  }
+
+  .tour__code {
     border-right: 0;
     border-bottom: 1px solid var(--sep);
   }

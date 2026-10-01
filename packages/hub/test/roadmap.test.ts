@@ -12,7 +12,7 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { PrdDrafter } from '../src/projects/prd.js';
-import { currentMilestoneId, moveMilestone, normalizeMilestones, patchMilestone } from '../src/projects/roadmap.js';
+import { currentMilestoneId, moveMilestone, moveMilestoneTo, normalizeMilestones, patchMilestone } from '../src/projects/roadmap.js';
 import { createHub, type Hub } from '../src/server.js';
 
 let root: string;
@@ -89,6 +89,17 @@ describe('roadmap ordering', () => {
     expect(moveMilestone(MILESTONES, 'nope', 'up')).toBe(MILESTONES);
   });
 
+  it('moves a milestone to an index, clamping it, keeping every field, and no-opping when already there', () => {
+    const ids = (ms: Milestone[]) => ms.map((m) => m.id);
+    expect(ids(moveMilestoneTo(MILESTONES, 'm3', 0))).toEqual(['m3', 'm1', 'm2']);
+    expect(ids(moveMilestoneTo(MILESTONES, 'm1', 2))).toEqual(['m2', 'm3', 'm1']);
+    expect(ids(moveMilestoneTo(MILESTONES, 'm1', 99))).toEqual(['m2', 'm3', 'm1']);
+    expect(ids(moveMilestoneTo(MILESTONES, 'm3', -5))).toEqual(['m3', 'm1', 'm2']);
+    expect(moveMilestoneTo(MILESTONES, 'm2', 1)).toBe(MILESTONES);
+    expect(moveMilestoneTo(MILESTONES, 'nope', 0)).toBe(MILESTONES);
+    expect(moveMilestoneTo(MILESTONES, 'm3', 0)[0]).toEqual(MILESTONES[2]);
+  });
+
   it('patches one milestone and clears an estimate with an empty string', () => {
     const withEstimate = patchMilestone(MILESTONES, 'm3', { status: 'blocked', estimate: '2 days' });
     expect(withEstimate[2]).toEqual({ id: 'm3', title: 'Board', summary: 'Cards move.', status: 'blocked', estimate: '2 days' });
@@ -158,6 +169,22 @@ describe('roadmap routes', () => {
     expect(unknown.statusCode).toBe(400);
     const malformed = await target.app.inject({ method: 'POST', url: '/api/projects/demo/roadmap/move', payload: { id: 'm1', direction: 'sideways' } });
     expect(malformed.statusCode).toBe(400);
+  });
+
+  it('moves a milestone to an index in one commit, and 400s a non-integer index', async () => {
+    const { hub: target } = await hubHarness();
+    await bundle.writeRoadmap(MILESTONES);
+
+    const res = await target.app.inject({ method: 'POST', url: '/api/projects/demo/roadmap/move', payload: { id: 'm3', to: 0 } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().milestones.map((m: Milestone) => m.id)).toEqual(['m3', 'm1', 'm2']);
+    expect((await bundle.roadmap()).map((m) => m.id)).toEqual(['m3', 'm1', 'm2']);
+    expect((await simpleGit(bundle.dir).log()).latest?.message).toBe('owner: move milestone m3 to 0');
+
+    for (const to of [1.5, '1', null]) {
+      const bad = await target.app.inject({ method: 'POST', url: '/api/projects/demo/roadmap/move', payload: { id: 'm1', to } });
+      expect(bad.statusCode).toBe(400);
+    }
   });
 
   it('patches a milestone\'s status and estimate', async () => {

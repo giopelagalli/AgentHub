@@ -349,9 +349,12 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     pane.replaceChildren();
     view.classList.remove('project--pane');
   };
-  /** Opens `target` in the pane; asking for the conversation already open closes it instead. */
+  /**
+   * Opens `target` in the pane; asking for the conversation already open closes it instead —
+   * unless the caller brings a draft, which reopens it with the draft in the box.
+   */
   const openPane = (target: ChatTarget): void => {
-    if (paneEndpoint === target.endpoint && closePane) {
+    if (paneEndpoint === target.endpoint && closePane && !target.draft) {
       closePane();
       return;
     }

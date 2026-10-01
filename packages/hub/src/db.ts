@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   video INTEGER NOT NULL DEFAULT 0,
   control_json TEXT,
   control_node INTEGER NOT NULL DEFAULT 0,
-  draining INTEGER NOT NULL DEFAULT 0
+  draining INTEGER NOT NULL DEFAULT 0,
+  models_paused INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS jobs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at INTEGER,
   outcome TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_kind_subject ON sessions(kind, subject, ended_at);
 CREATE TABLE IF NOT EXISTS job_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL,
@@ -178,6 +180,7 @@ export function openDb(path: string): Db {
   ensureColumn(db, 'nodes', 'control_json', `TEXT`);
   ensureColumn(db, 'nodes', 'control_node', `INTEGER NOT NULL DEFAULT 0`);
   ensureColumn(db, 'nodes', 'draining', `INTEGER NOT NULL DEFAULT 0`);
+  ensureColumn(db, 'nodes', 'models_paused', `INTEGER NOT NULL DEFAULT 0`);
   // Ownership and per-node credentials (PRD FR-D1/FR-D5). A node that registered before enrollment
   // existed belongs to the admin, which is what the default backfills.
   ensureColumn(db, 'nodes', 'owner', `TEXT NOT NULL DEFAULT 'admin'`);

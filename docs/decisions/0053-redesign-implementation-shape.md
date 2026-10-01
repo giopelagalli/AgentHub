@@ -60,3 +60,28 @@ component's rules into its `styles/` file is a cleanup that can happen view by v
 depends on the split. Page ids no longer match the words on screen (`cluster` is Nodes); the
 mapping lives in `rail.ts` and `pages/machines.ts`. A drag across many rows is several requests;
 with roadmaps of a dozen milestones that is fine, and a move-to-index route would replace it.
+
+## Addendum 2026-10-01 — the two API pieces landed
+Decided by: orchestrator. Supersedes three statements above: "a drag sends one `move` per step … the
+hub has no move-to-index" (Decision), the dot being red only from turns the browser has loaded
+(Decision, the project's dot), and "a drag across many rows is several requests … a move-to-index
+route would replace it" (Consequences). All three are now out of date.
+
+- A drag sends one `POST /roadmap/move { id, to }` (0-based target index, clamped) — one request,
+  one commit. The keyboard and the arrow buttons keep the `{ id, direction }` form.
+- Each project in `/api/state` carries `lastTurn { outcome, endedAt }` from the transcript, so the
+  dot no longer needs the browser to have loaded the project's turns. Turns the browser does hold
+  are fresher and win over the snapshot.
+- **`lastTurn` shape.** A computed field on the project entry, never written to `manifest.json`.
+  Rejected: a separate `lastTurns` map on `HubState` (a second thing for every consumer to join to
+  the project list by slug, for a value that is only ever read alongside it). The cost: the
+  `ProjectManifest` type has a field the stored file never has.
+- **`to` on the existing route.** Overloaded onto `/roadmap/move` rather than a new route: one
+  route, one meaning ("move this milestone"), and the step form keeps working. When both `to` and
+  `direction` are sent, `to` wins. Rejected: a new `/roadmap/move-to` route (two routes for one
+  action).
+- **Aborted is not red.** A hub restart marks the turns it interrupted `aborted`; showing those as
+  failures would turn dots red after every restart. In `projectDot`, `aborted` (from `lastTurn` or
+  from loaded turns) reads as amber "Needs you"; red stays for `error`/`failed`.
+- `sessions(kind, subject, ended_at)` is indexed for the per-subject "latest ended session" query.
+

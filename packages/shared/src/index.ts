@@ -79,6 +79,8 @@ export interface NodeInfo extends NodeRegistration {
   jobTypes: JobType[];
   /** Set by the owner from the Cluster page: finishes work already in flight, gets nothing new. */
   draining?: boolean;
+  /** Set by the owner from the Machines page: the gateway stops picking this node's serving endpoints; it still heartbeats and claims jobs. */
+  modelsPaused?: boolean;
   /**
    * Who the node belongs to (PRD FR-D5). The enrolling user, or `admin` for a node that registered
    * with the shared `DAEMON_TOKEN` and was never enrolled. Single-user today, but every row has one.
@@ -289,6 +291,12 @@ export interface ProjectManifest {
   source?: ProjectSource;
   /** The dev server the hub supervises and proxies at `/preview/<slug>/`. Absent means none. */
   preview?: PreviewConfig;
+  /**
+   * How the project's latest finished manager turn ended. Not part of the stored manifest: the hub
+   * adds it to the entries of `HubState.projects`, from the transcript, so the sidebar can show a
+   * failed turn before the browser has loaded any turns for the project.
+   */
+  lastTurn?: { outcome: string; endedAt: number };
 }
 
 // --- imported repositories ------------------------------------------------------

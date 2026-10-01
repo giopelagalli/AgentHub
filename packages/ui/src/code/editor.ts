@@ -6,10 +6,10 @@ import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
 import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
-import { Compartment, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorState, RangeSetBuilder, type Extension } from '@codemirror/state';
 import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import {
-  EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers,
+  Decoration, EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers,
 } from '@codemirror/view';
 
 /**
@@ -55,6 +55,11 @@ export interface EditorHandle {
   text(): string;
   /** Scrolls a 1-based line into the middle and puts the cursor on it. */
   goToLine(line: number): void;
+  /**
+   * Tints lines `from`–`to` (1-based, inclusive) and scrolls them to the top, without taking focus —
+   * the tour's "these are the lines". Opening another file clears it.
+   */
+  markLines(from: number, to: number): void;
   destroy(): void;
 }
 
@@ -79,7 +84,10 @@ const chrome = EditorView.theme({
   '.cm-cursor': { borderLeftColor: 'var(--accent)' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: 'var(--accent-soft) !important' },
   '&.cm-focused': { outline: 'none' },
+  '.cm-marked': { backgroundColor: 'var(--accent-soft)' },
 });
+
+const MARKED_LINE = Decoration.line({ class: 'cm-marked' });
 
 const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
 
@@ -96,6 +104,7 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandl
   const language = new Compartment();
   const editable = new Compartment();
   const highlight = new Compartment();
+  const marked = new Compartment();
 
   const extensions = (): Extension[] => [
     lineNumbers(),
@@ -112,6 +121,7 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandl
     highlight.of(palette()),
     language.of([]),
     editable.of([]),
+    marked.of([]),
     EditorView.updateListener.of((update) => { if (update.docChanged) opts.onChange(); }),
   ];
 
@@ -141,6 +151,19 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandl
         effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
       });
       view.focus();
+    },
+    markLines: (from, to) => {
+      const doc = view.state.doc;
+      const first = Math.min(Math.max(1, from), doc.lines);
+      const last = Math.min(Math.max(first, to), doc.lines);
+      const lines = new RangeSetBuilder<Decoration>();
+      for (let n = first; n <= last; n++) lines.add(doc.line(n).from, doc.line(n).from, MARKED_LINE);
+      view.dispatch({
+        effects: [
+          marked.reconfigure(EditorView.decorations.of(lines.finish())),
+          EditorView.scrollIntoView(doc.line(first).from, { y: 'start', yMargin: 48 }),
+        ],
+      });
     },
     destroy: () => {
       darkQuery?.removeEventListener('change', onScheme);

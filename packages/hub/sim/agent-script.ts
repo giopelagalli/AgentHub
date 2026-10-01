@@ -30,11 +30,31 @@ export function simRespond(body: ChatBody): ScriptStep | undefined {
       : { content: 'Code map refreshed.' };
   }
   if (system.startsWith("You are the guide to this project's code")) {
+    if (user.startsWith("Explain this snippet for the project's code tour")) return { content: tourExplanation(user) };
     return { content: 'The timer is a pure state machine: `src/timer.mjs:2` builds the phase list once and `tick(now)` walks it from the start time, so tests pass a fake clock. No decision records why ticks are not counted; the PRD (Scalability) asks for wall-clock timing to avoid drift.' };
   }
   const sub = /^You are an? (coder|researcher|reviewer|browser-operator) subagent/.exec(system);
   if (sub) return subagentStep(sub[1]!, user, step);
   return undefined;
+}
+
+/** A tour step's explanation, in the shape the tour instruction asks for, about the lines it was sent. */
+function tourExplanation(user: string): string {
+  const ref = /`([^`]+):(\d+)` through line (\d+)/.exec(user);
+  const [path, from, to] = ref ? [ref[1]!, Number(ref[2]), Number(ref[3])] : ['src/index.mjs', 1, 1];
+  return [
+    '## What it does',
+    '',
+    `- \`${path}:${from}\` opens the block: it names the piece and says what it takes.`,
+    `- \`${path}:${Math.min(from + 1, to)}\` through line ${to} do the work, reading only what they were handed.`,
+    '',
+    '## Why it is like this',
+    '',
+    '- Taking its inputs as arguments keeps it testable with a fake clock; the PRD asks for wall-clock timing (Scalability).',
+    '- The exact layout of the lines: no recorded reason.',
+    '',
+    '_(simulated explanation — the real guide reads the file and the decision log first)_',
+  ].join('\n');
 }
 
 const titleOf = (text: string): string => /^title: (.+)$/m.exec(text)?.[1]?.trim() ?? 'Project';
@@ -60,7 +80,8 @@ function roadmapFor(prd: string) {
 }
 
 function codeMapFor(system: string): string {
-  return /pomodoro/i.test(titleOf(system))
+  // The map prompt's context opens `# Project` / `<title> (<slug>) — …`, not a `title:` line.
+  return /^Pomodoro CLI \(/m.test(system)
     ? POMODORO_CODE_MAP
     : `# Code map\n\n## Where it starts\n- \`README.md:1\` — what the project is.\n`;
 }

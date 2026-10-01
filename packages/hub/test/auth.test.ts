@@ -102,6 +102,7 @@ describe('auth policy', () => {
     expect(routeAccess('GET', '/api/nodes')).toBe('owner');
     // Draining and removing a node is the owner's call, not a daemon's.
     expect(routeAccess('POST', '/api/nodes/:name/drain')).toBe('owner');
+    expect(routeAccess('POST', '/api/nodes/:name/models')).toBe('owner');
     expect(routeAccess('DELETE', '/api/nodes/:name')).toBe('owner');
   });
 

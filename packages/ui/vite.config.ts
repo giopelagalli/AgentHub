@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 
-/** Where the dev server forwards the API; `HUB_URL` points it at a hub on another port. */
-const hub = process.env.HUB_URL ?? 'http://127.0.0.1:4000';
+// The hub the dev server proxies to: the owner's local hub by default, or whatever `AGENTHUB_HUB_URL`
+// names — `npm run sim:ui` points it at the simulation's hub.
+const hub = process.env.AGENTHUB_HUB_URL ?? 'http://127.0.0.1:4000';
 
 export default defineConfig({
   server: {

@@ -141,6 +141,9 @@ export function readOpenAiUsage(raw: unknown): TokenUsage | undefined {
   };
 }
 
+/** Every cloud provider a route may name. */
+export const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'fireworks'];
+
 /** The tier-specific slice of a project's policy, or undefined when it has none (i.e. `auto`). */
 export function routeFor(policy: ModelPolicy | undefined, tier: Tier): Route | undefined {
   if (!policy) return undefined;

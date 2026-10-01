@@ -210,6 +210,51 @@ The **Models** select on each project:
 The Cluster page shows every node's tiers and live stream counts, so you can see where a turn is
 actually running.
 
+## Harnesses
+
+A *harness* is the program that actually does an employee's task. The model decides what to do;
+the harness is what reads files, edits them and runs commands.
+
+- **Built-in loop** — the hub's own. Nothing to install, tools scoped to the project workspace,
+  and the only runtime the manager and the milestone reviewer ever use. This is the default.
+- **pi** — [pi.dev](https://pi.dev), an open-source coding agent. The hub runs it as a program in
+  the project's workspace and shows its work in the Activity feed exactly like a built-in run: the
+  same tool calls, the same report, the same "files written" line. pi never gets a provider key: it
+  calls models through the hub's own door (`/v1`), with a token made for that one run and revoked
+  when it ends, so it is served by the same models — and the same failover — as everything else.
+
+**Installing pi on the hub host.** The hub only offers a harness it can actually start, so pi has
+to be on the hub machine's `PATH` — installing it in your laptop's terminal does nothing. On the
+Spark:
+
+```
+npm install -g @mariozechner/pi-coding-agent
+pi --version
+```
+
+Then restart nothing: the hub checks for it per request. (The installer will do this step for you
+once harnesses are part of it; for now it is one command.)
+
+**Choosing it.** Open an employee's drawer — click their card in the org chart — and use the
+**Harness** select under Model. The field only appears when there is more than one harness to pick
+from, and **Built-in loop (project default)** puts them back on whatever the project uses. Nothing
+else changes: their model override, their standing instructions and their history all stay.
+
+**What to know before you switch someone:**
+
+- pi runs commands in the workspace with the hub's own permissions, and unlike the built-in tools
+  it does not check the paths it is given — a task that asks it to touch something outside the
+  project can. Give pi to employees doing ordinary workspace work, not to one following
+  instructions from somewhere you don't control.
+- The reviewer always runs on the built-in loop, whatever you set. It judges a milestone with
+  read-only tools, and that guarantee is worth more than the choice.
+- Spend on a pi run lands on the usage page under its project, like any other employee's, and
+  counts toward the daily cloud cap. While a run is live its token shows in the API tokens list;
+  it disappears when the run ends (or, after a crash, when the hub next starts).
+- If pi isn't installed, or the hub's door isn't reachable yet, the employee runs on the built-in
+  loop instead and the run's session events say why — the work still gets done. pi's own error
+  output lands in the same place.
+
 ## Nodes
 
 **Cluster** lists nodes with status, the model per tier, active streams, and the job queue.
@@ -296,6 +341,8 @@ curl https://rosenroot.com/v1/chat/completions \
 Both are *tiers*, not models: the hub picks the node, exactly as it does for a project's turns,
 and the response's `model` field says what actually served it. A concrete model id that is
 serving right now also works — a cloud id routes to that provider, a local id stays local.
+A tier name also takes a route suffix: `agenthub/worker@local` (local only — a 503 rather than a
+cloud bill when nothing local is serving), `@cloud`, or a provider such as `@fireworks`.
 
 Streaming and non-streaming both work, as do `tools` and `tool_calls`; ask for
 `stream_options: {"include_usage": true}` and the last chunk carries the token counts. Fields the
@@ -495,6 +542,36 @@ The page polls the hub itself and reloads on its own once it is back.
 The droplet also runs its own watchdog, independent of JD (which lives on the Spark and so is
 silent for exactly the outage you'd want to hear about): every minute it checks the hub and sends
 a Telegram message on the down/up transition only. Setup is `deploy/do/README.md` §8.
+
+## Developing (the simulation)
+
+To see or change the UI without the Spark, a login or any keys, run a whole AgentHub locally from
+any checkout or worktree:
+
+```sh
+npm run sim       # hub on http://127.0.0.1:4100 (serves packages/ui/dist if it is built)
+npm run sim:ui    # the same, plus the Vite dev server on http://localhost:5180 — open this one
+```
+
+The password is **`sim`**. The hub runs with auth on, scheduled turns off and no cloud tier; every
+model is a scripted mock that answers as the manager, the employees, the PRD and roadmap leads and
+the chats, with a small delay per token so a turn visibly streams. *Run turn* on `pomodoro-cli`
+delegates the next milestone to Ada, runs the real tests, has Vex review it, and publishes a
+briefing — and the mock is priced like Fireworks GLM, so costs show in dollars.
+
+What is seeded, so every empty, partial and full state is on screen:
+
+- **pomodoro-cli** — full PRD, 9 milestones with m1–m3 done and verified, two past turns with
+  briefings and costs, five docs pages and a code map, a workspace (Code and Terminal have files),
+  and a preview (a tiny static dashboard; press Start in Preview).
+- **habit-tracker** — PRD drafted and roadmap generated, nothing built.
+- **scratch** — just created; the PRD is the scaffold.
+- **Nodes** — `sim-spark` online, serving the mock; `sim-pc` goes offline about 15 s after start.
+
+Flags: `--port` (4100), `--ui-port` (5180), `--data <dir>` to keep the data between runs (seeded
+only when empty), `--reset` to wipe it, `--token-delay <ms>` (30). Without `--data` the data lives
+in a temp directory that is removed on exit. Ctrl-C stops everything. In the Browser pane, the
+`sim` and `sim-ui` entries in `.claude/launch.json` start the same two commands.
 
 ## Troubleshooting
 

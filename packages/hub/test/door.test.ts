@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { routeAccess } from '../src/auth.js';
-import { API_TOKEN_PREFIX, KIND_PRIORITY, type MintedApiToken, type TokenKind } from '../src/door.js';
+import { API_TOKEN_PREFIX, ApiTokens, KIND_PRIORITY, harnessTokenLabel, type MintedApiToken, type TokenKind } from '../src/door.js';
+import { ADMIN_USER } from '../src/enrollment.js';
 import { DEFAULT_FIREWORKS_WORKER_MODEL, FIREWORKS_API_KEY_ENV } from '../src/providers/fireworks.js';
 import { createHub, type Hub } from '../src/server.js';
 
@@ -132,6 +136,84 @@ describe('POST /v1/chat/completions', () => {
     expect(summary.bySubject).toEqual([{ subject: 'door:pi', usd: 0, tokens: expect.any(Number) }]);
     const row = hub.db.prepare('SELECT kind, member_id, session_id, subject FROM usage').get() as Record<string, unknown>;
     expect(row).toEqual({ kind: 'door', member_id: null, session_id: null, subject: 'door:pi' });
+  });
+
+  it("books a pi run token's spend to its project and member, and no other token's", async () => {
+    const { hub, base } = await harness();
+    // Minted the way a pi run mints them: the owner's route refuses the reserved prefix.
+    const tokens = new ApiTokens(hub.db);
+    const run = tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel('demo', 'coder-1'));
+    // A run with no roster member names none.
+    const unattributed = tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel('demo', undefined));
+    // Only an `agent` token is a pi run's; an assistant token that happens to look like one is not.
+    const lookalike = tokens.mint(ADMIN_USER, 'assistant', 'pi:demo/coder-2');
+    for (const token of [run, unattributed, lookalike]) {
+      expect((await completions(base, token.token, { model: 'agenthub/worker', messages: hello })).status).toBe(200);
+    }
+
+    const rows = hub.db.prepare('SELECT kind, member_id, subject FROM usage ORDER BY id').all();
+    expect(rows).toEqual([
+      { kind: 'door', member_id: 'coder-1', subject: 'demo' },
+      { kind: 'door', member_id: null, subject: 'demo' },
+      { kind: 'door', member_id: null, subject: 'door:pi:demo/coder-2' },
+    ]);
+    // Which is what the project's own cost reads.
+    expect(hub.usage.summary({ since: 0, subject: 'demo' }).bySubject).toEqual([
+      { subject: 'demo', usd: 0, tokens: expect.any(Number) },
+    ]);
+  });
+
+  it('reserves the pi: label prefix for harness runs', async () => {
+    const { hub } = await harness();
+    const res = await hub.app.inject({ method: 'POST', url: '/api/tokens', payload: { kind: 'agent', label: 'pi:demo/coder-1' } });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: string }).error).toContain('reserved');
+  });
+
+  it('revokes pi run tokens a crashed hub left live, and only those, at startup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agenthub-door-'));
+    try {
+      const dbPath = join(dir, 'hub.db');
+      const first = createHub({ dbPath });
+      const leftover = new ApiTokens(first.db).mint(ADMIN_USER, 'agent', harnessTokenLabel('demo', 'coder-1'));
+      const kept = await mint(first, 'agent', 'jd');
+      await first.stop();
+
+      const second = createHub({ dbPath });
+      hubs.push(second);
+      const live = (await second.app.inject({ method: 'GET', url: '/api/tokens' })).json() as { tokens: { id: number }[] };
+      expect(live.tokens.map((t) => t.id)).toEqual([kept.id]);
+      expect(new ApiTokens(second.db).verify(leftover.token)).toBeNull();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes a tier name by its suffix: @local, @cloud, @<provider>', async () => {
+    const { hub, base } = await harness();
+    const token = await mint(hub, 'agent', 'jd');
+    const served = async (model: string): Promise<string> => {
+      const res = await completions(base, token.token, { model, messages: hello });
+      expect(res.status).toBe(200);
+      return (await res.json() as any).model;
+    };
+    expect(await served('agenthub/worker@local')).toBe('local-worker');
+    expect(await served('agenthub/worker@cloud')).toBe(FIREWORKS_MODEL);
+    expect(await served('agenthub/worker@fireworks')).toBe(FIREWORKS_MODEL);
+    expect(await served('agenthub/orchestrator@local')).toBe('local-orchestrator');
+    // Suffixes are documented, not listed.
+    const listed = await (await fetch(`${base}/v1/models`, { headers: { authorization: `Bearer ${token.token}` } })).json() as any;
+    expect(listed.data.map((m: { id: string }) => m.id)).toEqual(['agenthub/orchestrator', 'agenthub/worker']);
+    // An unknown suffix names no model.
+    expect((await completions(base, token.token, { model: 'agenthub/worker@mars', messages: hello })).status).toBe(404);
+
+    // `@local` is local only: with nothing local serving, it is refused rather than billed to the cloud.
+    await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/drain', payload: { on: true } });
+    const rows = (): number => (hub.db.prepare('SELECT COUNT(*) AS n FROM usage').get() as { n: number }).n;
+    const before = rows();
+    const refused = await completions(base, token.token, { model: 'agenthub/worker@local', messages: hello });
+    expect(refused.status).toBe(503);
+    expect(rows()).toBe(before);
   });
 
   it('streams OpenAI chunks, with usage in the last one when asked for', async () => {

@@ -76,6 +76,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
   pi not offered where the sandbox cannot start. The reviewer on pi behind `HARNESS_REVIEWER_PI=1`.
 
+- Media against the ComfyUI mock (FR-E1–E3, 0060–0062): `image-gen` beside `video-gen`, Qwen-Image
+  and Wan 2.2 templates (placeholders), renders landing in the bundle's `media/` with a sidecar and
+  a commit, the media routes, `generate_image` / `generate_video` for designers, Docs → Media, and
+  a sim media node (pomodoro-cli has an app icon).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -92,6 +97,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
    pi (and `bubblewrap`) on a node.
 4. JD drives the hub; the web door (FR-C1–C5).
-5. Media on the 7900 XTX (FR-E1–E4).
+5. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
+   over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
 6. Browser pool (FR-D8).
 7. Accounts, grants, per-member JD, the public site (FR-F1–F6).

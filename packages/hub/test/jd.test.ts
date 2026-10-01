@@ -5,7 +5,7 @@ import { WebSocket } from 'ws';
 import type { JdMessage, JdStreamFrame } from '@agenthub/shared';
 import { chimeWav, createMockJd, JD_MOCK_KEYS, JD_MOCK_TRANSCRIPT, type MockJd } from '@agenthub/mocks/jd';
 import { routeAccess } from '../src/auth.js';
-import { byteRange, JD_MAX_BODY } from '../src/jd.js';
+import { audioType, byteRange, JD_MAX_BODY } from '../src/jd.js';
 import { optionsFromEnv } from '../src/options.js';
 import { createHub, type Hub } from '../src/server.js';
 
@@ -48,6 +48,11 @@ async function guarded(url: string, timeoutMs?: number): Promise<{ hub: Hub; coo
   return { hub, cookie: String(login.headers['set-cookie']).split(';')[0]! };
 }
 
+/**
+ * Sends a raw upgrade and answers with the status line. A 101 is closed by the helper; any refusal
+ * must be closed *by the server* — the helper never hangs up on one, and a refused socket left open
+ * fails the test instead of resolving.
+ */
 function handshake(port: number, path: string, headers: string[] = []): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
@@ -57,15 +62,26 @@ function handshake(port: number, path: string, headers: string[] = []): Promise<
       ].join('\r\n'));
     });
     let buf = '';
+    let status: string | null = null;
     socket.on('data', (chunk) => {
       buf += String(chunk);
       const end = buf.indexOf('\r\n');
-      if (end < 0) return;
-      socket.destroy();
-      resolve(buf.slice(0, end));
+      if (status !== null || end < 0) return;
+      status = buf.slice(0, end);
+      if (status.includes(' 101 ')) {
+        socket.destroy();
+        resolve(status);
+      }
+    });
+    socket.on('close', () => {
+      if (status === null) reject(new Error('closed before answering'));
+      else if (!status.includes(' 101 ')) resolve(status);
     });
     socket.on('error', reject);
-    socket.setTimeout(5000, () => { socket.destroy(); reject(new Error('handshake timed out')); });
+    socket.setTimeout(5000, () => {
+      socket.destroy();
+      reject(new Error(status ? `the server left a refused upgrade open (${status})` : 'handshake timed out'));
+    });
   });
 }
 
@@ -173,7 +189,8 @@ describe('the JD door: forwarding', () => {
     await hub.stop();
 
     hub = createHub({ jd: { url: 'http://127.0.0.1:9', token: JD_TOKEN } });
-    expect((await hub.app.inject({ method: 'GET', url: '/api/jd/status' })).json()).toEqual({ configured: false, reachable: false });
+    expect((await hub.app.inject({ method: 'GET', url: '/api/jd/status' })).json())
+      .toEqual({ configured: false, reachable: false, reason: 'no-password' });
   });
 
   it('is 502 when JD is not reachable, and reports it unreachable', async () => {
@@ -182,7 +199,7 @@ describe('the JD door: forwarding', () => {
     expect(res.statusCode).toBe(502);
     expect(res.json()).toEqual({ error: 'JD is not reachable' });
     expect((await hub.app.inject({ method: 'GET', url: '/api/jd/status', headers: { cookie } })).json())
-      .toEqual({ configured: true, reachable: false });
+      .toEqual({ configured: true, reachable: false, reason: 'unreachable' });
   });
 
   it('is 504 when JD takes longer than the timeout', async () => {
@@ -196,6 +213,27 @@ describe('the JD door: forwarding', () => {
     upstream.server.closeAllConnections();
   });
 
+  it('lets the hub stop at once while a request to JD is still waiting', async () => {
+    upstream = Fastify();
+    let asked!: () => void;
+    const reached = new Promise<void>((resolve) => { asked = resolve; });
+    upstream.post('/messages', () => { asked(); return new Promise(() => {}); });
+    await upstream.listen({ port: 0, host: '127.0.0.1' });
+    const door = (await guarded(`http://127.0.0.1:${portOf(upstream)}`)).hub;
+    await door.app.listen({ port: 0, host: '127.0.0.1' });
+    const cookie = await cookieFor(door);
+    const pending = fetch(`http://127.0.0.1:${portOf(door.app)}/api/jd/messages`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: '{"text":"hi"}',
+    }).then((r) => r.status, () => 'gone');
+    await reached;
+    const started = Date.now();
+    await door.stop();
+    hub = undefined;
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect([503, 'gone']).toContain(await pending);
+    upstream.server.closeAllConnections();
+  });
+
   it('never passes JD’s 401 on as the browser’s own 401', async () => {
     jd = createMockJd({ token: 'a-different-token', proactiveMs: 0 });
     await jd.listen({ port: 0, host: '127.0.0.1' });
@@ -203,6 +241,8 @@ describe('the JD door: forwarding', () => {
     const res = await hub.app.inject({ method: 'GET', url: '/api/jd/history', headers: { cookie } });
     expect(res.statusCode).toBe(502);
     expect(res.json().error).toMatch(/JD_WEB_TOKEN/);
+    expect((await hub.app.inject({ method: 'GET', url: '/api/jd/status', headers: { cookie } })).json())
+      .toEqual({ configured: true, reachable: false, reason: 'token' });
   });
 });
 
@@ -246,6 +286,26 @@ describe('the JD door: voice and audio', () => {
     expect(part.rawPayload.equals(wav.subarray(0, 2))).toBe(true);
 
     expect((await hub.app.inject({ method: 'GET', url: '/api/jd/audio/nope', headers: { cookie } })).statusCode).toBe(404);
+  });
+
+  it('marks every door answer nosniff, and never serves JD’s audio as anything but audio', async () => {
+    upstream = Fastify();
+    upstream.get('/audio/:id', async (_req, reply) => reply.type('text/html').send('<script>alert(1)</script>'));
+    upstream.get('/history', async (_req, reply) => reply.type('text/html').send('<b>not json</b>'));
+    upstream.get('/health', async () => ({ ok: true, name: 'JD' }));
+    await upstream.listen({ port: 0, host: '127.0.0.1' });
+    const { hub, cookie } = await guarded(`http://127.0.0.1:${portOf(upstream)}`);
+    const audio = await hub.app.inject({ method: 'GET', url: '/api/jd/audio/x', headers: { cookie } });
+    expect(audio.headers['content-type']).toBe('application/octet-stream');
+    expect(audio.headers['x-content-type-options']).toBe('nosniff');
+    for (const url of ['/api/jd/history', '/api/jd/status']) {
+      const res = await hub.app.inject({ method: 'GET', url, headers: { cookie } });
+      expect(res.headers['x-content-type-options'], url).toBe('nosniff');
+    }
+    expect(audioType('audio/mp4')).toBe('audio/mp4');
+    expect(audioType('audio/webm; codecs=opus')).toBe('audio/webm; codecs=opus');
+    expect(audioType('text/html')).toBe('application/octet-stream');
+    expect(audioType('application/octet-stream')).toBe('application/octet-stream');
   });
 
   it('reads byte ranges the way browsers write them', () => {
@@ -309,8 +369,22 @@ describe('the JD door: the stream', () => {
     const port = portOf(hub.app);
     expect(await handshake(port, '/api/jd/stream')).toContain('401');
     expect(await handshake(port, '/api/jd/stream', [`Authorization: Bearer ${DAEMON_TOKEN}`])).toContain('401');
+    const minted = await hub.app.inject({ method: 'POST', url: '/api/tokens', headers: { cookie }, payload: { kind: 'assistant', label: 'JD' } });
+    const apiToken = (minted.json() as { token: string }).token;
+    expect(await handshake(port, '/api/jd/stream', [`Authorization: Bearer ${apiToken}`])).toContain('401');
     expect(await handshake(port, '/api/jd/stream', [`Cookie: ${cookie}`, `Origin: http://127.0.0.1:${port + 10}`])).toContain('403');
     expect(await handshake(port, '/api/jd/stream', [`Cookie: ${cookie}`, `Origin: http://127.0.0.1:${port}`])).toContain('101');
+  });
+
+  it('refuses, or closes with a reason, a stream on a hub where JD is not configured', async () => {
+    hub = createHub({ auth: { password: PASSWORD, sessionSecret: 'test-secret' } });
+    await hub.app.listen({ port: 0, host: '127.0.0.1' });
+    const port = portOf(hub.app);
+    const cookie = await cookieFor(hub);
+    expect(await handshake(port, '/api/jd/stream')).toContain('401');
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/api/jd/stream`, { headers: { cookie } });
+    const reason = await new Promise<string>((resolve) => socket.once('close', (_code, why) => resolve(String(why))));
+    expect(reason).toBe('JD is not configured');
   });
 
   it('closes the browser’s socket with a reason when JD is not there', async () => {

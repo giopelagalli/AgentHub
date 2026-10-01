@@ -63,28 +63,48 @@ export function byteRange(header: string | undefined, size: number): { start: nu
   return start <= end && start < size ? { start, end } : null;
 }
 
-export const jdRoutes: FastifyPluginAsync<{ jd?: JdDoorOptions }> = async (app, { jd }) => {
+/** Only an audio type reaches the browser from `/audio/:id`; anything else is bytes to save, never a page. */
+export const audioType = (type: string): string => (/^audio\/[\w.+-]+/i.test(type) ? type : 'application/octet-stream');
+
+export interface JdRoutesOptions {
+  jd?: JdDoorOptions;
+  /** `JD_URL` is set but the hub has no password, so the door is shut: status says why. */
+  shutForNoPassword?: boolean;
+}
+
+export const jdRoutes: FastifyPluginAsync<JdRoutesOptions> = async (app, { jd, shutForNoPassword }) => {
+  // JD's answers are served on the hub's own origin, where the owner's session can run shells: the
+  // browser must never sniff one of them into a page.
+  app.addHook('onSend', async (_req, reply, payload) => {
+    reply.header('x-content-type-options', 'nosniff');
+    return payload;
+  });
+
+  // In-flight requests to JD end with the hub, not up to 120 s after it was asked to stop.
+  const closing = new AbortController();
+  app.addHook('preClose', async () => { closing.abort(); });
+  const deadline = (ms: number): AbortSignal => AbortSignal.any([closing.signal, AbortSignal.timeout(ms)]);
+
   app.get('/api/jd/status', async (): Promise<JdStatus> => {
-    if (!jd) return { configured: false, reachable: false };
+    if (!jd) return { configured: false, reachable: false, ...(shutForNoPassword ? { reason: 'no-password' as const } : {}) };
     try {
       const res = await fetch(`${jd.url}/health`, {
-        headers: { authorization: `Bearer ${jd.token}` }, signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+        headers: { authorization: `Bearer ${jd.token}` }, signal: deadline(HEALTH_TIMEOUT_MS),
       });
-      if (!res.ok) return { configured: true, reachable: false };
+      if (res.status === 401 || res.status === 403) return { configured: true, reachable: false, reason: 'token' };
+      if (!res.ok) return { configured: true, reachable: false, reason: 'unreachable' };
       const body = await res.json() as { name?: unknown };
       return { configured: true, reachable: true, ...(typeof body.name === 'string' && body.name ? { name: body.name } : {}) };
     } catch {
-      return { configured: true, reachable: false };
+      return { configured: true, reachable: false, reason: 'unreachable' };
     }
   });
 
   if (!jd) {
-    // The page asks for these too; say what is wrong instead of a bare 404.
-    // A stream upgrade here is hung up on by hand, as every refused upgrade is (see server.ts).
-    app.all('/api/jd/*', async (req, reply) => {
-      if (req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
-      return reply.code(503).send({ error: 'JD is not configured' });
-    });
+    // The page asks for these too; say what is wrong instead of a bare 404. The stream is a real
+    // websocket route even here, so an upgrade is answered and closed with the reason.
+    app.get(JD_STREAM_ROUTE, { websocket: true }, (socket: WebSocket) => { socket.close(1011, 'JD is not configured'); });
+    app.all('/api/jd/*', async (_req, reply) => reply.code(503).send({ error: 'JD is not configured' }));
     return;
   }
 
@@ -108,10 +128,14 @@ export const jdRoutes: FastifyPluginAsync<{ jd?: JdDoorOptions }> = async (app, 
         method: req.method,
         headers: { authorization: `Bearer ${jd.token}`, ...(body && type ? { 'content-type': type } : {}) },
         ...(body ? { body: new Uint8Array(body) } : {}),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: deadline(timeoutMs),
       });
       bytes = Buffer.from(await res.arrayBuffer());
     } catch (err) {
+      if (closing.signal.aborted) {
+        reply.code(503).send({ error: 'the hub is shutting down' });
+        return null;
+      }
       const timedOut = (err as Error).name === 'TimeoutError';
       reply.code(timedOut ? 504 : 502).send({ error: timedOut ? 'JD took too long to answer' : 'JD is not reachable' });
       return null;
@@ -141,7 +165,7 @@ export const jdRoutes: FastifyPluginAsync<{ jd?: JdDoorOptions }> = async (app, 
     const { id } = req.params as { id: string };
     const answer = await forward(req, reply, `/audio/${encodeURIComponent(id)}`);
     if (!answer) return reply;
-    reply.code(answer.status).type(answer.type);
+    reply.code(answer.status).type(audioType(answer.type));
     if (answer.status !== 200) return reply.send(answer.bytes);
     // A voice note never changes under its id, so the browser need not ask twice.
     reply.header('accept-ranges', 'bytes').header('cache-control', 'private, max-age=86400');

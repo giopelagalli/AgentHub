@@ -843,4 +843,10 @@ export interface JdStatus {
   configured: boolean;
   reachable: boolean;
   name?: string;
+  /**
+   * Why JD cannot be talked to, when it cannot: `no-password` — `JD_URL` is set but the hub has no
+   * `HUB_PASSWORD`, so the door stays shut; `token` — JD answered 401/403 to the hub's bearer;
+   * `unreachable` — JD did not answer at all.
+   */
+  reason?: 'no-password' | 'token' | 'unreachable';
 }

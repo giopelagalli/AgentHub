@@ -671,9 +671,8 @@ export function createHub(opts: HubOptions = {}): Hub {
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
       // half-dead and hold `app.close()` open forever. Only the websocket routes, so an ordinary
-      // request carrying an `Upgrade` header is not hung up on. (`/api/jd/*` is where JD's stream
-      // lands on a hub where JD is not configured.)
-      if ((route === '/ws' || route === TERMINAL_ROUTE || route === JD_STREAM_ROUTE || route === '/api/jd/*') && req.headers.upgrade) {
+      // request carrying an `Upgrade` header is not hung up on.
+      if ((route === '/ws' || route === TERMINAL_ROUTE || route === JD_STREAM_ROUTE) && req.headers.upgrade) {
         reply.raw.on('finish', () => reply.raw.socket?.end());
       }
       return reply.code(401).send({ error: 'unauthorized' });
@@ -771,7 +770,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // JD's door, likewise only behind a password: it speaks to JD as the owner. Its status route is
   // there either way, so the JD page can say what is missing.
   if (opts.jd && !auth) console.warn('[jd] JD_URL is set but HUB_PASSWORD is not; the JD door stays closed');
-  app.register(jdRoutes, auth && opts.jd ? { jd: opts.jd } : {});
+  app.register(jdRoutes, auth && opts.jd ? { jd: opts.jd } : { shutForNoPassword: !!opts.jd });
 
   /** The manifests, each with how its latest manager turn ended — one transcript query for all of them. */
   const listProjects = async (): Promise<ProjectManifest[]> => {

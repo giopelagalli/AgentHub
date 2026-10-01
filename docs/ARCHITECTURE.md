@@ -235,11 +235,12 @@ the request, and reports whether the page was actually rewritten. The guide it s
 persona in `chat.ts`, read-only by construction (0045).
 
 **`browser/`** — the browser pool (FR-D8, 0059). `lease.ts` is the `LeaseManager`: it reads the pool
-(every slot of every online browser node; a draining node's slots marked) through a provider, grants
-`(node, slot)` with a priority FIFO when full, one slot per project, and lets the owner preempt a
-named slot. `proxy.ts` forwards a live lease's actions to its node's browser server with
-`?slot=N`, records a frame per action under the lease, and casts a frame per held slot to the
-`browser` WS topic. `routes.ts` is the `/api/browser/*` plugin; `recorder.ts` the timelines. On the
+(every slot of every registered browser node; a draining or offline node's slots marked) through a
+provider, grants `(node, slot)` with a priority FIFO when full, one slot per project, lets the owner
+preempt a named slot, and owes a reset when a slot passes to a different project. `proxy.ts`
+forwards a live lease's actions to its node's browser server with `?slot=N` (resetting the slot
+first when owed), records a frame per action under the lease, and casts a frame per held slot to
+the `browser` WS topic. `routes.ts` is the `/api/browser/*` plugin; `recorder.ts` the timelines. On the
 daemon, `node-daemon/src/browser/` is one Playwright browser with a context per slot behind a small
 HTTP server.
 

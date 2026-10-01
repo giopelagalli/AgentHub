@@ -413,14 +413,17 @@ Publishing previews through the public site is a second Caddy site and a `previe
 A browser node (the Mac mini) runs one browser with several isolated sessions — *slots* — set by
 `browser.slots` in its daemon config (default 1, at most 8). Agents *lease* a slot for a task and
 release it. A project holds one slot at a time: its manager and employees share it, so several
-projects browse at once and nobody in a project waits for a colleague. When every slot is taken,
+projects browse at once and nobody in a project waits for a colleague. A slot that passes to a
+different project starts over in a fresh, empty session, so nothing of the last project carries
+over. When every slot is taken,
 requests wait in line (manager before employee) and get the next slot that frees up.
 
 **Machines → Browser** has a tile per slot: the node and slot number, who holds it and for how
 long, and a live thumbnail. A free slot stays quiet. **Watch** shows a slot large at the top;
 **Take control** takes that slot for you (its holder's next action fails, other slots carry on);
 **Release** gives a slot back. **Drain** on a browser node stops it handing out slots — current
-holders finish — and **Remove** takes its slots away. Pausing models doesn't affect the browser.
+holders finish — and **Remove** takes its slots away. A browser node that misses heartbeats keeps
+its holders' leases until they run out. Pausing models doesn't affect the browser.
 Recordings of each session are kept under the data root, one per lease.
 
 ## The terminal

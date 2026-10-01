@@ -36,9 +36,10 @@ export async function piBinary(): Promise<{ path: string; version: string } | nu
  * when it is installed *and* this host can sandbox it (decision 0055) — it never runs unconfined.
  * `claude-code` is declared but not implemented yet (FR-G3), so it is never offered.
  */
-export async function harnessStatus(): Promise<HarnessInfo[]> {
+export async function harnessStatus(doorBase?: string | null): Promise<HarnessInfo[]> {
   const pi = await piBinary();
-  const sandbox = pi ? await sandboxStatus() : undefined;
+  // Without a base (the hub is not listening yet) only the host is judged; a run checks the door again.
+  const sandbox = pi ? await sandboxStatus(doorBase ? { doorBase } : {}) : undefined;
   const refused = sandbox && !sandbox.available ? `pi cannot be sandboxed on this host: ${sandbox.reason}` : undefined;
   const info: Record<HarnessKind, HarnessInfo> = {
     builtin: { kind: 'builtin', available: true },

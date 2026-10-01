@@ -27,11 +27,12 @@ import type { SandboxOptions, SandboxStatus } from '../src/agents/harness/sandbo
  */
 const sandbox = vi.hoisted(() => ({
   status: { available: true } as SandboxStatus,
+  asked: [] as unknown[],
   wrapped: [] as SandboxOptions[],
 }));
 vi.mock('../src/agents/harness/sandbox.js', async (original) => ({
   ...(await original<typeof import('../src/agents/harness/sandbox.js')>()),
-  sandboxStatus: async () => sandbox.status,
+  sandboxStatus: async (query: unknown) => { sandbox.asked.push(query); return sandbox.status; },
   sandboxedCommand: (_platform: NodeJS.Platform, o: SandboxOptions) => {
     sandbox.wrapped.push(o);
     return { cmd: o.argv[0], args: o.argv.slice(1) };
@@ -131,6 +132,7 @@ beforeEach(async () => {
   process.env.FAKE_PI_LOG = logPath;
   process.env.FAKE_PI_MODE = 'report';
   sandbox.status = { available: true };
+  sandbox.asked = [];
   sandbox.wrapped = [];
 
   mock = createMockOpenAI();
@@ -198,7 +200,7 @@ describe('the pi harness', () => {
     expect(existsSync(join(bundle.workspace, 'src', 'app.js'))).toBe(true);
     // Through the sandbox, confined to the workspace and its own config dir, with only the door reachable.
     expect(sandbox.wrapped).toEqual([expect.objectContaining({
-      workspace: await realpath(bundle.workspace), doorPort: 4555, allowNetwork: false,
+      workspace: await realpath(bundle.workspace), door: { host: '127.0.0.1', port: 4555 }, writableWorkspace: true,
       tmpDir: expect.stringContaining('agenthub-pi-'), argv: expect.arrayContaining(['pi', '-p', '--mode', 'json']),
     })]);
     expect(events).toEqual([
@@ -371,7 +373,7 @@ describe('choosing a harness', () => {
     await runFor(member({ id: 'reviewer-1', role: 'reviewer', harness: 'pi' }), { role: 'reviewer', tools: [] });
     const { argv } = await invocation();
     expect(argv[argv.indexOf('--tools') + 1]).toBe('read,grep,find,ls');
-    expect(sandbox.wrapped).toHaveLength(1);
+    expect(sandbox.wrapped).toEqual([expect.objectContaining({ writableWorkspace: false })]);
   });
 
   it('refuses pi, saying why, when this host cannot sandbox it — pi never runs unconfined', async () => {
@@ -379,6 +381,8 @@ describe('choosing a harness', () => {
     const { logs } = await runFor(member());
     expect(existsSync(logPath)).toBe(false);
     expect(sandbox.wrapped).toEqual([]);
+    // Asked about this door: a hub bound off loopback (HUB_HOST) is refused here, before pi starts.
+    expect(sandbox.asked).toEqual([{ doorBase: DOOR_BASE }]);
     const why = 'pi cannot be sandboxed on this host: bubblewrap is not installed (sudo apt install bubblewrap)';
     expect(logs.join('\n')).toContain(why);
     expect(sessionEvents()).toContain(`${why}; running on the built-in loop`);

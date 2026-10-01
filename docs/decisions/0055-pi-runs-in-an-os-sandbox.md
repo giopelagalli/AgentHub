@@ -31,8 +31,14 @@ sandbox runtime use on macOS. A deny-default profile was run around `sh`, `node`
   mach service). Unix-socket connects are network-outbound too, so they are denied as well.
 - `setuid` binaries (`/bin/ps`) cannot be exec'd inside — irrelevant to a coding agent.
 - Nesting works: this verification itself ran inside another Seatbelt sandbox.
-- With `(allow network*)` plus `com.apple.dnssd.service`, DNS and outbound HTTPS work — that is
-  the `allowNetwork` profile.
+- Hiding a directory from reads: `(deny file-read* (subpath D))` also denies `lstat` of `D`, so a
+  workspace *inside* a hidden data root breaks `realpath` and node's `process.cwd()` (EPERM on
+  lstat of the ancestor). Denying `file-read-data file-read-xattr` instead leaves metadata (names
+  via `stat`, not via listing) and works. A more specific operation beats `file-read*` whatever
+  the order, so the re-allow for the bundle and workspace must name the same two operations; with
+  those, rules of the same operation follow "last match wins". Verified: a sibling project's file,
+  the hub's DB and a fake `~/.ssh/id` read as EPERM, `ls` of the projects dir fails, while the
+  workspace, its bundle and `git status` (whose `.git` is in the bundle) work.
 - End to end, the finished `sandboxedCommand` around the real pi 0.84.1 against a canned door:
   pi made both model calls through the door, its `bash` wrote inside the workspace, a write
   outside failed with `Operation not permitted`, and a `fetch('https://example.com')` failed. pi
@@ -77,18 +83,36 @@ macOS, profile shape:
 
 ## Decision
 `harness/sandbox.ts`:
-- `sandboxedCommand(platform, { workspace, tmpDir, doorPort, allowNetwork, argv })` returns the
-  wrapped `{ cmd, args }` (plus `doorSocket` on Linux, the path the hub must serve the bridge on),
-  or `{ unavailable }` on any other platform. Pure, so its argv is what the tests pin.
-- **Writable:** the workspace and the run's own temp dir (pi's config dir, also `TMPDIR` and
-  `npm_config_cache`) — nothing else, not `~/.npm`: a shared cache another process later trusts is
-  a way to plant something outside the workspace. **Readable:** everything, so node, npm and
-  toolchains work. **Network:** the door only (`allowNetwork: false`, which is what `pi.ts`
-  passes).
-- `sandboxStatus()` probes by running a real sandboxed command (the darwin profile; on Linux the
-  full `bwrap` line including the node bridge). If it fails, pi is **not offered**:
-  `GET /api/harnesses` reports `available: false` with the reason, and a run that asks for pi
-  falls back to `builtin` saying why — pi never runs unconfined.
+- `sandboxedCommand(platform, { workspace, tmpDir, door, writableWorkspace, hidden, readable,
+  argv })` returns the wrapped `{ cmd, args }` (plus `doorSocket` on Linux, the path the hub must
+  serve the bridge on), or `{ unavailable }` on any other platform or for a door off loopback.
+  Pure, so its argv is what the tests pin; `hiddenPaths(hostSecrets(), workspace)` supplies
+  `hidden` and `readable` from what exists on the host.
+- **Writable:** the workspace — not for the read-only tool policy (the reviewer), where it is
+  read-only too — and the run's own temp dir (pi's config dir, also `TMPDIR` and
+  `npm_config_cache`). Nothing else, not `~/.npm`: a shared cache another process later trusts is
+  a way to plant something outside the workspace.
+- **Readable:** everything, so node, npm and toolchains work, **except** the hub's own data root
+  (`DATA_ROOT`, else `./data` — the DB and every other project), `HUB_DB`/`PROJECTS_ROOT`/
+  `MEMORY_ROOT` when set apart from it, the repo's `configs/`, the GitHub App key
+  (`GITHUB_APP_PRIVATE_KEY`), and `~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.docker`.
+  The workspace and the temp dir are readable again inside them, and so is the workspace's bundle
+  when the workspace has no `.git` of its own (a project the hub created versions it there).
+  Rules go in path-depth order — an ancestor before what is inside it — so the same list means
+  the same thing as Seatbelt rules ("last match wins") and as bwrap mounts (`--tmpfs` over a
+  hidden directory, `--ro-bind /dev/null` over a hidden file, then the binds back).
+- **Network:** the door only. The door must be on loopback: Seatbelt can only name
+  `localhost:<port>`, and the Linux bridge listens on the namespace's loopback. A hub with a
+  wildcard bind already hands pi `http://127.0.0.1:<port>` (`selfBase` in `server.ts`); a hub bound
+  to one address (`HUB_HOST=100.x`, the documented control-node setup) is refused — detection and
+  selection both say `the hub's door is on 100.x, not loopback (HUB_HOST=100.x)`, and the run falls
+  back to `builtin`. A second loopback listener for that case is left for later.
+- `sandboxStatus({ doorBase })` refuses an off-loopback door without probing, then probes by
+  running a real sandboxed command (the darwin profile; on Linux the full `bwrap` line including
+  the hidden paths and the node bridge). A success is cached for the process; a failure is probed
+  again next time. If it fails, pi is **not offered**: `GET /api/harnesses` reports
+  `available: false` with the reason, and a run that asks for pi falls back to `builtin` saying
+  why — pi never runs unconfined.
 - `pi.ts` runs pi through it; the out-of-workspace write warning stays as a second line of defence.
 - The milestone reviewer may run on pi with `--tools read,grep,find,ls` behind
   `HARNESS_REVIEWER_PI=1`, **off by default**: the review task is written for the built-in
@@ -96,12 +120,16 @@ macOS, profile shape:
   run, and the Linux sandbox has not run on the Spark.
 
 ## Consequences
-- Inside the sandbox pi has no network but the door: `npm install` and `git fetch` fail. A
-  project's dependencies must already be installed in the workspace. `allowNetwork` exists in the
-  interface for a later per-project opt-in; nothing sets it yet.
-- Reads are not confined. A prompt-injected pi can read `~/.ssh` and write it into the workspace,
-  which an imported project's push would carry out. Hiding a list of credential directories is
-  the next tightening, and it is no worse than `builtin`'s `run_shell`, which is unconfined.
+- Inside the sandbox pi has no network but the door: `npm install` and fetching from a remote
+  fail. A project's dependencies must already be installed in the workspace. Lifting that (a
+  per-project opt-in) is a later decision; the interface has no switch for it yet.
+- Reads are confined by a deny list, not an allow list: anything secret outside the listed paths
+  (a token in a dotfile we did not name) is still readable and could be written into the
+  workspace, which an imported project's push carries out. On macOS hidden paths still show their
+  metadata (`stat` works; listing and reading do not).
+- **Remaining gap on Linux: unix sockets.** `/run` is a tmpfs, but a socket anywhere else on the
+  read-only root (one in the home directory, `/var/lib/…`) is still connectable — a read-only bind
+  does not stop `connect()`. Seatbelt denies them (they are network-outbound).
 - Linux hosts need `bubblewrap` (`sudo apt install bubblewrap`) and user namespaces that AppArmor
   allows; without either, pi is simply not offered there.
 - pi does not become the default here. The condition: both platforms verified on real hardware —

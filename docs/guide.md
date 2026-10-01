@@ -248,8 +248,10 @@ Then restart nothing: the hub checks for it per request. (The installer will do 
 once harnesses are part of it; for now it is one command.)
 
 **The sandbox.** pi only ever runs inside an OS sandbox, and the hub only offers pi on a host that
-can make one. Inside it pi can read the disk (so node, npm and your toolchains work) but write only
-the project's workspace and its own scratch directory, and its only network is the hub's door —
+can make one. Inside it pi can read the disk (so node, npm and your toolchains work) except the
+hub's data directory (its database and every other project), `configs/`, the GitHub App key and
+`~/.ssh`, `~/.aws`, `~/.config/gh`, `~/.gnupg`, `~/.docker`; it can write only the project's
+workspace and its own scratch directory; and its only network is the hub's door —
 no `npm install`, no fetching from a remote, nothing else on the internet or on your LAN. Install a
 project's dependencies before giving its work to pi.
 
@@ -257,6 +259,8 @@ project's dependencies before giving its work to pi.
 - **Linux** (the Spark): needs bubblewrap — `sudo apt install bubblewrap`. Ubuntu 24.04 and later
   may refuse it the user namespaces it needs through AppArmor; if so the Harness list says
   "pi cannot be sandboxed on this host" with bubblewrap's own error.
+- A hub bound to one address (`HUB_HOST=100.x…`) cannot run pi: the sandbox only reaches
+  loopback. Leave `HUB_HOST` unset (all interfaces) to use pi.
 
 **Choosing it.** Open an employee's drawer — click their face on the Overview — and use the
 **Harness** select under Model. The field only appears when there is more than one harness to pick
@@ -265,13 +269,13 @@ else changes: their model override, their standing instructions and their histor
 
 **What to know before you switch someone:**
 
-- The sandbox confines writes and the network, not reads: pi can read your home directory, and
-  could copy what it reads into the workspace, which an imported project's push carries out. Give
+- The sandbox hides a fixed list of secrets, not everything: anything else pi can read it could
+  copy into the workspace, which an imported project's push carries out. Give
   pi to employees doing ordinary workspace work, not to one following instructions from somewhere
   you don't control.
 - The reviewer runs on the built-in loop, whatever you set, unless the hub was started with
   `HARNESS_REVIEWER_PI=1`; then a reviewer set to pi runs on it with read-only tools
-  (`read,grep,find,ls`) inside the sandbox. It is off by default until it has been tried on the Spark.
+  (`read,grep,find,ls`) inside the sandbox, with the workspace read-only as well. It is off by default until it has been tried on the Spark.
 - Spend on a pi run lands on the usage page under its project, like any other employee's, and
   counts toward the daily cloud cap. While a run is live its token shows in the API tokens list;
   it disappears when the run ends (or, after a crash, when the hub next starts).

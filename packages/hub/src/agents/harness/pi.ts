@@ -12,7 +12,7 @@ import { piSubagentPrompt } from '../../projects/prompts.js';
 import { clip } from '../loop.js';
 import type { SessionOutcome, Transcript } from '../transcript.js';
 import type { Harness, HarnessContext, HarnessResult, HarnessTask, HarnessToolPolicy } from './index.js';
-import { sandboxedCommand, serveDoorSocket } from './sandbox.js';
+import { doorOf, hiddenPaths, hostSecrets, sandboxedCommand, serveDoorSocket } from './sandbox.js';
 
 /** Same caps the built-in loop puts on a live event: a glance, not the transcript. */
 const EVENT_TEXT_LIMIT = 300;
@@ -180,14 +180,17 @@ export function piHarness(deps: PiHarnessDeps): Harness {
           await writeFile(join(configDir, 'models.json'), modelsConfig(deps.door.base, model), 'utf8');
           // Resolved once, so a workspace behind a symlink (macOS's /var) still contains pi's paths.
           workspace = await realpath(task.workspace);
-          // pi only ever runs sandboxed (decision 0055): the workspace and its own config dir are the
-          // only places it may write, and the door the only address it may reach.
+          // pi only ever runs sandboxed (decision 0055): the workspace (unless the policy is read-only)
+          // and its own config dir are the only places it may write, the hub's secrets and other
+          // projects are unreadable, and the door is the only address it may reach.
+          const door = doorOf(deps.door.base);
           const wrapped = sandboxedCommand(process.platform, {
-            workspace, tmpDir: configDir, doorPort: doorPort(deps.door.base), allowNetwork: false,
+            workspace, tmpDir: configDir, door, writableWorkspace: task.tools === 'workspace',
+            ...hiddenPaths(hostSecrets(), workspace),
             argv: [deps.bin, ...piArgs(model, system, task)],
           });
           if ('unavailable' in wrapped) throw new Error(wrapped.unavailable);
-          if (wrapped.doorSocket) bridge = await serveDoorSocket(wrapped.doorSocket, doorPort(deps.door.base));
+          if (wrapped.doorSocket) bridge = await serveDoorSocket(wrapped.doorSocket, door);
           command = wrapped;
         } catch (err) {
           const why = `the pi harness could not start: ${(err as Error).message}`;
@@ -226,11 +229,6 @@ interface PiRun {
   lastTool?: string;
   /** A line for the session's event log when the run ended for a reason worth recording. */
   note?: string;
-}
-
-/** The door's port, from the base the hub is listening on (`http://127.0.0.1:<port>`). */
-function doorPort(base: string): number {
-  return Number(new URL(base).port || 80);
 }
 
 /** pi's own command line, after the binary. */

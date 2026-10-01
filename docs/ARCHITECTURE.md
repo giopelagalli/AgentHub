@@ -140,10 +140,11 @@ run start and revoked in `finally`, asking for a model that carries the run's ro
 `ProjectService` and the orchestrator; every reason a choice cannot be honoured falls back to
 `builtin` with the reason in the run's session events. `sandbox.ts` is the containment pi runs in
 (0055): `sandboxedCommand(platform, opts)` wraps an argv in `sandbox-exec` with a deny-default
-Seatbelt profile on macOS or in `bwrap` on Linux — reads everywhere, writes to the workspace and
-the run's temp dir only, network to the door only (on Linux through a per-run unix-socket bridge,
-`serveDoorSocket`, since the sandbox has its own loopback) — and `sandboxStatus()` probes it by
-running it. `detect.ts` is "is the CLI on PATH *and* can this host sandbox it", which `routes.ts`
+Seatbelt profile on macOS or in `bwrap` on Linux — reads everywhere but the hub's secrets and
+other projects (`hiddenPaths(hostSecrets(), workspace)`), writes to the workspace (unless the
+policy is read-only) and the run's temp dir only, network to a loopback door only (on Linux
+through a per-run unix-socket bridge, `serveDoorSocket`, since the sandbox has its own loopback) —
+and `sandboxStatus({ doorBase })` probes it by running it, caching a success. `detect.ts` is "is the CLI on PATH *and* can this host sandbox it", which `routes.ts`
 serves as `GET /api/harnesses` (with the reason when not); pi is never run unconfined. The reviewer
 stays on `builtin` (FR-G4) unless `HARNESS_REVIEWER_PI=1`, which runs it on pi with read-only tools.
 

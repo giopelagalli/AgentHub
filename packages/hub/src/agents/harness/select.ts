@@ -67,12 +67,12 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
   if (!opts.bundle) return builtin();
   const bin = await piBinary();
   if (!bin) return fallback('pi is not installed on this host');
-  const sandbox = await sandboxStatus();
-  if (!sandbox.available) return fallback(`pi cannot be sandboxed on this host: ${sandbox.reason}`);
   // pi reaches models only through the hub's own door (decision 0050): a provider key never enters
   // the subprocess, so without the door there is nothing pi may be pointed at.
   const base = opts.door?.base();
   if (!opts.door || !base) return fallback("the hub's door is not available to pi");
+  const sandbox = await sandboxStatus({ doorBase: base });
+  if (!sandbox.available) return fallback(`pi cannot be sandboxed on this host: ${sandbox.reason}`);
   return {
     harness: piHarness({
       bin: bin.path,

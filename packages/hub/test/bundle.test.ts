@@ -58,6 +58,31 @@ describe('ProjectBundle.create', () => {
   });
 });
 
+describe('ProjectBundle.commit', () => {
+  it('runs concurrent commits one after the other instead of racing for the index lock', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+    await mkdir(join(bundle.dir, 'media'), { recursive: true });
+    const commits: Promise<void>[] = [];
+    for (const name of ['a', 'b', 'c', 'd']) {
+      await writeFile(join(bundle.dir, 'media', `${name}.png`), name);
+      commits.push(bundle.commit(`media: ${name}`));
+    }
+    await Promise.all(commits); // any racing pair would reject on .git/index.lock
+    const git = simpleGit(bundle.dir);
+    expect((await git.status()).isClean()).toBe(true);
+    expect((await git.raw(['ls-files', 'media'])).trim().split('\n')).toEqual(['media/a.png', 'media/b.png', 'media/c.png', 'media/d.png']);
+  });
+
+  it('keeps committing after one commit fails', async () => {
+    const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });
+    await writeFile(join(bundle.dir, 'x.md'), 'x');
+    const broken = bundle.commit(''); // git refuses an empty message
+    await expect(broken).rejects.toThrow();
+    await expect(bundle.commit('chore: x')).resolves.toBeUndefined();
+    expect((await simpleGit(bundle.dir).log()).latest?.message).toBe('chore: x');
+  });
+});
+
 describe('ProjectBundle decisions', () => {
   it('appends decisions with a dated markdown header', async () => {
     const bundle = await ProjectBundle.create(root, { slug: 'demo', title: 'Demo', intent: 'demo' });

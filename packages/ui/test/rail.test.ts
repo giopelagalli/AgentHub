@@ -76,7 +76,7 @@ describe('placeOf', () => {
 describe('projectDot', () => {
   const state = (turns: TurnRecord[] = [], slug = 'acme-portal'): UiState => ({
     hub: null, busy: new Set(), projectBusy: new Set(), page: 'projects', project: slug, prdSeed: null,
-    connection: 'live', browserFrames: {}, turns: { [slug]: { state: 'ready', turns } },
+    connection: 'live', projectBrowser: false, browserFrames: {}, turns: { [slug]: { state: 'ready', turns } },
   });
   const turn = (overrides: Partial<TurnRecord>): TurnRecord => ({
     sessionId: 1, startedAt: 0, endedAt: 1, outcome: 'completed', summary: '', toolCalls: 0,

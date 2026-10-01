@@ -83,6 +83,18 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   stream-json mapped onto the turn feed, in the same sandbox with outbound HTTPS (verified end to
   end on macOS), usage as `anthropic-subscription` rows with no dollars, offered only when
   `claude auth status` shows a subscription login. macOS only; never for Local-only projects.
+- Each project's live browser (FR-B7, 0063): Code → Browser shows the project's slot of the pool
+  with Take control / Release, its place in the queue when every slot is busy, and a live dot on
+  the switch while it holds one.
+- Media against the ComfyUI mock (FR-E1–E3, 0060–0062): `image-gen` beside `video-gen`, Qwen-Image
+  and Wan 2.2 templates (placeholders), renders landing in the bundle's `media/` with a sidecar and
+  a commit, the media routes, `generate_image` / `generate_video` for designers, Docs → Media, and
+  a sim media node (pomodoro-cli has an app icon).
+
+- The assistant scope (FR-C1–C3 hub side, 0065–0067): an `assistant` token opens an allow-list
+  of project routes (create, draft, roadmap, turn, pause/resume, priority, state, briefings,
+  turns); non-streaming `?wait=1` draft/roadmap; turns carry `requestedBy`, `/turns?since=`, and
+  token writes are signed `(by <label>)` in commits. JD's side is next.
 
 ## In progress
 
@@ -93,12 +105,13 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-2. Workbench: a per-project live browser view on the Code tab (FR-B7), on the pool's slots.
-3. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
+2. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
    a project-level Harness select in the header, claude-code on Linux once its egress can be
-   narrowed to HTTPS (a proxy over a socket or a filtered namespace, 0064), and the installer putting pi (and `bubblewrap`) on a node.
-4. JD drives the hub; the web door (FR-C1–C5).
-5. Media on the 7900 XTX (FR-E1–E4).
-6. Accounts, grants, per-member JD, the public site (FR-F1–F6).
+   narrowed to HTTPS (a proxy over a socket or a filtered namespace, 0064), and the installer
+   putting pi (and `bubblewrap`) on a node.
+3. JD drives the hub — JD's tools against the assistant scope (plan Phase 1); the web door (FR-C4–C5).
+4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
+   over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
+5. Accounts, grants, per-member JD, the public site (FR-F1–F6).

@@ -138,9 +138,23 @@ describe('POST /api/video', () => {
     const stored = await uploadArtifact(h, job.id, CLIP);
     expect(stored.statusCode).toBe(200);
     const bundle = await h.projects.get('reel');
-    const path = join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+    // FR-E2: a project's render lands in the bundle's media/, not the workspace (decision 0060).
+    const path = join(bundle.dir, 'media', `video-${job.id}.mp4`);
     expect(stored.json().path).toBe(path);
     expect(await readFile(path)).toEqual(CLIP);
+  });
+
+  it('still finds a clip stored at the pre-0060 workspace path', async () => {
+    const { hub: h } = await setup();
+    await h.projects.create({ slug: 'reel', title: 'Reel', intent: 'clips' });
+    const bundle = await h.projects.get('reel');
+    // A fresh hub's first job is id 1; its clip predates 0060 and lives in the workspace.
+    const legacy = join(bundle.workspace, 'media', 'video', '1.mp4');
+    await mkdir(join(bundle.workspace, 'media', 'video'), { recursive: true });
+    await writeFile(legacy, CLIP);
+    const job = (await h.app.inject({ method: 'POST', url: '/api/video', payload: { ...PAYLOAD, project: 'reel' } })).json() as Job & { outputPath: string };
+    expect(job.id).toBe(1);
+    expect(job.outputPath).toBe(legacy);
   });
 
   it('refuses an empty artifact and one for a job that takes none', async () => {

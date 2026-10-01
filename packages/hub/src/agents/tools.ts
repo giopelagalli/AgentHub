@@ -5,13 +5,15 @@ import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/sha
 import { resolveWorkspace, runShellTask, secretsStripped, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
-import type { ProjectBundle } from '../projects/bundle.js';
+import { byline, type ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
 import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
+import { mediaTools } from './media-tools.js';
+import type { MediaDesk } from '../projects/media.js';
 import { HARNESS_WALL_CLOCK_MS, SUBAGENT_TOOL_CALLS } from './budgets.js';
 import type { HarnessDoor } from './harness/index.js';
 import { selectHarness } from './harness/select.js';
@@ -41,6 +43,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** The owning run's live event sink: a tool that runs a subagent or a verification reports through it. */
   onEvent?: (e: TurnEvent) => void;
+  /** The API token label that asked for the owning turn (0067), for the commits its tools make. */
+  requestedBy?: string;
 }
 
 export interface Tool {
@@ -600,7 +604,7 @@ export function bundleTools(): Tool[] {
         };
         validateBriefing(briefing);
         await bundle.publishBriefing(briefing as Briefing);
-        await bundle.commit('agent: publish briefing');
+        await bundle.commit(`agent: publish briefing${byline(ctx.requestedBy)}`);
         return 'briefing published';
       },
     },
@@ -792,7 +796,7 @@ function docSlug(args: unknown): string {
 
 // --- hub tools --------------------------------------------------------------
 
-const JOB_TYPES = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'] as const satisfies readonly JobType[];
+const JOB_TYPES = ['llm-session', 'image-gen', 'video-gen', 'shell-task', 'browser-lease'] as const satisfies readonly JobType[];
 const TIERS = ['orchestrator', 'worker', 'vision', 'video-gen'] as const satisfies readonly Tier[];
 const PRIORITIES = ['interactive', 'project', 'batch'] as const satisfies readonly Priority[];
 
@@ -933,7 +937,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
  * the files it wrote. Parallel fan-out is a later optimization; the caller's tool budget is what
  * bounds how many of these a turn can start.
  */
-export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDeps; external?: Tool[] }): Tool {
+export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDeps; external?: Tool[]; media?: MediaDesk }): Tool {
   return {
     def: {
       type: 'tool', name: 'spawn_subagent',
@@ -960,10 +964,12 @@ export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDe
       if (memberId && !member) return `error: unknown team member: ${memberId}`;
       const role = member?.role ?? wantedRole;
       if (role === 'browser-operator' && !deps.browser) return 'error: browser-operator is not available in this session';
-      // browser-operator additionally gets the shared browser toolset, and a researcher gets the
-      // configured external tools — every other role stays scoped to the workspace, as before.
+      // browser-operator additionally gets the shared browser toolset, a researcher gets the
+      // configured external tools, and a designer the media renders — every other role stays scoped
+      // to the workspace, as before.
       const extras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
         : role === 'researcher' ? (deps.external ?? [])
+        : role === 'designer' && deps.media ? mediaTools(deps.media)
         : [];
       const res = await runSubagent(deps, ctx, { role, member, task, extras });
       const text = res.text.trim();

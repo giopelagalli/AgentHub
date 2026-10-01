@@ -54,7 +54,7 @@ repository links of an imported project).
 - **Plan** — the PRD (*Requirements*) and the **Roadmap**, side by side under a small switch. Each
   has an **Ask the …** button that opens a chat beside the document with the agent that edits it
   ("move milestone 4 before 2", "add a section on backups"); it changes the document in place.
-- **Docs**, **Code** (*Files · Terminal · Preview*) and **Activity** — see their sections below.
+- **Docs**, **Code** (*Files · Terminal · Preview · Browser*) and **Activity** — see their sections below.
 
 **Settings** (from **⋯**) is a sheet grouped like macOS Settings: **Models**, **Schedule**,
 **Priority**, **Team** (add or remove employees) and **Pause**. Everything applies as you change it.
@@ -410,6 +410,47 @@ hub has no use for (`temperature`, `max_tokens`, …) are accepted and ignored. 
 door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the cloud-spend line
 in Machines → Nodes.
 
+### Driving projects with an assistant token
+
+An `assistant` token also opens a short, fixed list of the hub's own `/api` routes, so JD (or a
+script of yours) can start and steer projects the way you do from the UI (0065). Nothing else:
+tokens, nodes, enrollment, GitHub, the terminal, previews, code edits, media and the browser stay
+yours alone. An `agent` token gets **403** on these routes — agents never create projects or start
+turns. Bad tokens share the door's lockout (five tries per address, then 429).
+
+| Route | What it does |
+|---|---|
+| `GET /api/state` | the whole hub: nodes, jobs, projects with their last turn |
+| `GET /api/briefings` | every project's latest briefing |
+| `GET /api/projects` | every project's manifest |
+| `GET /api/projects/:slug/turns?since=<ms>` | recent turns; with `since`, only those that ended at or after it |
+| `POST /api/projects` | create — `{slug, title, intent, idea?, priority?}`; importing a repo (`source`) stays yours (403) |
+| `POST /api/projects/:slug/prd/draft?wait=1` | draft the PRD from the idea; `wait=1` answers JSON instead of a stream |
+| `POST /api/projects/:slug/roadmap/generate?wait=1` | turn the PRD into milestones, same `wait=1` |
+| `POST /api/projects/:slug/turn` | run one turn — `{instruction?}`; answers with the briefing when it lands |
+| `POST /api/projects/:slug/pause` / `resume` | stop / restart scheduling |
+| `POST /api/projects/:slug/priority` | `{priority: "interactive" \| "project" \| "batch"}` |
+
+Whatever a token does is signed with its label: commits say `(by JD)`, and a turn it started
+carries `"requestedBy": "JD"` in `/turns`, so it can tell its own turns from yours (0067).
+
+```sh
+H='Authorization: Bearer ah_…'; J='content-type: application/json'; HUB=http://<hub>:4000
+# create, then draft (a model run: give it minutes, not seconds)
+curl -sX POST $HUB/api/projects -H "$H" -H "$J" \
+  -d '{"slug":"tide-clock","title":"Tide clock","intent":"a tide clock for the harbour","idea":"…"}'
+curl -sX POST "$HUB/api/projects/tide-clock/prd/draft?wait=1" -H "$H" -H "$J" -d '{}'
+curl -sX POST "$HUB/api/projects/tide-clock/roadmap/generate?wait=1" -H "$H" -H "$J" -d '{}'
+# run a turn; hanging up does not stop it, so fire it and poll
+since=$(($(date +%s) * 1000))
+curl -sX POST $HUB/api/projects/tide-clock/turn -H "$H" -H "$J" -d '{"instruction":"start on m1"}' --max-time 5
+curl -s "$HUB/api/projects/tide-clock/turns?since=$since" -H "$H"   # → turns[0].summary when it lands
+```
+
+A hanging-up client does stop a `?wait=1` draft (as a closed stream does), but not a turn; the hub
+gives up on a `?wait=1` run itself after 10 minutes (504). On a
+hub started without a password (the dev sim) nothing is checked and nothing is signed.
+
 ## Preview (seeing the app)
 
 **Code → Preview** shows the project's own app running inside the page, plus **Start**, **Stop**, **Restart**,
@@ -446,6 +487,44 @@ on that port.
 
 Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
 `deploy/do/README.md` §8b.
+
+## Media
+
+**Docs → Media** shows the images and clips made for a project, each with the prompt and settings
+that made it, and a box to ask for another: pick **Image** or **Video**, a size (and a length for a
+clip), describe it, **Generate** (⌘↩). The job shows under the box while it waits and renders; the
+file lands in the project bundle as `media/image-<job>.png` / `media/video-<job>.mp4` beside a
+`.json` with the prompt, size, seed, machine and render time, and is committed. An employee with
+the **designer** role can do the same from a turn (`generate_image`, `generate_video`) — the
+manager asks a designer for an app icon, a hero image or a demo clip.
+
+"No machine can render images yet" means no registered node offers `image-gen`. Rendering runs on
+the PC (the 7900 XTX) through ComfyUI (decision 0018: Qwen-Image for stills, Wan 2.2 or LTX-2 for
+clips). What the PC needs:
+
+1. **ComfyUI on ROCm**, running locally (`http://127.0.0.1:8188`), with the models downloaded.
+2. **The by-hand test first**: render one image and one clip in ComfyUI's own web UI from the
+   models' example workflows, and tune them until they look right.
+3. **The templates**: `deploy/amd/comfy/qwen-image-t2i.json` and `wan22-t2v.json` are placeholders
+   (`TODO-verify` marks every guess). Export the tested workflows from ComfyUI (*Export (API)*)
+   over them and put the `{{prompt}}`-style placeholders back — `deploy/amd/comfy/README.md`.
+4. **The node config** — the daemon offers both job types and points at the templates:
+
+   ```yaml
+   jobTypes: [image-gen, video-gen]
+   video:
+     comfyUrl: http://127.0.0.1:8188
+     workflows:
+       image: /opt/agenthub/deploy/amd/comfy/qwen-image-t2i.json
+       video: /opt/agenthub/deploy/amd/comfy/wan22-t2v.json
+   ```
+
+   An older config with a single `video.workflow` keeps working for clips. Without
+   `workflows.image` the node does not offer `image-gen` at all, even if `jobTypes` lists it.
+
+One render at a time per machine: a still or a clip parks the machine's worker model while it runs
+and hands it back after (decision 0061). In the simulation, `sim-media` renders against a mock
+ComfyUI in a few seconds, and `pomodoro-cli` starts with an app icon.
 
 ## The browser pool (Machines → Browser)
 
@@ -541,6 +620,16 @@ A step's lines run from the linked line to the end of that block, judged by inde
 at 60 lines. The first time anyone opens a step the Guide writes its explanation (a few seconds of
 "reading this step…"); it is saved as a page under `docs/tour/` in the project and committed, so
 every later reader gets it instantly. Edit those lines and the next visit explains them afresh.
+
+**Browser.** **Code → Browser** is this project's slot of the browser pool (see *The browser pool*),
+live: the screencast large, the node and slot (*mini · 1*), and who in the project holds it and since
+when. **Take control** takes the slot over and **Release** gives it back — the same as on the
+Machines tile; a slot you take from a project, here or on Machines, still counts as that project's,
+so it stays on this page with *Held by you*. With no slot it says *No browser in use* — agents open
+one when a task needs the web; there is no button to open one yourself, since the hub only resets a
+slot into a project's own session for that project's agents. When every slot is busy and the project
+is waiting, it says its place in line. While the project holds a slot, *Browser* in the switch
+carries a small green dot.
 
 ## Chatting with the team
 
@@ -687,6 +776,7 @@ DATA_ROOT/
     team.yaml               employees
     decisions.log.md        the why
     docs/                   the team's pages (code-map.md is the Code screen's Map tab)
+    media/                  rendered images and clips, each with a .json of how it was made
     briefings/              one per turn
     workspace/              the code — its own git repo when the team inits one
   memory/                   the built-in assistant's notes

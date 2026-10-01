@@ -1,0 +1,223 @@
+/* Docs → Media (FR-E2): the prompt box, jobs in flight, and the asset grid. */
+
+.media-tab {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-6) var(--sp-7);
+}
+
+.media {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+/* The prompt box: one grouped surface, the primary action at its right edge. */
+.media__compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.media__prompt {
+  width: 100%;
+  min-height: 56px;
+  resize: vertical;
+  font-size: var(--fs-read);
+  background: var(--bg-raised);
+}
+
+.media__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.media__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+}
+
+.media__seconds {
+  width: auto;
+}
+
+.media__row .btn--primary {
+  margin-left: auto;
+}
+
+.media__blocked {
+  margin: 0;
+  font-size: var(--fs-ui);
+  color: var(--amber);
+}
+
+/* Jobs: a quiet list, a status dot each. */
+.media__jobs {
+  display: flex;
+  flex-direction: column;
+  border-top: 0.5px solid var(--sep);
+}
+
+.media__job {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+  border-bottom: 0.5px solid var(--sep);
+  font-size: var(--fs-ui);
+}
+
+.media__jobdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grey-dot);
+}
+
+.media__job--running .media__jobdot {
+  background: var(--green-dot);
+  animation: media-pulse 1.4s ease-in-out infinite;
+}
+
+.media__job--failed .media__jobdot {
+  background: var(--red-dot);
+}
+
+.media__jobprompt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label);
+}
+
+.media__jobstate {
+  color: var(--label-3);
+  text-align: right;
+}
+
+.media__job--failed .media__jobstate {
+  color: var(--red);
+}
+
+@keyframes media-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media__job--running .media__jobdot { animation: none; }
+}
+
+/* The grid: square-ish frames, the caption under each. */
+.media__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--sp-5) var(--sp-4);
+}
+
+.media__tile {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.media__frame {
+  aspect-ratio: 1;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--bg-sunk);
+  box-shadow: inset 0 0 0 0.5px var(--sep);
+}
+
+.media__open {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.media__thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--bg-sunk);
+}
+
+.media__tile--video .media__thumb {
+  object-fit: contain;
+  background: #000;
+}
+
+.media__caption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.media__caption p {
+  margin: 0;
+}
+
+.media__words {
+  font-size: var(--fs-ui);
+  color: var(--label);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.media__meta,
+.media__file {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.media__file {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The empty state: one sentence, under a quiet glyph. */
+.media__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-4);
+  color: var(--label-4);
+  text-align: center;
+}
+
+.media__emptyline {
+  margin: 0;
+  max-width: 44ch;
+  font-size: var(--fs-read);
+  color: var(--label-2);
+}
+
+@media (max-width: 700px) {
+  .media-tab {
+    padding: var(--sp-4) var(--sp-4) var(--sp-6);
+  }
+
+  .media__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--sp-4) var(--sp-3);
+  }
+}

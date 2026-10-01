@@ -71,6 +71,21 @@ one connector among several (web now, Discord and email after). The local Qwen d
   odds API key"). Blocked / node offline → immediate, once, via the existing proactive budget.
 - **Acceptance:** start a project from Telegram, watch it appear in the hub UI, get one message
   when its turn finishes, see it in the next briefing.
+- **What JD calls** (hub side done, 0065–0067; JD holds an `assistant` token as
+  `Authorization: Bearer ah_…` — the full list is the guide's "Driving projects with an assistant
+  token"):
+  - `project_new` → `POST /api/projects {slug, title, intent, idea}` then
+    `POST /api/projects/:slug/prd/draft?wait=1` (JSON `{full, questions, audit}`, minutes-long
+    timeout) and `POST /api/projects/:slug/roadmap/generate?wait=1`.
+  - `project_turn` → `POST /api/projects/:slug/turn {instruction?}`, fired with a short timeout
+    (the turn keeps running); note the time first.
+  - `project_pause` / `project_resume` → `POST /api/projects/:slug/pause` / `resume`;
+    `project_priority` → `POST /api/projects/:slug/priority {priority}`.
+  - Projects block → `GET /api/briefings` (and `GET /api/projects` for status/priority of projects
+    with no briefing yet); `/projects` buttons use the same.
+  - Reporting → poll `GET /api/projects/:slug/turns?since=<ms>` for each project with a turn in
+    flight; report each turn with `requestedBy` equal to JD's token label, once, using its
+    `summary` and `outcome`. Turns without `requestedBy` go to the morning/evening roll-up.
 
 ### Phase 2 — JD gets a web door (~3 days, me + one Caddy afternoon for you)
 

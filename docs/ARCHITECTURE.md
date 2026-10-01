@@ -35,18 +35,26 @@ and the mocks, and the hub already depends on both.
 (serving entries spawned or attached, 0005; shell jobs; a browser; a profile set; the hub itself
 on a control node), heartbeats, claims jobs, runs them. Retries registration at startup;
 exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN` (0016).
+`video-gen.ts` is its ComfyUI client for both media job types: fill a template's `{{…}}`
+placeholders, `/prompt`, poll `/history`, download from `/view`, upload to the hub. Templates come
+per job type from `video.workflows.{image,video}` (`workflowPaths`; the legacy single
+`video.workflow` still serves video; no image template configured means `image-gen` is not
+offered — `offeredJobTypes`), placeholders in `deploy/amd/comfy/` until exported from the
+real ComfyUI.
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework (redesign: 0048, 0053). A store fed by
 `/api/state` and the socket, and a window of three places: a navigation-only sidebar (`rail.ts`:
 projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
 (`toolbar.ts`: title, centred segmented control, actions). The **project page**
 (`pages/projects.ts`) holds five tabs — Overview (`pages/project/overview.ts`), Plan (the PRD and
-roadmap views), Docs, Code (Files · Terminal · Preview) and Activity — mounted into its body; a
+roadmap views), Docs (Pages · Media), Code (Files · Terminal · Preview · Browser) and Activity — mounted into its body; a
 document's chat opens in a pane beside it, a team member's drawer (`panels/chat.ts`) floats over
 it, and the project's levers live in a settings sheet (`pages/project/settings.ts`, controls in
 `pages/project/controls.ts`). **Machines** (`pages/machines.ts`) is Nodes, Browser, Queue and
 Access over the old `cluster`/`computer`/`allocation` mounts, which keep their page ids so the
-store and the browser subscription are unchanged. Styles are a token file (`styles/tokens.css`,
+store and the browser subscription are unchanged. The socket asks for the `browser` topic while
+the computer page or a project's Browser view (`views/browser.ts`, the project's slot; 0063) is on
+screen — `wantsCast` in the store — and the frames are dropped when neither is. Styles are a token file (`styles/tokens.css`,
 light and dark, `data-theme` override) and one stylesheet per area in `styles/`, over `app.css`
 — the component styles that predate the redesign, written against token aliases. Icons are an
 inline SVG set (`icons.ts`); the floating parts are shared: `menu.ts` (the `⋯` and status
@@ -71,7 +79,12 @@ the shell itself is tested in happy-dom (0052). `renderDocMarkdown` (callouts:
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. `sameOriginWrite` is
+`open`, `daemon`, `door`, `assistant` or `owner` by an explicit table; unknown routes deny.
+`assistant` is an allow-list of project routes (`ASSISTANT_ROUTES`: state, briefings, projects,
+turns, create, PRD draft, roadmap, turn, pause/resume, priority) that take the owner session or an
+`assistant`-kind user API token, verified in `server.ts`'s hook through the door's `TokenGate`; an
+`agent` token gets 403 there, and the token's label reaches the handlers as `requestedBy` (0065,
+0067). `sameOriginWrite` is
 the CSRF guard: a cookie-authenticated write must carry `Sec-Fetch-Site: same-origin` or the hub's
 own `Origin`, because the preview listener is a different port on the same *site* and a
 `SameSite=Lax` cookie would otherwise ride along (0040). Daemon routes declare the node they are
@@ -79,7 +92,8 @@ about so a node token cannot act for another node (0016). Login throttling per I
 
 **`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
 stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
-mints, `GET` lists, `DELETE` revokes. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
+mints, `GET` lists, `DELETE` revokes. `TokenGate` pairs the store with one bad-bearer lockout and is
+shared with the assistant scope (0065), so `/v1` and `/api` guesses count together. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
 `agenthub/worker`; each also takes a route suffix, `@local`/`@cloud`/`@<provider>`, 0050) and
 `POST /v1/chat/completions` turns the OpenAI wire shape into
 `ChatMessage[]`/`ToolDef[]`, hands it to the gateway, and turns the `ChatResult` back — streaming
@@ -231,6 +245,17 @@ piped with `stream.pipeline` and upgrades are spliced at the TCP level (0038). T
 plugin carries the owner's routes on the hub — `GET/PUT/DELETE /api/projects/:slug/preview`,
 `POST …/preview/start|stop|restart|rotate` — and answers with the preview's absolute URL. The
 manager sets a project's preview with the `set_preview` tool.
+
+**`projects/media.ts`** + **`projects/media-routes.ts`** — project media (FR-E1–E3, 0060–0062).
+`landMedia` turns a media job's uploaded bytes into `media/<kind>-<jobId>.<ext>` plus a sidecar
+`.json` (prompt, params, job, node, duration) in the bundle root and commits; the artifact route
+calls it for any `image-gen` / `video-gen` job whose project is a bundle (others keep the
+memory-root path). `MediaDesk` is the one place a `MediaRequest` becomes a queued job — validation,
+a hub-picked seed, a refusal when no registered node offers the kind — used by the owner's routes
+(`GET/POST /api/projects/:slug/media`, `GET …/media/:file` served only from inside `media/`, real
+path checked) and by `agents/media-tools.ts`, the `generate_image` / `generate_video` tools a
+`designer` employee gets through `spawn_subagent`; they wait for the file, bounded by the turn's
+signal. Both media job types take the node's one GPU slot (`isMediaJob`, 0061).
 
 **`projects/code.ts`** — the Code screen's hub half (FR-B3–B5), registered into the server with one
 line. Five owner-only routes under `/api/projects/:slug/code`: the tree (the workspace as one flat

@@ -8,11 +8,11 @@ import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
-import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
+import { isMediaJob, MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
-import { ApiTokens, door, openAiError } from './door.js';
+import { ApiTokens, TokenGate, door, openAiError, type ApiTokenView } from './door.js';
 import {
   ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
 } from './enrollment.js';
@@ -37,6 +37,8 @@ import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { previewRoutes } from './projects/preview.js';
+import { findMediaByJob, landMedia, MEDIA_DIR, MediaDesk, mediaFileFor } from './projects/media.js';
+import { mediaRoutes } from './projects/media-routes.js';
 import { codeRoutes } from './projects/code.js';
 import { tourRoutes } from './projects/tour.js';
 import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
@@ -87,7 +89,7 @@ export interface Hub {
 }
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
-const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
+const JOB_TYPES: JobType[] = ['llm-session', 'image-gen', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PREFERENCES: ModelPolicy['prefer'][] = ['local', 'cloud', 'auto'];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
@@ -110,6 +112,8 @@ const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
 const TEAM_LAST_MESSAGE_LIMIT = 200;
 /** How many past orchestrator turns `/turns` replays. */
 const TURNS_LIMIT = 20;
+/** The hub's own bound on a `?wait=1` PRD draft or roadmap run (0066). */
+const WAIT_PLAN_TIMEOUT_MS = 10 * 60_000;
 /** The trailing window the cloud spend cap — and every "today" cost the UI shows — is measured over. */
 export const CLOUD_SPEND_WINDOW_MS = 24 * 60 * 60_000;
 /** What a project's auto-run starts as when the owner enables it without saying more. */
@@ -459,9 +463,11 @@ export function createHub(opts: HubOptions = {}): Hub {
   // No pi run survives a restart, so a live run token now is one a crash left behind.
   const leftover = harnessTokens.revokeHarnessTokens();
   if (leftover) console.warn(`[harness] revoked ${leftover} pi run token(s) left live by an earlier hub`);
+  // FR-E2/E3 — the owner's media route and the designer's tools queue renders through one desk.
+  const media = new MediaDesk({ queue, registry, onChange: () => broadcastState() });
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
-    loop, gateway, queue, registry, transcript, github, leases, browser, external: projectExternal,
+    loop, gateway, queue, registry, transcript, github, leases, browser, media, external: projectExternal,
     door: { base: selfBase, tokens: harnessTokens },
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
@@ -492,7 +498,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // registration or heartbeat.
   resources.restore((jobId) => {
     const job = queue.get(jobId);
-    return job?.type === 'video-gen' && job.status === 'running';
+    return !!job && isMediaJob(job.type) && job.status === 'running';
   });
   // Only a hub told where its data root is can hand it over; without the option the switch routes
   // answer 501 and nothing else in the hub changes.
@@ -535,7 +541,7 @@ export function createHub(opts: HubOptions = {}): Hub {
         ...(opts.controlNode.rsync ? { rsyncCmd: opts.controlNode.rsync } : {}),
         // A clip in flight lives on a node's GPU and lands as an artifact on *this* hub's disk; a
         // switch mid-render would lose it, so the switch waits rather than racing the job.
-        videoRunning: () => queue.list().some((j) => j.type === 'video-gen' && j.status === 'running'),
+        videoRunning: () => queue.list().some((j) => isMediaJob(j.type) && j.status === 'running'),
       })
     : null;
   // `trustProxy` off by default: `X-Forwarded-*` is attacker-controlled unless a proxy this hub
@@ -556,6 +562,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   // it gets the same per-client lockout, on its own counter: a machine fumbling its token must not
   // lock the owner out of the UI, or the reverse.
   const enrollThrottle = new LoginThrottle(opts.auth?.now);
+  // User API tokens and their lockout, shared by the door (`/v1/*`) and the assistant scope (0065).
+  const tokenGate = new TokenGate(db, opts.auth?.now);
+  /**
+   * The assistant token an allow-listed `/api/*` request was let in on — set by the auth hook, read
+   * by the handlers that record who asked for a write. Absent for the owner's session (and on a hub
+   * without auth, where nothing is checked at all).
+   */
+  const assistantFor = new WeakMap<FastifyRequest, ApiTokenView>();
+  const requestedBy = (req: FastifyRequest): string | undefined => assistantFor.get(req)?.label;
 
   /** The node a `Bearer` names, when it is a per-node token rather than the shared daemon one. */
   const nodeByBearer = (authorization: string | undefined): NodeInfo | null => {
@@ -619,6 +634,24 @@ export function createHub(opts: HubOptions = {}): Hub {
           return reply.code(403).send({ error: 'cross-origin request refused' });
         }
         return;
+      }
+      if (access === 'assistant') {
+        // Only a `Bearer` is a token attempt. No header (the UI after its session lapsed) or another
+        // scheme (the edge's basic auth rides every same-origin request) is not a guess: a plain
+        // 401, never counted, or it would run up the token lockout for the owner's own address.
+        if (req.headers.authorization?.startsWith('Bearer ')) {
+          const verdict = tokenGate.check(req.ip, req.headers.authorization);
+          if ('status' in verdict) {
+            return reply.code(verdict.status).send({ error: verdict.status === 429 ? 'too many bad tokens; try again later' : 'invalid api token' });
+          }
+          // An agent token is a model client (a pi run, a harness): it may call models through the
+          // door but must never create projects or start turns.
+          if (verdict.token.kind !== 'assistant') {
+            return reply.code(403).send({ error: `a ${verdict.token.kind} token cannot drive projects` });
+          }
+          assistantFor.set(req, verdict.token);
+          return;
+        }
       }
       if (access === 'daemon') {
         // The shared DAEMON_TOKEN stays the admin's break-glass: it speaks for every node, and for
@@ -715,7 +748,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   const busyAgents = new Set<number>();
   // Frames are only produced while somebody is watching the screening room, so the browser node is
   // left alone until the first `subscribe` and stops being polled after the last unsubscribe/close.
-  app.register(door, { db, gateway, registry, usage, ...(opts.auth?.now ? { now: opts.auth.now } : {}) });
+  app.register(door, { gate: tokenGate, gateway, registry, usage, ...(opts.auth?.now ? { now: opts.auth.now } : {}) });
 
   const { broadcastState, broadcast, broadcastTo } = registerWs(app, getState, () => [...busyAgents], {
     onTopicCount: (topic, count) => {
@@ -773,6 +806,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // FR-B1 — the preview: the owner's config and lifecycle routes here, and the separate listener
   // that serves the app itself on its own origin (0040).
   void app.register(previewRoutes, { projects, refresh: refreshProjects, ...(opts.preview ? { listen: opts.preview } : {}) });
+  void app.register(mediaRoutes, { projects, media });
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
   // hangs off it; briefings pass straight through to the service's own listeners, and a settled job
@@ -792,19 +826,26 @@ export function createHub(opts: HubOptions = {}): Hub {
     onCloudCapReached: (cb) => { cloudCapListeners.push(cb); },
   };
 
+  /** The bundle a media job lands in (FR-E2), or null when it names none or one that isn't a bundle (`_telegram`). */
+  const mediaBundle = async (job: Job): Promise<ProjectBundle | null> =>
+    job.project ? projects.get(job.project).catch(() => null) : null;
+
   /**
-   * Where a finished clip is stored (plan Global Constraints): `workspace/media/video/<jobId>.mp4`
-   * in the requesting project's bundle, or `media/` under the memory root when the job names no
-   * project — or names one that isn't a bundle, which is what `/video`'s `_telegram` does.
+   * Where a finished render is stored: the requesting project's `media/<id>.<ext>` (where
+   * `landMedia` put it, or will), or `media/<jobId>.<ext>` under the memory root when the job names
+   * no project bundle — which is what `/video`'s `_telegram` does.
    */
   const videoArtifactPath = async (job: Job): Promise<string> => {
-    if (job.project) {
-      try {
-        const bundle = await projects.get(job.project);
-        return join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
-      } catch { /* not a project bundle; fall through to the memory root */ }
+    const bundle = await mediaBundle(job);
+    if (bundle) {
+      const landed = await findMediaByJob(bundle.dir, job.id);
+      if (landed) return join(bundle.dir, MEDIA_DIR, landed.file);
+      // A clip stored before 0060 sits where the Global Constraints used to put it.
+      const legacy = join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+      if (job.type === 'video-gen' && existsSync(legacy)) return legacy;
+      return join(bundle.dir, MEDIA_DIR, mediaFileFor(job));
     }
-    return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', `${job.id}.mp4`);
+    return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', mediaFileFor(job, String(job.id)));
   };
 
   /** What the Telegram alert needs to decide between sending the clip and just naming its path. */
@@ -833,7 +874,7 @@ export function createHub(opts: HubOptions = {}): Hub {
    * leave `running` by: the two report routes and the offline sweep.
    */
   const releaseVideoSlot = (job: Job | null, nodeName: string): void => {
-    if (!job || job.type !== 'video-gen') return;
+    if (!job || !isMediaJob(job.type)) return;
     void resources.release(nodeName, job.id)
       .catch((err) => app.log.error(`releasing the video slot on ${nodeName} failed: ${(err as Error).message}`));
   };
@@ -1237,13 +1278,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     // Only a node with a local ComfyUI, and only one video job at a time on it: a claim is what
     // triggers the exclusivity swap, so swapping a node that cannot render would park its serving
     // for nothing, and claiming a second clip while the first runs would only cost the job an
-    // attempt before being handed straight back.
+    // attempt before being handed straight back. Stills share the slot: both load a diffusion model
+    // into the same VRAM the worker model is using (decision 0061).
     const takesVideo = info.video && !resources.busy(info.name) && !resources.cooling(info.name);
-    const claimable = takesVideo ? types : types.filter((t) => t !== 'video-gen');
+    const claimable = takesVideo ? types : types.filter((t) => !isMediaJob(t));
     if (!claimable.length) return reply.code(204).send();
     const job = queue.claim(claimable, info.id);
     if (!job) return reply.code(204).send();
-    if (job.type === 'video-gen') {
+    if (isMediaJob(job.type)) {
       // The swap happens before the job is handed over (PRD §4.3): worker serving is parked and
       // drained, then the daemon switches to its video profile. If that fails the job goes back on
       // the queue rather than running against a GPU that is still serving.
@@ -1322,7 +1364,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const id = Number((req.params as { id: string }).id);
     const job = queue.get(id);
     if (!job) return reply.code(404).send({ error: 'unknown job' });
-    if (job.type !== 'video-gen') return reply.code(400).send({ error: 'job type has no artifact' });
+    if (!isMediaJob(job.type)) return reply.code(400).send({ error: 'job type has no artifact' });
     // Only the node the job is running on may write its clip, and only while it is still the runner
     // of record: a late upload from a node whose job was requeued elsewhere would otherwise
     // overwrite the real runner's output.
@@ -1336,6 +1378,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.length === 0) return reply.code(400).send({ error: 'empty artifact' });
+    // A project's render becomes part of the project: file, sidecar and a commit (FR-E2).
+    const bundle = await mediaBundle(job);
+    if (bundle) {
+      const asset = await landMedia(bundle, job, body, uploader.name);
+      const landed = join(bundle.dir, MEDIA_DIR, asset.file);
+      jobLogs.append(id, `[hub] stored ${body.length} bytes at ${landed}`);
+      return { path: landed, bytes: body.length };
+    }
     const path = await videoArtifactPath(job);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, body);
@@ -1520,6 +1570,10 @@ export function createHub(opts: HubOptions = {}): Hub {
       }
       source = { ref, ...(typeof branch === 'string' && branch ? { branch } : {}) };
     }
+    // Importing clones a repository with the hub's GitHub credentials — the owner's call, not a token's.
+    if (body.source !== undefined && requestedBy(req)) {
+      return reply.code(403).send({ error: 'importing a repository is the owner\'s' });
+    }
     const duplicate = await projects.get(body.slug).then(() => true, () => false);
     if (duplicate) return reply.code(409).send({ error: 'project already exists' });
     // The idea (or a pasted PRD) is kept on the manifest and drafted from afterwards, by an explicit
@@ -1533,6 +1587,7 @@ export function createHub(opts: HubOptions = {}): Hub {
         ...(body.priority ? { priority: body.priority } : {}),
         ...(Object.keys(intake).length ? { intake } : {}),
         ...(source ? { source } : {}),
+        ...(requestedBy(req) ? { by: requestedBy(req) } : {}),
       });
     } catch (err) {
       if (!(err instanceof GithubError)) throw err;
@@ -1556,16 +1611,16 @@ export function createHub(opts: HubOptions = {}): Hub {
     };
   });
 
-  const lifecycle: Record<string, (slug: string) => Promise<ProjectManifest>> = {
-    pause: (slug) => projects.pause(slug),
-    resume: (slug) => projects.resume(slug),
+  const lifecycle: Record<string, (slug: string, by?: string) => Promise<ProjectManifest>> = {
+    pause: (slug, by) => projects.pause(slug, by),
+    resume: (slug, by) => projects.resume(slug, by),
     archive: (slug) => projects.archive(slug),
   };
   for (const [action, apply] of Object.entries(lifecycle)) {
     app.post(`/api/projects/:slug/${action}`, async (req, reply) => {
       const { slug } = req.params as { slug: string };
       if (!(await resolveProject(slug, reply))) return reply;
-      const manifest = await apply(slug);
+      const manifest = await apply(slug, requestedBy(req));
       await refreshProjects();
       return manifest;
     });
@@ -1611,7 +1666,7 @@ export function createHub(opts: HubOptions = {}): Hub {
       return reply.code(400).send({ error: 'invalid priority' });
     }
     if (!(await resolveProject(slug, reply))) return reply;
-    const manifest = await projects.setPriority(slug, body.priority);
+    const manifest = await projects.setPriority(slug, body.priority, requestedBy(req));
     await refreshProjects();
     return manifest;
   });
@@ -1637,7 +1692,8 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (!(await resolveProject(slug, reply))) return reply;
     let briefing: Briefing;
     try {
-      briefing = await projects.runTurn(slug, body?.instruction);
+      const by = requestedBy(req);
+      briefing = await projects.runTurn(slug, body?.instruction, by ? { requestedBy: by } : {});
     } catch (err) {
       if (err instanceof TurnRefusedError) return reply.code(409).send({ error: err.message });
       throw err;
@@ -1676,8 +1732,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   const turnRecord = (session: SessionRecord): TurnRecord => {
     const events = transcript.turnEvents(session.id);
     const end = events.find((e): e is TurnEvent & { kind: 'turn-end'; at: number } => e.kind === 'turn-end');
+    const start = events.find((e): e is TurnEvent & { kind: 'turn-start'; at: number } => e.kind === 'turn-start');
     return {
       sessionId: session.id,
+      ...(start?.requestedBy ? { requestedBy: start.requestedBy } : {}),
       startedAt: session.startedAt,
       // A turn's own end comes after its session's: the briefing is published in between.
       endedAt: end?.at ?? session.endedAt,
@@ -1694,11 +1752,19 @@ export function createHub(opts: HubOptions = {}): Hub {
     };
   };
 
+  /**
+   * `?since=<ms>` keeps only the turns that *ended* at or after that moment — what an API client
+   * polling for "has my turn landed" wants (0065); a turn still going is in `running` instead.
+   */
   app.get('/api/projects/:slug/turns', async (req, reply) => {
     const { slug } = req.params as { slug: string };
+    const rawSince = (req.query as { since?: string }).since;
+    const since = rawSince === undefined ? null : Number(rawSince);
+    if (since !== null && !(Number.isFinite(since) && since >= 0)) return reply.code(400).send({ error: 'invalid since' });
     if (!(await resolveProject(slug, reply))) return reply;
     const sessions = transcript.sessions({ kind: 'orchestrator', subject: slug, limit: TURNS_LIMIT }).reverse();
-    return { running: projects.runningTurn(slug), turns: sessions.map(turnRecord), budget: await projects.budget(slug) };
+    const turns = sessions.map(turnRecord).filter((t) => since === null || (t.endedAt !== null && t.endedAt >= since));
+    return { running: projects.runningTurn(slug), turns, budget: await projects.budget(slug) };
   });
 
   app.get('/api/projects/:slug/transcript', async (req, reply) => {
@@ -1887,9 +1953,10 @@ export function createHub(opts: HubOptions = {}): Hub {
    * model run rather than leaving it to finish for nobody.
    */
   const streamPlan = async (
-    reply: FastifyReply, slug: string, who: 'prd' | 'roadmap',
+    req: FastifyRequest, reply: FastifyReply, slug: string, who: 'prd' | 'roadmap',
     run: (opts: { onToken: (t: string) => void; signal: AbortSignal }) => Promise<Record<string, unknown>>,
   ): Promise<FastifyReply> => {
+    if ((req.query as { wait?: string }).wait === '1') return waitPlan(reply, slug, who, run);
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const ac = new AbortController();
     reply.raw.on('close', () => ac.abort());
@@ -1909,6 +1976,33 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     reply.raw.end();
     return reply;
+  };
+
+  /**
+   * `?wait=1`: the same run without the stream, for an API client (JD, 0066) — the reply is the
+   * stream's closing `done` frame as one JSON body, or a 502 carrying the error. It is aborted the
+   * same way, when the client hangs up before the run is over — and, since nobody is watching a
+   * stream to give up on it, by the hub itself after `WAIT_PLAN_TIMEOUT_MS` (504).
+   */
+  const waitPlan = async (
+    reply: FastifyReply, slug: string, who: 'prd' | 'roadmap',
+    run: (opts: { onToken: (t: string) => void; signal: AbortSignal }) => Promise<Record<string, unknown>>,
+  ): Promise<FastifyReply> => {
+    const ac = new AbortController();
+    reply.raw.on('close', () => ac.abort());
+    const deadline = AbortSignal.timeout(WAIT_PLAN_TIMEOUT_MS);
+    broadcast({ type: 'project-busy', slug, who, busy: true });
+    let full = '';
+    try {
+      const done = await run({ onToken: (token) => { full += token; }, signal: AbortSignal.any([ac.signal, deadline]) });
+      await refreshProjects();
+      return reply.code(200).send({ done: true, full, ...done });
+    } catch (err) {
+      if (deadline.aborted) return reply.code(504).send({ error: `${who} run took longer than ${WAIT_PLAN_TIMEOUT_MS / 60_000} minutes` });
+      return reply.code(502).send({ error: String(err) });
+    } finally {
+      broadcast({ type: 'project-busy', slug, who, busy: false });
+    }
   };
 
   app.get('/api/projects/:slug/prd', async (req, reply) => {
@@ -1947,8 +2041,9 @@ export function createHub(opts: HubOptions = {}): Hub {
       ...(body.idea ?? intake.idea ? { idea: body.idea ?? intake.idea } : {}),
       ...(body.prd ?? intake.prd ? { prd: body.prd ?? intake.prd } : {}),
     };
-    return streamPlan(reply, slug, 'prd', async (opts) => {
-      const result = await drafter.draft(slug, input, opts);
+    const by = requestedBy(req);
+    return streamPlan(req, reply, slug, 'prd', async (opts) => {
+      const result = await drafter.draft(slug, input, { ...opts, ...(by ? { by } : {}) });
       return { full: result.markdown, questions: result.questions, audit: result.audit };
     });
   });
@@ -1967,7 +2062,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (!bundle) return reply;
     // Checked before the stream opens: once the SSE headers are out, a 400 has nowhere to go.
     if (isPrdScaffold(await bundle.prd())) return reply.code(400).send({ error: 'the PRD has not been drafted yet' });
-    return streamPlan(reply, slug, 'roadmap', async (opts) => ({ milestones: await drafter.generateRoadmap(slug, opts) }));
+    const by = requestedBy(req);
+    return streamPlan(req, reply, slug, 'roadmap', async (opts) => ({
+      milestones: await drafter.generateRoadmap(slug, { ...opts, ...(by ? { by } : {}) }),
+    }));
   });
 
   app.post('/api/projects/:slug/roadmap/move', async (req, reply) => {

@@ -308,12 +308,50 @@ function wireUsage(result: ChatResult): Record<string, unknown> | undefined {
   };
 }
 
+/** What a bearer amounts to: the token it names, or the status to refuse it with. */
+export type BearerVerdict = { token: ApiTokenView } | { status: 401 | 429 };
+
+/**
+ * The user-API-token check, shared by the door (`/v1/*`) and the assistant scope (`/api/*` routes
+ * `auth.ts` lists, decision 0065): one token store, one lockout counter. A bearer is guessable in
+ * exactly the way a password is, so it gets login's lockout on its own counter — a client spraying
+ * tokens must not lock the owner out of the UI, or the reverse — and the counter is one, so a
+ * guesser cannot double its attempts by alternating between `/v1` and `/api`.
+ */
+export class TokenGate {
+  readonly tokens: ApiTokens;
+  private readonly throttle: LoginThrottle;
+
+  constructor(db: Db, now: () => number = Date.now) {
+    this.tokens = new ApiTokens(db, now);
+    this.throttle = new LoginThrottle(now);
+  }
+
+  check(client: string, authorization: string | undefined): BearerVerdict {
+    const bearer = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+    // The bearer is checked before the lockout, not after: the throttle exists to stop guessing,
+    // and a token that verifies is not a guess. Otherwise one misconfigured client behind a shared
+    // address (a NAT, the droplet's proxy) would lock out every other client on it.
+    const token = bearer ? this.tokens.verify(bearer) : null;
+    // A hit does not clear the client's history the way a successful login does: the lockout only
+    // ever refuses bad bearers, so one holder of a valid token must not be able to wipe the
+    // counter a guesser on the same address is running up. It expires on its own window.
+    if (token) return { token };
+    // A blocked client's attempt is refused without being counted, so a spray cannot keep extending
+    // its own lockout — the same bargain `POST /api/login` strikes.
+    const blocked = this.throttle.blocked(client);
+    if (!blocked) this.throttle.fail(client);
+    return { status: blocked ? 429 : 401 };
+  }
+}
+
 export interface DoorOptions {
-  db: Db;
+  /** The token store and lockout `/v1` checks bearers against — the same one the assistant scope uses. */
+  gate: TokenGate;
   gateway: ModelGateway;
   registry: NodeRegistry;
   usage: UsageStore;
-  /** The clock the throttle and the token timestamps run on; tests drive it. */
+  /** The clock the `created` stamps run on; tests drive it. */
   now?: () => number;
 }
 
@@ -323,29 +361,13 @@ export interface DoorOptions {
  */
 export async function door(app: FastifyInstance, opts: DoorOptions): Promise<void> {
   const now = opts.now ?? Date.now;
-  const tokens = new ApiTokens(opts.db, now);
-  // A bearer is guessable in exactly the way a password is, so it gets login's lockout on its own
-  // counter: a client spraying tokens must not lock the owner out of the UI, or the reverse.
-  const throttle = new LoginThrottle(now);
+  const { tokens } = opts.gate;
 
   /** The token behind a `/v1` request, or null — having already answered 401 with an OpenAI error. */
   const requireToken = (req: FastifyRequest, reply: FastifyReply): ApiTokenView | null => {
-    const client = req.ip;
-    const header = req.headers.authorization;
-    const bearer = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : '';
-    // The bearer is checked before the lockout, not after: the throttle exists to stop guessing,
-    // and a token that verifies is not a guess. Otherwise one misconfigured client behind a shared
-    // address (a NAT, the droplet's proxy) would lock out every other client on it.
-    const token = bearer ? tokens.verify(bearer) : null;
-    // A hit does not clear the client's history the way a successful login does: the lockout only
-    // ever refuses bad bearers, so one holder of a valid token must not be able to wipe the
-    // counter a guesser on the same address is running up. It expires on its own window.
-    if (token) return token;
-    // A blocked client's attempt is refused without being counted, so a spray cannot keep extending
-    // its own lockout — the same bargain `POST /api/login` strikes.
-    const blocked = throttle.blocked(client);
-    if (!blocked) throttle.fail(client);
-    reply.code(blocked ? 429 : 401).send(blocked
+    const verdict = opts.gate.check(req.ip, req.headers.authorization);
+    if ('token' in verdict) return verdict.token;
+    reply.code(verdict.status).send(verdict.status === 429
       ? openAiError('too many bad tokens; try again later', 'invalid_request_error', 'rate_limit_exceeded')
       : openAiError('invalid api token', 'invalid_request_error', 'invalid_api_key'));
     return null;

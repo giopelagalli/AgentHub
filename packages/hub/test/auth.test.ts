@@ -55,12 +55,27 @@ describe('auth policy', () => {
     expect(routeAccess('HEAD', '/api/health')).toBe('open');
     expect(routeAccess('POST', '/api/login')).toBe('open');
     expect(routeAccess('GET', '/ws')).toBe('owner');
-    expect(routeAccess('GET', '/api/state')).toBe('owner');
-    expect(routeAccess('POST', '/api/projects')).toBe('owner');
+    expect(routeAccess('GET', '/api/state')).toBe('assistant');
+    expect(routeAccess('POST', '/api/projects')).toBe('assistant');
     // A login route is only open for the login itself.
     expect(routeAccess('GET', '/api/login')).toBe('owner');
     // No route matched, or a route nobody has classified: denied by default.
     expect(routeAccess('GET', undefined)).toBe('owner');
+  });
+
+  it('opens exactly the allow-listed project routes to the assistant scope', () => {
+    for (const [method, route] of [
+      ['GET', '/api/state'], ['GET', '/api/briefings'], ['GET', '/api/projects'], ['GET', '/api/projects/:slug/turns'],
+      ['POST', '/api/projects'], ['POST', '/api/projects/:slug/prd/draft'], ['POST', '/api/projects/:slug/roadmap/generate'],
+      ['POST', '/api/projects/:slug/turn'], ['POST', '/api/projects/:slug/pause'], ['POST', '/api/projects/:slug/resume'],
+      ['POST', '/api/projects/:slug/priority'],
+    ] as const) expect(routeAccess(method, route), `${method} ${route}`).toBe('assistant');
+    for (const [method, route] of [
+      ['GET', '/api/tokens'], ['POST', '/api/tokens'], ['POST', '/api/nodes/enrollment-tokens'],
+      ['GET', '/api/projects/:slug/terminal'], ['PUT', '/api/projects/:slug/code/file'], ['POST', '/api/projects/:slug/media'],
+      ['POST', '/api/projects/:slug/archive'], ['PUT', '/api/projects/:slug/prd'], ['GET', '/api/projects/:slug'],
+      ['POST', '/api/projects/:slug/autorun'], ['DELETE', '/api/projects'],
+    ] as const) expect(routeAccess(method, route), `${method} ${route}`).toBe('owner');
   });
 
   it('opens enrolment and the installer, which run before anyone can have a session', () => {

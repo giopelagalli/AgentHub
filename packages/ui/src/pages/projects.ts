@@ -8,7 +8,7 @@ import { button, el } from '../dom.js';
 import { menuButton, type MenuEntry } from '../menu.js';
 import { policyPillText } from '../models.js';
 import { orgChartModel, type OrgCard } from '../org.js';
-import { PROJECT_TABS, TAB_LABELS, type CodePart, type PlanPart, type ProjectTab } from '../overview.js';
+import { PROJECT_TABS, TAB_LABELS, type CodePart, type DocsPart, type PlanPart, type ProjectTab } from '../overview.js';
 import { openChat, type ChatActivity, type ChatTarget } from '../panels/chat.js';
 import { openMasterPanel, type Briefing } from '../panels/master.js';
 import { sourceHref } from '../panels/source.js';
@@ -23,9 +23,11 @@ import { formatClock, formatUsd, runningTurn, type TurnsResponse } from '../turn
 import { mountActivity } from '../views/activity.js';
 import { mountCode } from '../views/code.js';
 import { mountDocs } from '../views/docs.js';
+import { mountMedia } from '../views/media.js';
 import type { ViewContext } from '../views/parts.js';
 import { mountPrd } from '../views/prd.js';
 import { mountPreview } from '../views/preview.js';
+import { mountProjectBrowser, projectBrowserView } from '../views/browser.js';
 import { mountRoadmap } from '../views/roadmap.js';
 import { mountTerminal } from '../views/terminal.js';
 import { fillHarnessField, memberModelField } from './project/controls.js';
@@ -72,10 +74,10 @@ export function managerCard(roster: TeamRoster | null): OrgCard | undefined {
 }
 
 /** Where each old artifact lives now: a tab, and inside Plan and Code, a part of it. */
-const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | CodePart)?]> = {
+const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | DocsPart | CodePart)?]> = {
   prd: ['plan', 'prd'],
   roadmap: ['plan', 'roadmap'],
-  docs: ['docs'],
+  docs: ['docs', 'pages'],
   activity: ['activity'],
   code: ['code', 'files'],
   terminal: ['code', 'terminal'],
@@ -83,11 +85,15 @@ const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | CodePart)?]> 
 };
 
 const PLAN_PARTS = [{ id: 'prd', label: 'Requirements' }, { id: 'roadmap', label: 'Roadmap' }] as const;
-const CODE_PARTS = [{ id: 'files', label: 'Files' }, { id: 'terminal', label: 'Terminal' }, { id: 'preview', label: 'Preview' }] as const;
+const DOCS_PARTS = [{ id: 'pages', label: 'Pages' }, { id: 'media', label: 'Media' }] as const;
+const CODE_PARTS = [
+  { id: 'files', label: 'Files' }, { id: 'terminal', label: 'Terminal' }, { id: 'preview', label: 'Preview' }, { id: 'browser', label: 'Browser' },
+] as const;
 
 /** The tab and parts last looked at, kept across projects (and visits to Machines) for this session. */
 let lastTab: ProjectTab = 'overview';
 let lastPlan: PlanPart = 'prd';
+let lastDocs: DocsPart = 'pages';
 let lastCode: CodePart = 'files';
 
 const loading = <T>(): Held<T> => ({ state: 'loading', doc: null });
@@ -529,12 +535,21 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** Set while a section remounts from under a focused sub-switch. */
   let refocusSubbar = false;
 
+  /** The Code sub-switch's live dot on Browser; null while the Code tab isn't on screen. */
+  let browserDot: HTMLElement | null = null;
+  const drawBrowserDot = (state: UiState): void => {
+    if (!browserDot) return;
+    const slug = selected(state)?.slug;
+    browserDot.hidden = !slug || projectBrowserView(state, slug).kind !== 'held';
+  };
+
   function mountSection(): void {
     const active = document.activeElement;
     refocusSubbar = active instanceof HTMLElement && body.contains(active) && !!active.closest('.subbar .seg');
     mounted?.dispose();
     mounted = null;
     overviewHost = null;
+    browserDot = null;
     closePane?.();
     body.replaceChildren();
     body.className = 'view__body';
@@ -584,10 +599,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     }
 
     if (tab === 'docs') {
-      const sub = subbar<string>(null, null, () => {}, 'Docs');
-      const content = el('div', 'docs-tab');
+      const part = lastDocs;
+      const sub = subbar(DOCS_PARTS, part, (id) => setTab('docs', id), 'Docs');
+      const content = el('div', part === 'media' ? 'media-tab' : 'docs-tab');
       body.append(sub.root, content);
-      mounted = { dispose: mountDocs(content, ctxFor(sub.actions)) };
+      mounted = { dispose: part === 'media' ? mountMedia(content, ctxFor(sub.actions)) : mountDocs(content, ctxFor(sub.actions)) };
       return;
     }
 
@@ -598,10 +614,17 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       const content = el('div', `fill fill--${part}`);
       body.append(sub.root, content);
       const ctx = ctxFor(sub.actions);
+      // The Browser option carries a live dot while the project holds a slot, whichever part is open.
+      const option = sub.root.querySelector<HTMLElement>('.seg__option[data-id="browser"]');
+      browserDot = el('span', 'dot dot--active');
+      browserDot.setAttribute('aria-hidden', 'true');
+      option?.appendChild(browserDot);
+      drawBrowserDot(state);
       mounted = {
         dispose: part === 'files' ? mountCode(content, ctx)
           : part === 'terminal' ? mountTerminal(content, ctx)
-            : mountPreview(content, ctx),
+            : part === 'preview' ? mountPreview(content, ctx)
+              : mountProjectBrowser(content, ctx, store),
       };
       return;
     }
@@ -612,13 +635,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   }
 
   /** Moves to `tab` (and `part` of it); `force` remounts even when it is already showing. */
-  function setTab(tab: ProjectTab, part?: PlanPart | CodePart, force = false): void {
-    const where = (): string => `${lastTab}:${lastTab === 'plan' ? lastPlan : lastTab === 'code' ? lastCode : ''}`;
+  function setTab(tab: ProjectTab, part?: PlanPart | DocsPart | CodePart, force = false): void {
+    const where = (): string => `${lastTab}:${lastTab === 'plan' ? lastPlan : lastTab === 'code' ? lastCode : lastTab === 'docs' ? lastDocs : ''}`;
     const before = where();
     const leaving = lastTab;
     lastTab = tab;
     if (tab === 'plan' && (part === 'prd' || part === 'roadmap')) lastPlan = part;
-    if (tab === 'code' && (part === 'files' || part === 'terminal' || part === 'preview')) lastCode = part;
+    if (tab === 'docs' && (part === 'pages' || part === 'media')) lastDocs = part;
+    if (tab === 'code' && (part === 'files' || part === 'terminal' || part === 'preview' || part === 'browser')) lastCode = part;
     tabs.set(tab);
     if (before === where() && !force && mounted) return;
     // Leaving a section may have changed what the Overview summarises (an edited PRD, a new page).
@@ -801,6 +825,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
 
   const unsubscribe = store.subscribe(render);
   const unseed = store.subscribe(takeSeed);
+  const undot = store.subscribe(drawBrowserDot);
   render(store.getState());
   takeSeed(store.getState());
   /** The Run turn clock and the Overview's elapsed times, once a second while a turn runs. */
@@ -814,6 +839,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   return () => {
     unsubscribe();
     unseed();
+    undot();
     window.removeEventListener('keydown', onKey);
     clearInterval(clock);
     clearTimeout(progressTimer);

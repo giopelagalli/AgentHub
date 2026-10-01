@@ -38,8 +38,37 @@ export interface ControlNodeConfig {
    */
   env?: Record<string, string>;
 }
-/** Local ComfyUI used by the `video-gen` executor. `workflow` is a path to the JSON template. */
-export interface VideoConfig { comfyUrl: string; workflow?: string; }
+/**
+ * Local ComfyUI used by the `image-gen` / `video-gen` executors. `workflows.image` and
+ * `workflows.video` are paths to the JSON templates per job type; `workflow` is the older single
+ * (video) template and is still read when `workflows.video` is absent.
+ */
+export interface VideoConfig { comfyUrl: string; workflow?: string; workflows?: { image?: string; video?: string } }
+
+const repoFile = (rel: string): string => new URL(`../../../${rel}`, import.meta.url).pathname;
+
+/**
+ * Which template file each media job type runs. Video: `workflows.video`, else the legacy
+ * `workflow`, else the repo's MiniMax-H3 template (what a config naming nothing always got).
+ * Image: `workflows.image` only — the repo's Qwen-Image file is a `TODO-verify` placeholder, and
+ * rendering from a guess would fail on the GPU rather than say what is missing.
+ */
+export function workflowPaths(video: VideoConfig): { image?: string; video: string } {
+  return {
+    video: video.workflows?.video ?? video.workflow ?? repoFile('deploy/spark/minimax-h3-t2v.json'),
+    ...(video.workflows?.image ? { image: video.workflows.image } : {}),
+  };
+}
+
+/**
+ * The job types this node registers and claims: the config's, minus `image-gen` when no image
+ * template is configured — a node that cannot render stills must not advertise them, so the hub
+ * says "no machine can render images yet" instead of queueing jobs that will only fail here.
+ */
+export function offeredJobTypes(cfg: Pick<DaemonConfig, 'jobTypes' | 'video'>): JobType[] {
+  const types = cfg.jobTypes ?? [];
+  return cfg.video?.workflows?.image ? types : types.filter((t) => t !== 'image-gen');
+}
 export interface DaemonConfig {
   node: { name: string; arch: string };
   hub: string;

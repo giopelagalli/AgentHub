@@ -1,3 +1,4 @@
+import type { MediaList } from '@agenthub/shared';
 import type { Hub } from '../src/server.js';
 import { patchMilestone } from '../src/projects/roadmap.js';
 import { POMODORO_DOCS, POMODORO_PRD, POMODORO_WORKSPACE } from './content.js';
@@ -11,6 +12,19 @@ async function planned(call: HubCall, path: string, body: unknown = {}): Promise
   const frames = [...stream.matchAll(/^data: (.*)$/gm)].map((m) => JSON.parse(m[1]!) as { done?: boolean; error?: string });
   const last = frames[frames.length - 1];
   if (!last?.done) throw new Error(`${path} did not finish: ${last?.error ?? stream.slice(0, 200)}`);
+}
+
+/** Waits for a media job to land in the project's `media/` — the sim's media node renders it in seconds. */
+async function mediaLanded(call: HubCall, slug: string, jobId: number, timeoutMs = 60_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const list = await call('GET', `/api/projects/${slug}/media`) as MediaList;
+    if (list.assets.some((a) => a.jobId === jobId)) return;
+    const failed = list.jobs.find((j) => j.jobId === jobId && j.status === 'failed');
+    if (failed) throw new Error(`media job ${jobId} failed: ${failed.error ?? ''}`);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(`media job ${jobId} did not land within ${timeoutMs} ms`);
 }
 
 /**
@@ -59,6 +73,12 @@ export async function seedProjects(call: HubCall, hub: Hub, opts: { previewAppPo
   await call('POST', `/api/projects/${pomodoro}/turn`, {});
   await call('POST', `/api/projects/${pomodoro}/turn`, {});
   await call('POST', `/api/projects/${pomodoro}/code/map`, {});
+  // An app icon, through the same route as the Media prompt box — rendered by the sim's media node.
+  const icon = await call('POST', `/api/projects/${pomodoro}/media`, {
+    kind: 'image', width: 512, height: 512,
+    prompt: 'App icon for Pomodoro CLI: a flat tomato with a clock face, rounded square, warm red on cream',
+  });
+  await mediaLanded(call, pomodoro, icon.id);
 
   // habit-tracker -----------------------------------------------------------------------------
   const habit = 'habit-tracker';
@@ -76,7 +96,7 @@ export async function seedProjects(call: HubCall, hub: Hub, opts: { previewAppPo
   });
 
   return [
-    `${pomodoro}   PRD, 9 milestones (m1–m3 done + verified), 2 turns, docs, code map, workspace, preview`,
+    `${pomodoro}   PRD, 9 milestones (m1–m3 done + verified), 2 turns, docs, code map, workspace, preview, an app icon (Docs → Media)`,
     `${habit}  PRD drafted, roadmap generated, nothing built`,
     `scratch        just created (scaffold PRD)`,
   ];

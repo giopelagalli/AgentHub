@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ProjectManifest, NodeInfo, TurnRecord } from '@agenthub/shared';
+import type { MediaList, ProjectManifest, NodeInfo, TurnRecord } from '@agenthub/shared';
 import { startSim } from '../sim/sim.js';
 
 /** This process's live children; `pgrep` exits 1 when there are none. */
@@ -32,7 +32,12 @@ describe('npm run sim', () => {
       const projects = await get<ProjectManifest[]>('/api/projects');
       expect(projects.map((p) => p.slug).sort()).toEqual(['habit-tracker', 'pomodoro-cli', 'scratch']);
       const nodes = await get<NodeInfo[]>('/api/nodes');
-      expect(nodes.map((n) => n.name).sort()).toEqual(['sim-pc', 'sim-spark']);
+      expect(nodes.map((n) => n.name).sort()).toEqual(['sim-media', 'sim-pc', 'sim-spark']);
+      // The seeded app icon came through the media node and the mock ComfyUI into the bundle.
+      const media = await get<MediaList>('/api/projects/pomodoro-cli/media');
+      expect(media.assets).toMatchObject([{ kind: 'image', node: 'sim-media', params: { width: 512, height: 512 } }]);
+      const png = await fetch(`${sim.url}/api/projects/pomodoro-cli/media/${media.assets[0]!.file}`, { headers: { cookie } });
+      expect(png.headers.get('content-type')).toBe('image/png');
 
       const before = await get<{ turns: TurnRecord[] }>('/api/projects/pomodoro-cli/turns');
       expect(before.turns).toHaveLength(2);

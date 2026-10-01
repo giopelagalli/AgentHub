@@ -56,7 +56,7 @@ console.log([
   `  open       ${open}${values.ui ? `   (hub API at ${sim.url})` : ''}`,
   `  password   ${sim.password}`,
   `  data       ${sim.dataRoot}${values.data ? '' : '   (temporary, removed on exit)'}`,
-  `  nodes      sim-spark (online, mock model)   sim-pc (goes offline ~15 s after start)`,
+  `  nodes      sim-spark (online, mock model)   sim-media (images + clips, mock ComfyUI)   sim-pc (goes offline ~15 s after start)`,
   ...(sim.seeded.length
     ? ['  projects', ...sim.seeded.map((l) => `    ${l}`)]
     : ['  projects   reused from the data directory (not reseeded; --reset to start over)']),

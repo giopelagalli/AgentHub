@@ -41,14 +41,22 @@ export function pngBytes(width: number, height: number, pixel: (x: number, y: nu
   ]);
 }
 
-/** A soft two-colour diagonal gradient whose hues come from `text` — different prompts, different pictures. */
-export function gradientPng(text: string, size = 96): Buffer {
+const mix = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => Math.round(a[i]! * (1 - t) + b[i]! * t)) as Rgb;
+
+/**
+ * A two-colour diagonal gradient with a pale disc in the middle, its hues taken from `text` —
+ * different prompts, different pictures, and every one reads as "a rendered image" in a grid.
+ */
+export function gradientPng(text: string, size = 128): Buffer {
   let h = 2166136261;
   for (const ch of text) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
   const a: Rgb = [h & 255, (h >> 8) & 255, (h >> 16) & 255];
   const b: Rgb = [255 - a[1], a[2], 255 - a[0]];
+  const c = (size - 1) / 2;
   return pngBytes(size, size, (x, y) => {
-    const t = (x + y) / (2 * (size - 1));
-    return [0, 1, 2].map((i) => Math.round(a[i]! * (1 - t) + b[i]! * t)) as Rgb;
+    const ground = mix(a, b, (x + y) / (2 * (size - 1)));
+    // A disc of radius 0.28·size with a one-pixel soft edge.
+    const edge = Math.min(1, Math.max(0, size * 0.28 - Math.hypot(x - c, y - c)));
+    return mix(ground, mix(ground, [255, 255, 255], 0.8), edge);
   });
 }

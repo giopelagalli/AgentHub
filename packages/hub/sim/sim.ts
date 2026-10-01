@@ -11,6 +11,7 @@ import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
 import type { NodeRegistration } from '@agenthub/shared';
 import { createHub, type Hub } from '../src/server.js';
 import { simRespond } from './agent-script.js';
+import { startMediaNode, type MediaNode } from './media-node.js';
 import { seedProjects, type HubCall } from './seed.js';
 
 /** The owner password every simulated hub uses. Not a secret: the sim only binds to this machine. */
@@ -102,8 +103,10 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
   let mock: MockOpenAI | undefined;
   let hub: Hub | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
+  let mediaNode: MediaNode | undefined;
   const stop = async (): Promise<void> => {
     clearInterval(heartbeat);
+    await mediaNode?.stop();
     await hub?.stop();
     await mock?.close();
     if (tempRoot) await rm(dataRoot, { recursive: true, force: true });
@@ -159,9 +162,15 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
       ],
     };
     await daemon('POST', '/api/nodes/register', spark);
+    // The PC's ComfyUI, faked: a real daemon job runner against the ComfyUI mock (FR-E1).
+    mediaNode = await startMediaNode({ hub: url, daemonToken: SIM_DAEMON_TOKEN, dataRoot });
+    await daemon('POST', '/api/nodes/register', mediaNode.registration);
     heartbeat = setInterval(() => {
-      daemon('POST', '/api/nodes/sim-spark/heartbeat', {}).catch((err: unknown) => log(`[sim] heartbeat failed: ${String(err)}`));
+      for (const name of ['sim-spark', mediaNode!.registration.name]) {
+        daemon('POST', `/api/nodes/${name}/heartbeat`, {}).catch((err: unknown) => log(`[sim] heartbeat failed: ${String(err)}`));
+      }
     }, HEARTBEAT_MS);
+    mediaNode.start();
 
     const fresh = (await readdir(join(dataRoot, 'projects')).catch(() => [])).length === 0;
     const previewAppPort = port === 0 ? await freePort() : port + 80;

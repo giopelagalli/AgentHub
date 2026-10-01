@@ -2,9 +2,9 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { gradientPng } from './png.js';
 
 export interface ComfyMockOptions {
-  /** `/history/<id>` stays empty for this many polls, then reports the finished output. */
+  /** `/history/<id>` stays empty for this many polls of that id, then reports the finished output. */
   pollsUntilDone?: number;
-  /** `/history/<id>` stays empty for this many polls, then reports a `status_str: 'error'` entry instead of completing. */
+  /** `/history/<id>` stays empty for this many polls of that id, then reports a `status_str: 'error'` entry instead of completing. */
   failAfterPolls?: number;
 }
 
@@ -63,13 +63,18 @@ export function createComfyMock(opts: ComfyMockOptions = {}): MockComfy {
     return { prompt_id: id, number: counter, node_errors: {} };
   });
 
+  /** Polls per prompt, so each run of a long-lived mock (the simulation's) takes its own time. */
+  const pollsOf = new Map<string, number>();
+
   app.get('/history/:id', async (req) => {
     const { id } = req.params as { id: string };
     app.polls++;
-    if (failAfterPolls !== undefined && app.polls > failAfterPolls) {
+    const polls = (pollsOf.get(id) ?? 0) + 1;
+    pollsOf.set(id, polls);
+    if (failAfterPolls !== undefined && polls > failAfterPolls) {
       return { [id]: { status: { status_str: 'error', messages: [['execution_error', { exception_message: 'mock node failure' }]] } } };
     }
-    if (app.polls <= pollsUntilDone) return {}; // still running
+    if (polls <= pollsUntilDone) return {}; // still running
     const filename = outputs.get(id) ?? videoFile;
     const key = filename.endsWith('.png') ? 'images' : 'gifs';
     return { [id]: { status: { completed: true }, outputs: { '4': { [key]: [{ filename, subfolder: '', type: 'output' }] } } } };

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
 import { isMediaJob, MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -50,9 +50,10 @@ import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
 import { currentMilestoneId, moveMilestone, moveMilestoneTo, patchMilestone } from './projects/roadmap.js';
 import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE, type Briefing } from './projects/schema.js';
-import { LeaseManager, type Requester } from './browser/lease.js';
-import { BrowserError, BrowserProxy, BROWSER_OPS, type BrowserOp } from './browser/proxy.js';
-import { LEASE_ID_RE, Recorder } from './browser/recorder.js';
+import { LeaseManager } from './browser/lease.js';
+import { BrowserProxy, poolSlots } from './browser/proxy.js';
+import { Recorder } from './browser/recorder.js';
+import { browserRoutes } from './browser/routes.js';
 import { Assistant } from './assistant/assistant.js';
 import { ConfirmationGate } from './assistant/confirm.js';
 import { MemoryStore } from './assistant/memory.js';
@@ -92,7 +93,6 @@ const JOB_TYPES: JobType[] = ['llm-session', 'image-gen', 'video-gen', 'shell-ta
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PREFERENCES: ModelPolicy['prefer'][] = ['local', 'cloud', 'auto'];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
-const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
 const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';
 const DEFAULT_MEMORY_ROOT = 'data/memory';
 /** Cap on an uploaded clip. A 15s 1080p MiniMax-H3 render is a few tens of MB. */
@@ -401,7 +401,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     }),
   });
   const browserNow = opts.browser?.now ? { now: opts.browser.now } : {};
-  const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow });
+  const leases = new LeaseManager({ ...(opts.browser?.ttlMs ? { ttlMs: opts.browser.ttlMs } : {}), ...browserNow, slots: () => poolSlots(registry) });
   const recorder = new Recorder({ root: opts.browser?.recordingsRoot ?? DEFAULT_RECORDINGS_ROOT });
   const browser = new BrowserProxy({ registry, leases, recorder, ...browserNow });
   // The audit ledger and the confirmation gate exist before anything that can call out, so the one
@@ -2078,72 +2078,9 @@ export function createHub(opts: HubOptions = {}): Hub {
     return result;
   });
 
-  // --- browser lease ------------------------------------------------------------
+  // --- browser pool ---------------------------------------------------------------
 
-  /** Reads `{kind,id,project}` off a lease request; replies 400 and returns null when it's malformed. */
-  const parseRequester = (body: unknown, reply: FastifyReply, kind?: BrowserRequesterKind): Requester | null => {
-    const b = (body ?? {}) as Partial<{ kind: BrowserRequesterKind; id: string; project: string }>;
-    const wanted = kind ?? b.kind;
-    if (wanted === undefined || !REQUESTER_KINDS.includes(wanted)
-      || typeof b.id !== 'string' || !b.id
-      || (b.project !== undefined && typeof b.project !== 'string')) {
-      reply.code(400).send({ error: 'invalid lease request' });
-      return null;
-    }
-    return { kind: wanted, id: b.id, ...(b.project ? { project: b.project } : {}) };
-  };
-
-  app.get('/api/browser', async () => {
-    leases.expire();
-    return browserStatus();
-  });
-
-  app.post('/api/browser/lease', async (req, reply) => {
-    const requester = parseRequester(req.body, reply);
-    if (!requester) return reply;
-    // The browser is one shared resource, not one per node, so draining its node doesn't preempt the
-    // current holder — it just hands out nothing new: a fresh acquire is refused, but the holder (if
-    // it's this requester) still renews, so work already using the browser finishes normally.
-    const browserNode = browserStatus().node;
-    if (browserNode && registry.byName(browserNode)?.draining) {
-      const holder = leases.holder()?.requester;
-      const isHolder = holder?.id === requester.id && holder?.kind === requester.kind;
-      if (!isHolder) return reply.code(409).send({ error: 'browser busy' });
-    }
-    return leases.acquire(requester);
-  });
-
-  // The owner never queues: this preempts whoever is holding the browser, and their next action 409s.
-  app.post('/api/browser/preempt', async (req, reply) => {
-    const requester = parseRequester(req.body, reply, 'owner');
-    if (!requester) return reply;
-    return leases.acquire(requester);
-  });
-
-  app.delete('/api/browser/lease/:id', async (req, reply) => {
-    const { id } = req.params as { id: string };
-    if (!leases.release(id)) return reply.code(404).send({ error: 'not the lease holder' });
-    return { released: true };
-  });
-
-  app.post('/api/browser/act', async (req, reply) => {
-    const body = req.body as Partial<{ leaseId: string; op: BrowserOp; args: Record<string, unknown> }> | undefined;
-    if (!body || typeof body.leaseId !== 'string' || body.op === undefined || !BROWSER_OPS.includes(body.op)) {
-      return reply.code(400).send({ error: 'invalid browser action' });
-    }
-    try {
-      return await browser.act(body.leaseId, { op: body.op, ...(body.args ? { args: body.args } : {}) });
-    } catch (err) {
-      if (err instanceof BrowserError) return reply.code(err.status).send({ error: err.message });
-      throw err;
-    }
-  });
-
-  app.get('/api/browser/recordings/:leaseId', async (req, reply) => {
-    const { leaseId } = req.params as { leaseId: string };
-    if (!LEASE_ID_RE.test(leaseId)) return reply.code(400).send({ error: 'invalid lease id' });
-    return { leaseId, actions: await recorder.list(leaseId) };
-  });
+  app.register(browserRoutes, { leases, browser, recorder, status: browserStatus });
 
   // --- external tool audit -------------------------------------------------------
 

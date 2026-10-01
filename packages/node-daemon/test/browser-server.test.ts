@@ -62,6 +62,42 @@ afterEach(async () => {
 });
 
 describe('browser server', () => {
+  it('drives each slot on its own driver, slot 0 when none is named', async () => {
+    const slot0 = new FakeDriver(PAGES);
+    const slot1 = new FakeDriver(PAGES);
+    app = createBrowserServer([slot0, slot1]);
+
+    await app.inject({ method: 'POST', url: '/browser/navigate?slot=1', payload: { url: 'https://start.test/docs' } });
+    await app.inject({ method: 'POST', url: '/browser/navigate', payload: { url: 'https://start.test/' } });
+
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=1' })).json()).toEqual({ url: 'https://start.test/docs', title: 'Docs' });
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=0' })).json()).toEqual({ url: 'https://start.test/', title: 'Start' });
+    expect(slot0.calls.map((c) => c.op)).toEqual(['navigate', 'read']);
+    expect(slot1.calls.map((c) => c.op)).toEqual(['navigate', 'read']);
+  });
+
+  it('resets only the named slot, back to a blank session', async () => {
+    const slot0 = new FakeDriver(PAGES);
+    const slot1 = new FakeDriver(PAGES);
+    app = createBrowserServer([slot0, slot1]);
+    await app.inject({ method: 'POST', url: '/browser/navigate?slot=0', payload: { url: 'https://start.test/' } });
+    await app.inject({ method: 'POST', url: '/browser/navigate?slot=1', payload: { url: 'https://start.test/docs' } });
+
+    const res = await app.inject({ method: 'POST', url: '/browser/reset?slot=1' });
+    expect(res.json()).toEqual({ reset: true });
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=1' })).json()).toEqual({ url: 'about:blank', title: '(blank)' });
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=0' })).json()).toEqual({ url: 'https://start.test/', title: 'Start' });
+    expect(slot0.calls.some((c) => c.op === 'reset')).toBe(false);
+  });
+
+  it('400s a slot the browser does not have', async () => {
+    app = createBrowserServer([new FakeDriver()]);
+    for (const slot of ['1', '-1', 'x']) {
+      const res = await app.inject({ method: 'GET', url: `/browser/screenshot?slot=${slot}` });
+      expect(res.statusCode).toBe(400);
+    }
+  });
+
   it('round-trips every route over the fake driver', async () => {
     const driver = new FakeDriver(PAGES);
     app = createBrowserServer(driver);
@@ -115,6 +151,7 @@ describe('browser server', () => {
       click: async () => { throw new Error('no element'); },
       type: async () => { throw new Error('no element'); },
       screenshot: async () => { throw new Error('screenshot failed'); },
+      reset: async () => { throw new Error('context gone'); },
       close: async () => {},
     };
     app = createBrowserServer(broken);
@@ -146,9 +183,32 @@ describe('daemon browser capability', () => {
     expect(new Daemon(daemonConfig({})).registration().browser).toBeUndefined();
     expect(new Daemon(daemonConfig({ browser: { enabled: false } })).registration().browser).toBeUndefined();
     expect(new Daemon(daemonConfig({ browser: { enabled: true, port: 8131 } })).registration().browser)
-      .toEqual({ url: 'http://127.0.0.1:8131' });
+      .toEqual({ url: 'http://127.0.0.1:8131', slots: 1 });
     expect(new Daemon(daemonConfig({ advertiseHost: 'mini.tailnet', browser: { enabled: true, port: 8131 } })).registration().browser)
-      .toEqual({ url: 'http://mini.tailnet:8131' });
+      .toEqual({ url: 'http://mini.tailnet:8131', slots: 1 });
+    expect(new Daemon(daemonConfig({ browser: { enabled: true, port: 8131, slots: 3 } })).registration().browser)
+      .toEqual({ url: 'http://127.0.0.1:8131', slots: 3 });
+  });
+
+  it('rejects browser.slots outside 1..8', () => {
+    for (const bad of ['0', '9', '1.5']) {
+      const path = join(tmpDir(), 'daemon.yaml');
+      writeFileSync(path, ['node:', '  name: x', '  arch: arm64', 'hub: http://127.0.0.1:1', 'browser:', '  enabled: true', `  slots: ${bad}`].join('\n'));
+      expect(() => loadConfig(path)).toThrow(/browser.slots/);
+    }
+  });
+
+  it('builds one driver per slot and closes every one on stop', async () => {
+    const cfg = daemonConfig({ serving: [], browser: { enabled: true, port: 0, slots: 3 } });
+    const drivers = [new FakeDriver(), new FakeDriver(), new FakeDriver()];
+    const create = vi.fn(async (_cfg: unknown, n: number) => drivers.slice(0, n));
+    daemon = new Daemon(cfg, { createBrowserDrivers: create });
+    // Only the browser server is under test here, not registration with a hub.
+    await (daemon as unknown as { startBrowserServer(c: unknown): Promise<void> }).startBrowserServer(cfg.browser);
+    expect(create).toHaveBeenCalledWith(cfg.browser, 3);
+    await daemon.stop();
+    daemon = undefined;
+    expect(drivers.every((d) => d.closed)).toBe(true);
   });
 
   it('rejects a config whose browser block has no boolean enabled', () => {
@@ -195,7 +255,7 @@ describe('daemon browser capability', () => {
     ].join('\n'));
 
     const driver = new FakeDriver(PAGES);
-    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDriver: async () => driver });
+    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDrivers: async () => [driver] });
     await daemon.start();
 
     const url = hub.registry.byName('mini')?.browser?.url;
@@ -231,9 +291,10 @@ describe('daemon browser capability', () => {
       click: async () => ({ url: 'x', title: 'x' }),
       type: async () => ({ url: 'x', title: 'x' }),
       screenshot: async () => Buffer.from(''),
+      reset: async () => {},
       close: async () => { throw new Error('driver close boom'); },
     };
-    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDriver: async () => rejectingDriver });
+    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDrivers: async () => [rejectingDriver] });
     await daemon.start();
 
     const stopAllSpy = vi.spyOn(Supervisor.prototype, 'stopAll');
@@ -257,7 +318,7 @@ describe('daemon browser capability', () => {
     ].join('\n'));
 
     const driver = new FakeDriver(PAGES);
-    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDriver: async () => driver });
+    daemon = new Daemon(loadConfig(cfgPath), { createBrowserDrivers: async () => [driver] });
     await daemon.start();
 
     const node = hub.registry.byName('browser-only');

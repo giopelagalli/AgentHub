@@ -6,7 +6,7 @@ import type { NodeRegistration } from '@agenthub/shared';
 import { offeredJobTypes, workflowPaths, type BrowserConfig, type DaemonConfig, type VideoConfig } from './config.js';
 import type { BrowserDriver } from './browser/driver.js';
 import { createBrowserServer } from './browser/server.js';
-import { createPlaywrightDriver } from './browser/playwright-driver.js';
+import { createPlaywrightDrivers } from './browser/playwright-driver.js';
 import { Supervisor, entryName } from './supervisor.js';
 import { JobRunner } from './job-runner.js';
 import { HubBusyError, HubProcess } from './hub-process.js';
@@ -46,8 +46,8 @@ async function drain(res: Response): Promise<void> {
 }
 
 export interface DaemonDeps {
-  /** Swapped for a `FakeDriver` in tests, so no test ever launches a real browser. */
-  createBrowserDriver?: (cfg: BrowserConfig) => Promise<BrowserDriver>;
+  /** One driver per slot (`cfg.slots ?? 1`); swapped for `FakeDriver`s in tests, so no test ever launches a real browser. */
+  createBrowserDrivers?: (cfg: BrowserConfig, slots: number) => Promise<BrowserDriver[]>;
   /** Called instead of `process.exit(0)` when the hub reports this node was removed (heartbeat 410). */
   onRemoved?: () => void;
   /** Overrides the real timer behind registration retry backoff, so a test can run it in milliseconds. */
@@ -60,7 +60,7 @@ export class Daemon {
   private timer?: NodeJS.Timeout;
   private reregistering = false;
   private browserApp?: FastifyInstance;
-  private browserDriver?: BrowserDriver;
+  private browserDrivers: BrowserDriver[] = [];
   /** The port the browser server actually bound, which differs from config when it asked for 0. */
   private browserPort?: number;
   /** Owned only when the control server isn't sharing the browser app. */
@@ -102,7 +102,7 @@ export class Daemon {
       name: this.cfg.node.name, arch: this.cfg.node.arch,
       endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams, ...(s.priority != null ? { priority: s.priority } : {}), ...(s.requestExtras ? { requestExtras: s.requestExtras } : {}) })),
       jobTypes: offeredJobTypes(this.cfg),
-      ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
+      ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}`, slots: this.cfg.browser.slots ?? 1 } } : {}),
       profiles: Object.keys(this.cfg.profiles ?? {}),
       video: this.cfg.video !== undefined,
       ...(this.controlPort !== undefined ? { control: { url: `http://${host}:${this.controlPort}` } } : {}),
@@ -113,9 +113,9 @@ export class Daemon {
   // Binds loopback unless the node advertises a tailnet address — the hub is the only client, and
   // the browser server itself has no auth of its own yet.
   private async startBrowserServer(cfg: BrowserConfig): Promise<void> {
-    const create = this.deps.createBrowserDriver ?? ((c) => createPlaywrightDriver({ headless: c.headless ?? true, ...(c.display ? { display: c.display } : {}) }));
-    this.browserDriver = await create(cfg);
-    this.browserApp = createBrowserServer(this.browserDriver);
+    const create = this.deps.createBrowserDrivers ?? ((c, n) => createPlaywrightDrivers({ headless: c.headless ?? true, ...(c.display ? { display: c.display } : {}) }, n));
+    this.browserDrivers = await create(cfg, cfg.slots ?? 1);
+    this.browserApp = createBrowserServer(this.browserDrivers);
     const host = this.cfg.advertiseHost ?? '127.0.0.1';
     await this.browserApp.listen({ port: cfg.port ?? DEFAULT_BROWSER_PORT, host });
     this.browserPort = (this.browserApp.server.address() as { port: number }).port;
@@ -403,7 +403,7 @@ export class Daemon {
     if (this.hubProcess) await this.closeWithTimeout('hub process', async () => { await this.hubProcess!.stop(); });
     if (this.controlApp) await this.closeWithTimeout('control app', () => this.controlApp!.close());
     if (this.browserApp) await this.closeWithTimeout('browser app', () => this.browserApp!.close());
-    if (this.browserDriver) await this.closeWithTimeout('browser driver', () => this.browserDriver!.close());
+    for (const [slot, driver] of this.browserDrivers.entries()) await this.closeWithTimeout(`browser driver ${slot}`, () => driver.close());
     if (this.runner) {
       await this.runner.stop();
       await this.runner.waitForIdle(RUNNER_STOP_WAIT_MS);

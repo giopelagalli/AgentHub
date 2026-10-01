@@ -9,6 +9,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
 import type { NodeRegistration } from '@agenthub/shared';
+import type { FastifyInstance } from 'fastify';
+import { FakeDriver } from '../../node-daemon/src/browser/driver.js';
+import { createBrowserServer } from '../../node-daemon/src/browser/server.js';
 import { createHub, type Hub } from '../src/server.js';
 import { simRespond } from './agent-script.js';
 import { startMediaNode, type MediaNode } from './media-node.js';
@@ -22,6 +25,10 @@ const SIM_DAEMON_TOKEN = 'agenthub-sim-daemon-token';
 const ORCHESTRATOR_MODEL = 'accounts/fireworks/models/glm-5p3';
 const WORKER_MODEL = 'accounts/fireworks/models/glm-5p3-flash';
 const HEARTBEAT_MS = 5000;
+/** The sim's browser node runs this many FakeDriver slots, so Machines → Browser shows a pool. */
+const BROWSER_SLOTS = 3;
+/** Projects that hold a browser slot in the sim, renewed with every heartbeat so they stay held. */
+const BROWSING_PROJECTS = ['pomodoro-cli', 'habit-tracker'];
 
 export interface SimOptions {
   /** Hub port; 0 picks a free one. Default 4100. */
@@ -102,12 +109,14 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
   // Assigned as each piece comes up, so a failure part-way stops exactly what was started.
   let mock: MockOpenAI | undefined;
   let hub: Hub | undefined;
+  let browser: FastifyInstance | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let mediaNode: MediaNode | undefined;
   const stop = async (): Promise<void> => {
     clearInterval(heartbeat);
     await mediaNode?.stop();
     await hub?.stop();
+    await browser?.close();
     await mock?.close();
     if (tempRoot) await rm(dataRoot, { recursive: true, force: true });
   };
@@ -165,10 +174,25 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
     // The PC's ComfyUI, faked: a real daemon job runner against the ComfyUI mock (FR-E1).
     mediaNode = await startMediaNode({ hub: url, daemonToken: SIM_DAEMON_TOKEN, dataRoot });
     await daemon('POST', '/api/nodes/register', mediaNode.registration);
+
+    // A browser node on FakeDrivers — the daemon's own browser server, nothing launched — with a
+    // couple of projects holding slots, so the pool's tiles have something to show.
+    const b = createBrowserServer(Array.from({ length: BROWSER_SLOTS }, () => new FakeDriver()));
+    browser = b;
+    await b.listen({ port: 0, host: '127.0.0.1' });
+    await daemon('POST', '/api/nodes/register', {
+      name: 'sim-mini', arch: 'arm64', jobTypes: [], endpoints: [],
+      browser: { url: `http://127.0.0.1:${(b.server.address() as { port: number }).port}`, slots: BROWSER_SLOTS },
+    } satisfies NodeRegistration);
+    const browse = (): Promise<unknown> => Promise.all(BROWSING_PROJECTS.map((project) =>
+      call('POST', '/api/browser/lease', { kind: 'orchestrator', id: `project:${project}`, project })));
+    await browse();
+
     heartbeat = setInterval(() => {
-      for (const name of ['sim-spark', mediaNode!.registration.name]) {
+      for (const name of ['sim-spark', 'sim-mini', mediaNode!.registration.name]) {
         daemon('POST', `/api/nodes/${name}/heartbeat`, {}).catch((err: unknown) => log(`[sim] heartbeat failed: ${String(err)}`));
       }
+      browse().catch((err: unknown) => log(`[sim] browser lease renew failed: ${String(err)}`));
     }, HEARTBEAT_MS);
     mediaNode.start();
 

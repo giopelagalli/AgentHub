@@ -10,7 +10,7 @@ import { createHub, type Hub } from '../src/server.js';
 import { openDb } from '../src/db.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { LeaseManager } from '../src/browser/lease.js';
-import { BrowserProxy } from '../src/browser/proxy.js';
+import { BrowserProxy, poolSlots } from '../src/browser/proxy.js';
 import { Recorder } from '../src/browser/recorder.js';
 
 const PAGES = {
@@ -87,7 +87,8 @@ describe('browser routes', () => {
     const shot = await (await post('/api/browser/act', { leaseId, op: 'screenshot' })).json();
     expect(shot).toEqual({ seq: 3, path: join(recordings, leaseId, '3.jpg') });
 
-    expect(driver.calls.map((c) => c.op)).toEqual(['navigate', 'screenshot', 'read', 'screenshot', 'screenshot']);
+    // The hub has never seen this slot used, so the first action starts it over in a fresh session.
+    expect(driver.calls.map((c) => c.op)).toEqual(['reset', 'navigate', 'screenshot', 'read', 'screenshot', 'screenshot']);
 
     const timeline = await (await fetch(`${base}/api/browser/recordings/${leaseId}`)).json();
     expect(timeline.actions.map((a: { op: string; frame: string }) => [a.op, a.frame])).toEqual([
@@ -167,19 +168,15 @@ describe('browser routes', () => {
     expect((await fetch(`${base}/api/browser/recordings/..%2F..%2Fetc`)).status).toBe(400);
   });
 
-  it('answers 503 while no browser node is online', async () => {
+  it('queues every request while no browser node is online — the pool has no slot to grant', async () => {
     const bare = createHub({ browser: { recordingsRoot: recordings } });
     await bare.app.listen({ port: 0, host: '127.0.0.1' });
     const bareBase = `http://127.0.0.1:${(bare.app.server.address() as { port: number }).port}`;
-    const granted = await (await fetch(`${bareBase}/api/browser/lease`, {
+    const asked = await (await fetch(`${bareBase}/api/browser/lease`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ kind: 'owner', id: 'owner' }),
     })).json();
-    const res = await fetch(`${bareBase}/api/browser/act`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ leaseId: granted.leaseId, op: 'read' }),
-    });
-    expect(res.status).toBe(503);
+    expect(asked).toEqual({ queued: true, position: 1 });
     await bare.stop();
   });
 });
@@ -246,7 +243,7 @@ describe('browser proxy timeouts', () => {
     const db = openDb(':memory:');
     const registry = new NodeRegistry(db);
     registry.register({ name: 'stuck', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: blackholeUrl } });
-    const leases = new LeaseManager();
+    const leases = new LeaseManager({ slots: () => poolSlots(registry) });
     const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), actionTimeoutMs: 100 });
 
     const granted = leases.acquire({ kind: 'owner', id: 'owner' });
@@ -259,7 +256,7 @@ describe('browser proxy timeouts', () => {
     const db = openDb(':memory:');
     const registry = new NodeRegistry(db);
     registry.register({ name: 'stuck', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: blackholeUrl } });
-    const leases = new LeaseManager();
+    const leases = new LeaseManager({ slots: () => poolSlots(registry) });
 
     // A fetch that never settles on its own — proves `inFlight` is released by the per-call timeout
     // (AbortSignal.timeout), not by the upstream ever answering. Asserting frames===0 alone wouldn't
@@ -279,6 +276,7 @@ describe('browser proxy timeouts', () => {
       fetch: hangingFetch, screencastTimeoutMs: 100,
     });
 
+    leases.acquire({ kind: 'owner', id: 'owner' }); // only a held slot is polled
     const cast = proxy.screencast(500);
     let frames = 0;
     cast.onFrame(() => { frames += 1; });
@@ -303,7 +301,7 @@ describe('browser proxy timeouts', () => {
       const db = openDb(':memory:');
       const registry = new NodeRegistry(db);
       registry.register({ name: 'stalling', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: stallUrl } });
-      const leases = new LeaseManager();
+      const leases = new LeaseManager({ slots: () => poolSlots(registry) });
       const proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: blackholeRecordings }), actionTimeoutMs: 100 });
 
       const granted = leases.acquire({ kind: 'owner', id: 'owner' });

@@ -63,8 +63,11 @@ export interface NodeRegistration {
   arch: string;
   endpoints: ServingEndpoint[];
   jobTypes?: JobType[];
-  /** Present only on a node running the browser capability; `url` is its local browser server. */
-  browser?: { url: string };
+  /**
+   * Present only on a node running the browser capability; `url` is its local browser server and
+   * `slots` how many isolated sessions it runs (absent = 1, a daemon from before the pool).
+   */
+  browser?: { url: string; slots?: number };
   /** Serving profiles this node can switch between (spec §4.3); empty when it has none. */
   profiles?: string[];
   /** True when the node has a local ComfyUI configured for `image-gen` / `video-gen` jobs. */
@@ -457,14 +460,33 @@ export interface BrowserLease {
   leaseId: string;
   requester: BrowserRequester;
   expiresAt: number;
+  /** The pool slot this lease drives: a browser node and a context on it (FR-D8). */
+  node: string;
+  slot: number;
+  /** When the lease was granted — renewals push `expiresAt`, never this. */
+  since: number;
+}
+
+/** One session in the browser pool, and its lease when somebody holds it. */
+export interface BrowserSlotStatus {
+  node: string;
+  slot: number;
+  lease: BrowserLease | null;
+  /** True while the node is draining (or offline): the slot finishes its lease but takes no new one. */
+  draining?: boolean;
+  /** True while the node's heartbeat is stale; only a held slot is listed then. */
+  offline?: boolean;
 }
 
 /** The browser room as the UI sees it: who holds the lease, who is waiting, which node it runs on. */
 export interface BrowserStatus {
+  /** The first held slot's lease — the single-browser view, kept for clients from before the pool. */
   holder: BrowserLease | null;
   queue: BrowserRequester[];
-  /** Name of the online node advertising the browser capability, null when none is up. */
+  /** Name of the first online node advertising the browser capability, null when none is up. */
   node: string | null;
+  /** Every slot of every online browser node; optional so a hub from before the pool still type-checks. */
+  slots?: BrowserSlotStatus[];
 }
 
 export interface HubState {
@@ -487,7 +509,7 @@ export type WsMessage =
   | { type: 'turn-refused'; slug: string; reason: string }
   // Only reaches sockets that sent {type:'subscribe', topic:'browser'} — frames are big and most
   // clients are not looking at the screening room.
-  | { type: 'browser-frame'; nodeName: string; leaseId: string | null; jpegBase64: string; at: number }
+  | { type: 'browser-frame'; nodeName: string; slot?: number; leaseId: string | null; jpegBase64: string; at: number }
   | TurnEventFrame;
 
 // --- orchestrator turn events --------------------------------------------------

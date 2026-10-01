@@ -69,6 +69,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - The two API pieces the redesign wanted (0053): each project's `lastTurn` outcome in
   `/api/state` (so the sidebar dot is red after a failure without the browser holding the turns),
   and `POST /roadmap/move` accepting `{ id, to }` so a drag is one request.
+- Browser pool (FR-D8, 0059): `browser.slots` contexts in one browser per node, leases for
+  `(node, slot)` with one slot per project, Take control per slot, and Machines → Browser as a
+  tile per slot.
 
 - The Code Tour: steps from the Code map, explanations cached as docs pages (0056–0058).
 
@@ -90,7 +93,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-2. Workbench: a per-project live browser view on the Code tab (FR-B7).
+2. Workbench: a per-project live browser view on the Code tab (FR-B7), on the pool's slots.
 3. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
@@ -99,5 +102,4 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 4. JD drives the hub; the web door (FR-C1–C5).
 5. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
    over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
-6. Browser pool (FR-D8).
-7. Accounts, grants, per-member JD, the public site (FR-F1–F6).
+6. Accounts, grants, per-member JD, the public site (FR-F1–F6).

@@ -11,7 +11,7 @@ const toInfo = (r: Row): NodeInfo => ({
   id: r.id, name: r.name, arch: r.arch, status: r.status,
   lastHeartbeat: r.last_heartbeat, endpoints: JSON.parse(r.endpoints_json) as ServingEndpoint[],
   jobTypes: JSON.parse(r.job_types_json) as JobType[],
-  ...(r.browser_json ? { browser: JSON.parse(r.browser_json) as { url: string } } : {}),
+  ...(r.browser_json ? { browser: JSON.parse(r.browser_json) as { url: string; slots?: number } } : {}),
   profiles: JSON.parse(r.profiles_json) as string[],
   video: r.video === 1,
   ...(r.control_json ? { control: JSON.parse(r.control_json) as { url: string } } : {}),

@@ -404,7 +404,7 @@ function autoRunForm(
 /** The three documents, each mounted into the sheet rather than into the page. */
 const DOC_VIEWS: Record<Exclude<ArtifactId, 'activity' | 'terminal'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
   prd: mountPrd,
-  roadmap: mountRoadmap,
+  roadmap: (host, ctx) => mountRoadmap(host, ctx),
   docs: mountDocs,
   code: mountCode,
   preview: mountPreview,

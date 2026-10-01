@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { AutoRun, TurnBudget } from '@agenthub/shared';
-import { autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../src/autorun.js';
+import { autoRunFromForm, autoRunLabel, budgetSentence, budgetText, formatInterval, intervalWords, scheduleSentence } from '../src/autorun.js';
 
 describe('formatInterval', () => {
   it('shows minutes below an hour, and whole hours above it', () => {
@@ -66,5 +66,34 @@ describe('autoRunFromForm', () => {
     expect(autoRunFromForm({ enabled: true, everyMinutes: 60, maxTurnsPerDay: 0 })).toBeNull();
     expect(autoRunFromForm({ enabled: true, everyMinutes: 60, maxTurnsPerDay: 101 })).toBeNull();
     expect(autoRunFromForm({ enabled: true, everyMinutes: 60, maxTurnsPerDay: 4.5 })).toBeNull();
+  });
+});
+
+describe('the schedule in words', () => {
+  it('says the interval the way a sentence would', () => {
+    expect(intervalWords(15)).toBe('15 minutes');
+    expect(intervalWords(60)).toBe('hour');
+    expect(intervalWords(120)).toBe('2 hours');
+    expect(intervalWords(90)).toBe('90 minutes');
+  });
+
+  it('describes an off or absent schedule as running only on request', () => {
+    expect(scheduleSentence(undefined)).toBe('Runs only when you start a turn');
+    expect(scheduleSentence({ enabled: false, everyMinutes: 60, maxTurnsPerDay: 6 })).toBe('Runs only when you start a turn');
+  });
+
+  it('describes an on schedule with its cap, singular where it is one', () => {
+    expect(scheduleSentence({ enabled: true, everyMinutes: 60, maxTurnsPerDay: 6 }))
+      .toBe('Runs on its own every hour, at most 6 turns a day');
+    expect(scheduleSentence({ enabled: true, everyMinutes: 30, maxTurnsPerDay: 1 }))
+      .toBe('Runs on its own every 30 minutes, at most 1 turn a day');
+  });
+
+  it('says the turns left today with both caps, never below zero', () => {
+    expect(budgetSentence(undefined)).toBe('');
+    expect(budgetSentence({ usedToday: 2, maxPerDay: 6, hubUsedToday: 10, hubMaxPerDay: 40 }))
+      .toBe('4 of 6 turns left today · 30 of 40 left across the hub');
+    expect(budgetSentence({ usedToday: 2, maxPerDay: null, hubUsedToday: 45, hubMaxPerDay: 40 }))
+      .toBe('No cap for this project · 0 of 40 left across the hub');
   });
 });

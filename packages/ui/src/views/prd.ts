@@ -138,7 +138,7 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar();
+    const { bar, actions } = docBar(ctx);
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the PRD…')); return; }

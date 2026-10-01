@@ -110,7 +110,7 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar();
+    const { bar, actions } = docBar(ctx);
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the docs…')); return; }

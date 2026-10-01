@@ -10,7 +10,12 @@ import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
  * The roadmap view: the milestones in the order they will be done, with the two edits that don't
  * need a conversation — move one up or down, and change its status.
  */
-export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
+export interface RoadmapOptions {
+  /** Start the generator straight away — the Overview's "Generate the roadmap" lands here. */
+  generate?: boolean;
+}
+
+export function mountRoadmap(host: HTMLElement, ctx: ViewContext, options: RoadmapOptions = {}): () => void {
   let doc: RoadmapDoc | null = null;
   /** Whether the PRD exists yet, for the empty state; unknown defaults to true (today's behavior). */
   let prdDrafted = true;
@@ -122,7 +127,7 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
 
     const controller = new AbortController();
     generating = controller;
-    cancel.addEventListener('click', () => { controller.abort(); generating = null; render(); });
+    cancel.addEventListener('click', () => { controller.abort(); generating = null; render(); load(); });
 
     void streamPost(`/api/projects/${ctx.slug}/roadmap/generate`, {}, controller.signal, (chunk) => {
       const following = progress.scrollHeight - progress.scrollTop - progress.clientHeight < 12;
@@ -146,7 +151,7 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
 
   function render(): void {
     host.replaceChildren();
-    const { bar, actions } = docBar();
+    const { bar, actions } = docBar(ctx);
     host.appendChild(bar);
 
     if (state === 'loading') { host.appendChild(note('Loading the roadmap…')); return; }
@@ -181,8 +186,11 @@ export function mountRoadmap(host: HTMLElement, ctx: ViewContext): () => void {
     host.appendChild(list);
   }
 
-  render();
-  load();
+  if (options.generate) generate();
+  else {
+    render();
+    load();
+  }
 
   return () => {
     alive = false;

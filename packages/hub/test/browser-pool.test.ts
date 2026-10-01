@@ -89,6 +89,26 @@ describe('browser pool routes', () => {
     expect((await post('/api/browser/preempt', { id: 'owner', node: 'mini', slot: -1 })).status).toBe(400);
   });
 
+  it('resets a slot before its first action for a different project, not for the same one', async () => {
+    const a = await acquire('alpha');
+    await post('/api/browser/act', { leaseId: a.leaseId, op: 'navigate', args: { url: 'https://a.test/' } });
+    await fetch(`${base}/api/browser/lease/${a.leaseId}`, { method: 'DELETE' });
+
+    const again = await acquire('alpha'); // alpha back on its own slot: nothing to reset
+    expect(again.slot).toBe(0);
+    await post('/api/browser/act', { leaseId: again.leaseId, op: 'read' });
+    expect(slots[0].calls.map((c) => c.op)).not.toContain('reset');
+    await fetch(`${base}/api/browser/lease/${again.leaseId}`, { method: 'DELETE' });
+
+    const b = await acquire('beta');
+    expect(b.slot).toBe(0);
+    const read = await (await post('/api/browser/act', { leaseId: b.leaseId, op: 'read' })).json();
+    expect(read.state.url).toBe('about:blank');
+    const ops = slots[0].calls.map((c) => c.op);
+    expect(ops.lastIndexOf('reset')).toBe(ops.lastIndexOf('read') - 1);
+    expect(ops.filter((op) => op === 'reset')).toHaveLength(1);
+  });
+
   it('keeps the single-browser path: no project, no slot, slot 0', async () => {
     const res = await (await post('/api/browser/lease', { kind: 'subagent', id: 'sub-1' })).json();
     expect(res).toMatchObject({ granted: true, node: 'mini', slot: 0 });

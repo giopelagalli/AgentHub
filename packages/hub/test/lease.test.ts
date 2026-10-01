@@ -247,6 +247,25 @@ describe('LeaseManager pool (FR-D8)', () => {
     expect(leases.queue().map((r) => r.id)).toEqual(['project:other', 'loner']);
   });
 
+  it('owes a reset only when a slot passes to a different tenant, and the owner never counts', () => {
+    const { leases, setPool } = pooled();
+    setPool([{ node: 'a', slot: 0 }]);
+    const x1 = granted(leases.acquire(proj('x')));
+    expect(leases.takeReset(x1)).toBe(false); // a fresh slot
+    leases.release(x1);
+    const x2 = granted(leases.acquire(proj('x')));
+    expect(leases.takeReset(x2)).toBe(false); // same project again
+    granted(leases.acquire(owner, { node: 'a', slot: 0 }));
+    const own = leases.holder()!.leaseId;
+    expect(leases.takeReset(own)).toBe(false);
+    leases.release(own);
+    const y = granted(leases.acquire(proj('y')));
+    expect(leases.takeReset(y)).toBe(true);
+    expect(leases.takeReset(y)).toBe(false); // taken once
+    leases.flagReset(y);
+    expect(leases.takeReset(y)).toBe(true);
+  });
+
   it('queues everyone, the owner first, while the pool is empty', () => {
     const { leases, setPool } = pooled();
     setPool([]);

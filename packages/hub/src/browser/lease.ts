@@ -57,6 +57,10 @@ export class LeaseManager {
   private readonly pool: () => PoolSlot[];
   /** Live leases by slot key. */
   private held = new Map<string, Lease>();
+  /** Who last held each slot (by slot key) — a project, or a project-less requester; never the owner. */
+  private lastTenant = new Map<string, string>();
+  /** Leases granted on a slot another tenant used last, whose session must be reset before first use. */
+  private dirty = new Set<string>();
   private waiting: Waiter[] = [];
   private listeners: ((status: LeaseStatus) => void)[] = [];
 
@@ -107,6 +111,7 @@ export class LeaseManager {
     const lease = this.byId(leaseId);
     if (!lease) return false;
     this.held.delete(key(lease));
+    this.dirty.delete(leaseId);
     this.pump();
     this.emit();
     return true;
@@ -143,6 +148,20 @@ export class LeaseManager {
     if (!lease) return false;
     lease.expiresAt = this.now() + this.ttlMs;
     return true;
+  }
+
+  /**
+   * True — once — when `leaseId` was granted on a slot a different project used last, so its session
+   * must be reset before the new holder's first action. The caller that takes it does the reset, and
+   * hands it back with `flagReset` if the reset failed.
+   */
+  takeReset(leaseId: string): boolean {
+    return this.dirty.delete(leaseId);
+  }
+
+  /** Marks a live lease as still needing its reset (the last attempt failed). */
+  flagReset(leaseId: string): void {
+    if (this.byId(leaseId)) this.dirty.add(leaseId);
   }
 
   /** The live lease with this id, or null. */
@@ -201,6 +220,7 @@ export class LeaseManager {
     for (const [k, lease] of this.held) {
       if (lease.expiresAt > now && inPool.has(k)) continue;
       this.held.delete(k);
+      this.dirty.delete(lease.leaseId);
       dropped.push(lease.leaseId);
     }
     const granted = this.pump();
@@ -281,8 +301,19 @@ export class LeaseManager {
 
   private grant(r: Requester, slot: SlotRef): Lease {
     const now = this.now();
+    const k = key(slot);
     const lease: Lease = { leaseId: randomUUID(), requester: r, expiresAt: now + this.ttlMs, node: slot.node, slot: slot.slot, since: now };
-    this.held.set(key(slot), lease);
+    const displaced = this.held.get(k);
+    if (displaced) this.dirty.delete(displaced.leaseId);
+    this.held.set(k, lease);
+    // The owner looking at (or taking over) a project's session is not a hand-over to someone else,
+    // so it neither resets the slot nor counts as its last tenant.
+    const tenant = tenantOf(r);
+    if (tenant !== null) {
+      const last = this.lastTenant.get(k);
+      if (last !== undefined && last !== tenant) this.dirty.add(lease.leaseId);
+      this.lastTenant.set(k, tenant);
+    }
     return lease;
   }
 
@@ -314,6 +345,12 @@ interface Waiter { requester: Requester; members: Requester[] }
 
 function key(s: SlotRef): string {
   return `${s.node}#${s.slot}`;
+}
+
+/** Whose session a slot holds: the project, or a project-less requester itself; null for the owner. */
+function tenantOf(r: Requester): string | null {
+  if (r.kind === 'owner') return null;
+  return r.project ? `project:${r.project}` : `${r.kind}:${r.id}`;
 }
 
 /**

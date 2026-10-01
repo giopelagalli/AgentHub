@@ -85,6 +85,8 @@ export class BrowserProxy {
   private readonly authHeader: string | undefined;
   private readonly actionTimeoutMs: number;
   private readonly screencastTimeoutMs: number;
+  /** In-flight slot resets by lease, so concurrent first actions wait on the same one. */
+  private readonly resets = new Map<string, Promise<void>>();
 
   constructor(deps: BrowserProxyDeps) {
     this.registry = deps.registry;
@@ -112,6 +114,7 @@ export class BrowserProxy {
     const url = lease ? this.urlOf(lease.node) : null;
     if (!lease || !url) throw new BrowserError(503, 'no browser node online');
     const target = { url, slot: lease.slot };
+    await this.resetIfHandedOver(leaseId, target);
 
     // A lease is one slot, so its recording (`<root>/<leaseId>/`) is that slot's session.
     const args = action.args ?? {};
@@ -173,6 +176,32 @@ export class BrowserProxy {
       },
       onFrame: (cb) => { callbacks.push(cb); },
     };
+  }
+
+  /**
+   * A slot that passes to a different project starts over in a fresh session (cookies, storage,
+   * history), so nothing of the last project carries over. Done before the new holder's first action
+   * rather than at grant time, so no action can race ahead of it; concurrent first actions share the
+   * one reset. A failed reset fails the action and stays owed for the next one.
+   */
+  private async resetIfHandedOver(leaseId: string, target: SlotTarget): Promise<void> {
+    const pending = this.resets.get(leaseId);
+    if (pending) return pending;
+    if (!this.leases.takeReset(leaseId)) return;
+    const reset = (async () => {
+      const res = await this.call(`${target.url}/browser/reset?slot=${target.slot}`, { method: 'POST', headers: this.headers(), body: '{}' }, this.actionTimeoutMs);
+      if (!res.ok) throw new BrowserError(res.status, await this.readBody(res, errorText, this.actionTimeoutMs));
+      await this.readBody(res, (r) => r.arrayBuffer(), this.actionTimeoutMs);
+    })();
+    this.resets.set(leaseId, reset);
+    try {
+      await reset;
+    } catch (err) {
+      this.leases.flagReset(leaseId);
+      throw err;
+    } finally {
+      this.resets.delete(leaseId);
+    }
   }
 
   private headers(): Record<string, string> {

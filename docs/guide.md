@@ -234,6 +234,9 @@ the harness is what reads files, edits them and runs commands.
   same tool calls, the same report, the same "files written" line. pi never gets a provider key: it
   calls models through the hub's own door (`/v1`), with a token made for that one run and revoked
   when it ends, so it is served by the same models — and the same failover — as everything else.
+- **Claude Code** — Anthropic's `claude` CLI, on *your Claude subscription* (Pro/Max), signed in
+  on the hub host. The hub never holds an API key for it and never uses the API: it runs the CLI
+  you logged in, which uses your plan's limits rather than a bill.
 
 **Installing pi on the hub host.** The hub only offers a harness it can actually start, so pi has
 to be on the hub machine's `PATH` — installing it in your laptop's terminal does nothing. On the
@@ -261,6 +264,26 @@ project's dependencies before giving its work to pi.
   "pi cannot be sandboxed on this host" with bubblewrap's own error.
 - A hub bound to one address (`HUB_HOST=100.x…`) cannot run pi: the sandbox only reaches
   loopback. Leave `HUB_HOST` unset (all interfaces) to use pi.
+
+**Signing Claude Code in on the hub host.** Install the CLI on the hub machine (see
+claude.com/claude-code) and, in a terminal *on that machine, as the user the hub runs as*, run
+`claude` once and log in with your Claude account. That's all — the hub checks
+`claude auth status` per request and offers **Claude Code** in the Harness list once it says you
+are signed in with a subscription. If the list says "claude is not signed in on this host", do the
+login again there; an API-key login is refused on purpose.
+
+Claude Code runs in the same sandbox as pi with one difference: it talks to Anthropic itself, so
+its network is any HTTPS host rather than the hub's door. It can read your Claude login (it needs
+to), and anything else it can read it could send out over HTTPS — give it ordinary workspace work,
+like pi. Its runs show tokens on the usage page with no dollar figure and never count toward the
+daily cloud cap; your subscription's own limits apply instead. Choosing it for an employee means
+their tasks go to Anthropic's cloud — except in a **Local-only** project, which never runs Claude
+Code: those tasks stay on the built-in loop and the turn log says why. The reviewer never runs on
+it.
+
+For now Claude Code runs on a **macOS** hub only. On Linux the sandbox could only give it the
+host's whole network, your local services included, so the Harness list says "claude-code's
+network sandbox is not yet available on Linux" until that can be narrowed to HTTPS.
 
 **Choosing it.** Open an employee's drawer — click their face on the Overview — and use the
 **Harness** select under Model. The field only appears when there is more than one harness to pick

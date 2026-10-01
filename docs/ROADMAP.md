@@ -79,6 +79,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
   pi not offered where the sandbox cannot start. The reviewer on pi behind `HARNESS_REVIEWER_PI=1`.
 
+- `claude-code` harness (FR-G3, 0064): the `claude` CLI on the hub host's signed-in subscription,
+  stream-json mapped onto the turn feed, in the same sandbox with outbound HTTPS (verified end to
+  end on macOS), usage as `anthropic-subscription` rows with no dollars, offered only when
+  `claude auth status` shows a subscription login. macOS only; never for Local-only projects.
 - Each project's live browser (FR-B7, 0063): Code → Browser shows the project's slot of the pool
   with Take control / Release, its place in the queue when every slot is busy, and a live dot on
   the switch while it holds one.
@@ -104,8 +108,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 2. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
-   a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
-   pi (and `bubblewrap`) on a node.
+   a project-level Harness select in the header, claude-code on Linux once its egress can be
+   narrowed to HTTPS (a proxy over a socket or a filtered namespace, 0064), and the installer
+   putting pi (and `bubblewrap`) on a node.
 3. JD drives the hub — JD's tools against the assistant scope (plan Phase 1); the web door (FR-C4–C5).
 4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
    over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).

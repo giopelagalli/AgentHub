@@ -6,7 +6,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  DOOR_BRIDGE_SOURCE, SANDBOX_EXEC, hiddenPaths, sandboxedCommand, sandboxStatus, serveDoorSocket,
+  DOOR_BRIDGE_SOURCE, HTTPS_ON_LINUX, SANDBOX_EXEC, hiddenPaths, sandboxedCommand, sandboxStatus, serveDoorSocket,
   type ProbeRunner, type SandboxOptions,
 } from '../src/agents/harness/sandbox.js';
 
@@ -119,6 +119,53 @@ describe('sandboxedCommand on Linux', () => {
     if ('unavailable' in c) throw new Error(c.unavailable);
     expect(hasRun(c.args, '--ro-bind', '/data/projects/demo/workspace', '/data/projects/demo/workspace')).toBe(true);
     expect(hasRun(c.args, '--bind', '/data/projects/demo/workspace')).toBe(false);
+  });
+});
+
+describe('the https network (claude-code, decision 0064)', () => {
+  const https = (over: Partial<SandboxOptions> = {}): SandboxOptions => ({
+    workspace: '/data/projects/demo/workspace', tmpDir: '/tmp/agenthub-claude-x', https: true, keychain: true,
+    writableWorkspace: true, hidden: [], argv: ['claude', '-p', '--', 'task'], ...over,
+  } as SandboxOptions);
+
+  it('on macOS allows outbound 443, name resolution and the keychain, and no door', () => {
+    const c = sandboxedCommand('darwin', https());
+    if ('unavailable' in c) throw new Error(c.unavailable);
+    const profile = resolvedProfile(c.args);
+    expect(profile).toContain('(deny default)');
+    expect(profile).toContain('(allow network-outbound (remote tcp "*:443"))');
+    expect(profile).toContain('(allow network-outbound (literal "/private/var/run/mDNSResponder"))');
+    expect(profile).toContain('(global-name "com.apple.SecurityServer")');
+    expect(profile).not.toContain('localhost:');
+    expect(profile).not.toContain('network*');
+    expect(allowsWrite(profile, '/data/projects/demo/workspace')).toBe(true);
+    expect(allowsWrite(profile, '/tmp/agenthub-claude-x')).toBe(true);
+    expect(c.args.slice(-4)).toEqual(['claude', '-p', '--', 'task']);
+  });
+
+  it('reaches the keychain only when asked, and pi never is', () => {
+    for (const o of [https({ keychain: false }), opts()]) {
+      const c = sandboxedCommand('darwin', o);
+      if ('unavailable' in c) throw new Error(c.unavailable);
+      expect(resolvedProfile(c.args)).not.toContain('SecurityServer');
+    }
+  });
+
+  it('is unavailable on Linux, where bwrap could only share the whole host network, loopback included', async () => {
+    expect(sandboxedCommand('linux', https())).toEqual({ unavailable: HTTPS_ON_LINUX });
+    const asked: string[][] = [];
+    const run: ProbeRunner = async (_cmd, args) => { asked.push(args); return { ok: true }; };
+    expect(await sandboxStatus({ https: true, platform: 'linux', run })).toEqual({ available: false, reason: HTTPS_ON_LINUX });
+    expect(asked).toEqual([]);
+    // pi's door sandbox on Linux is unaffected.
+    expect(await sandboxStatus({ platform: 'linux', run })).toEqual({ available: true });
+  });
+
+  it('probes the https sandbox on macOS with the network rule it will run with', async () => {
+    const asked: string[][] = [];
+    const run: ProbeRunner = async (_cmd, args) => { asked.push(args); return { ok: true }; };
+    expect(await sandboxStatus({ https: true, platform: 'darwin', run })).toEqual({ available: true });
+    expect(resolvedProfile(asked[0])).toContain('(allow network-outbound (remote tcp "*:443"))');
   });
 });
 

@@ -10,7 +10,8 @@ import type { SessionOutcome } from '../transcript.js';
  * reads a `pi` subagent's report exactly as it reads a built-in one (FR-G1).
  *
  * `builtin` is the hub's own tool loop and stays the manager's runtime and everyone's fallback;
- * `pi` drives the open-source coding agent as a subprocess in the workspace (FR-G2).
+ * `pi` drives the open-source coding agent as a subprocess in the workspace (FR-G2); `claude-code`
+ * drives the `claude` CLI on the host's signed-in subscription (FR-G3).
  */
 export interface Harness {
   kind: HarnessKind;
@@ -87,6 +88,7 @@ export interface HarnessResult {
 
 export { builtinHarness } from './builtin.js';
 export { piHarness } from './pi.js';
-export { harnessStatus, piBinary } from './detect.js';
+export { claudeCodeHarness } from './claude-code.js';
+export { claudeBinary, claudeCodeStatus, harnessStatus, piBinary } from './detect.js';
 export { harnessRoutes } from './routes.js';
 export { selectHarness, type HarnessSelection, type HarnessSelectOptions } from './select.js';

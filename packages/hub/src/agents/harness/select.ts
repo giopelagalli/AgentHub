@@ -4,7 +4,8 @@ import type { ProjectBundle } from '../../projects/bundle.js';
 import type { AgentLoop } from '../loop.js';
 import type { Tool } from '../tools.js';
 import { builtinHarness } from './builtin.js';
-import { piBinary } from './detect.js';
+import { claudeCodeHarness } from './claude-code.js';
+import { claudeCodeStatus, piBinary } from './detect.js';
 import { piHarness } from './pi.js';
 import { sandboxStatus } from './sandbox.js';
 import type { Harness, HarnessDoor } from './index.js';
@@ -47,7 +48,7 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
       ...(note ? { note } : {}),
     }),
   });
-  /** A pi request that cannot be honoured: said in the job log and recorded in the run's session. */
+  /** A harness request that cannot be honoured: said in the job log and recorded in the run's session. */
   const fallback = (reason: string): HarnessSelection => {
     const note = `${reason}; running on the built-in loop`;
     opts.log(note);
@@ -57,7 +58,7 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
   // The manifest is hand-editable YAML, so its value is checked rather than trusted.
   const asked: unknown = opts.member?.harness ?? (await opts.bundle?.manifest())?.harness;
   const wanted: HarnessKind = HARNESS_KINDS.includes(asked as HarnessKind) ? (asked as HarnessKind) : 'builtin';
-  if (wanted === 'claude-code') return fallback('claude-code is not implemented yet');
+  if (wanted === 'claude-code') return claudeCode(opts, builtin, fallback);
   if (wanted !== 'pi') return builtin();
   // FR-G4: the reviewer judges a milestone with read-only tools. pi can now be both restricted
   // (`--tools read,grep,find,ls`) and contained (decision 0055), but the review task is written for
@@ -78,6 +79,34 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
       bin: bin.path,
       transcript: opts.loop.transcript,
       door: { base, tokens: opts.door.tokens },
+      ...(opts.onBusy ? { onBusy: opts.onBusy } : {}),
+    }),
+  };
+}
+
+/**
+ * The claude-code choice (FR-G3, decision 0064), with the same refusals as pi's where they apply.
+ * There is no door to check: the CLI reaches Anthropic itself, on the host's own subscription.
+ */
+async function claudeCode(
+  opts: HarnessSelectOptions, builtin: () => HarnessSelection, fallback: (reason: string) => HarnessSelection,
+): Promise<HarnessSelection> {
+  // The milestone reviewer stays on the built-in loop: its task is written for the built-in belt.
+  if (opts.pinnedTools) return builtin();
+  if (opts.extras.length) return fallback(`claude-code has no ${opts.extras.map((t) => t.def.name).join('/')}`);
+  if (!opts.bundle) return builtin();
+  // A local-only project's work never leaves the cluster; claude-code would send it to Anthropic.
+  if (opts.route?.prefer === 'local') {
+    return fallback("the project's model policy is local-only and claude-code sends the workspace to Anthropic");
+  }
+  const status = await claudeCodeStatus();
+  if (!status.available) return fallback(status.reason);
+  if (status.note) opts.log(`claude-code: ${status.note}`);
+  return {
+    harness: claudeCodeHarness({
+      bin: status.bin,
+      transcript: opts.loop.transcript,
+      onUsage: (u) => opts.loop.recordUsage(u),
       ...(opts.onBusy ? { onBusy: opts.onBusy } : {}),
     }),
   };

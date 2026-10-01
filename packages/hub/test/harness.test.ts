@@ -19,6 +19,7 @@ import { runSubagent, type Tool, type ToolContext } from '../src/agents/tools.js
 import { harnessStatus, type HarnessDoor } from '../src/agents/harness/index.js';
 import { createHub, type Hub } from '../src/server.js';
 import type { SandboxOptions, SandboxStatus } from '../src/agents/harness/sandbox.js';
+import { FAKE_CLAUDE } from './fake-claude.js';
 
 /**
  * The OS sandbox, stood in for: these tests are about the adapter, and the fake pi writes its log
@@ -128,6 +129,10 @@ beforeEach(async () => {
   await mkdir(binDir, { recursive: true });
   await writeFile(join(binDir, 'pi'), FAKE_PI, 'utf8');
   await chmod(join(binDir, 'pi'), 0o755);
+  // A signed-out claude shadows any real one on the host: these tests must never reach it.
+  await writeFile(join(binDir, 'claude'), FAKE_CLAUDE, 'utf8');
+  await chmod(join(binDir, 'claude'), 0o755);
+  process.env.FAKE_CLAUDE_AUTH = 'signed-out';
   process.env.PATH = `${binDir}${delimiter}${savedPath ?? ''}`;
   process.env.FAKE_PI_LOG = logPath;
   process.env.FAKE_PI_MODE = 'report';
@@ -156,6 +161,7 @@ afterEach(async () => {
   delete process.env.FAKE_PI_LOG;
   delete process.env.FAKE_PI_MODE;
   delete process.env.HARNESS_REVIEWER_PI;
+  delete process.env.FAKE_CLAUDE_AUTH;
 });
 
 const member = (over: Partial<TeamMember> = {}): TeamMember => ({
@@ -411,11 +417,13 @@ describe('choosing a harness', () => {
     }
   });
 
-  it('runs claude-code on the built-in loop, saying it is not implemented yet', async () => {
+  it('runs claude-code on the built-in loop, saying why, when its CLI is not signed in', async () => {
     await setProjectHarness('claude-code');
     await runFor(member({ harness: undefined }));
     expect(existsSync(logPath)).toBe(false);
-    expect(sessionEvents()).toContain('claude-code is not implemented yet; running on the built-in loop');
+    expect(mock.requests.length).toBeGreaterThan(0);
+    expect(sessionEvents()).toContain('claude is not signed in on this host');
+    expect(sessionEvents()).toContain('; running on the built-in loop');
   });
 
   it('runs on the built-in loop when the manifest names a harness that does not exist', async () => {
@@ -448,7 +456,10 @@ describe('the harness API', () => {
     expect(await harnessStatus()).toEqual([
       { kind: 'builtin', available: true },
       { kind: 'pi', available: true, version: '0.73.1-fake' },
-      { kind: 'claude-code', available: false },
+      {
+        kind: 'claude-code', available: false, version: '2.1.0-fake (Claude Code)',
+        reason: 'claude is not signed in on this host: run `claude` once in a terminal there and log in',
+      },
     ]);
 
     hubRoot = await mkdtemp(join(tmpdir(), 'agenthub-harness-api-'));

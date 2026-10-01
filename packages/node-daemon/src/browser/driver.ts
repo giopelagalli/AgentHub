@@ -27,6 +27,8 @@ export interface BrowserDriver {
   type(selector: string, text: string, submit?: boolean): Promise<PageState>;
   /** JPEG, at most 640px wide. */
   screenshot(): Promise<Buffer>;
+  /** Starts the slot over in a fresh, empty session — the hub's call when the slot changes project. */
+  reset(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -39,7 +41,7 @@ export const FAKE_JPEG = Buffer.from(
 /** A page in `FakeDriver`'s in-memory web. */
 export interface FakePage { title: string; text: string; links?: PageLink[] }
 
-export interface FakeCall { op: 'navigate' | 'read' | 'click' | 'type' | 'screenshot' | 'close'; args: unknown[] }
+export interface FakeCall { op: 'navigate' | 'read' | 'click' | 'type' | 'screenshot' | 'reset' | 'close'; args: unknown[] }
 
 const BLANK: FakePage = { title: '(blank)', text: '', links: [] };
 
@@ -92,6 +94,11 @@ export class FakeDriver implements BrowserDriver {
   async screenshot(): Promise<Buffer> {
     this.calls.push({ op: 'screenshot', args: [] });
     return FAKE_JPEG;
+  }
+
+  async reset(): Promise<void> {
+    this.calls.push({ op: 'reset', args: [] });
+    this.current = 'about:blank';
   }
 
   async close(): Promise<void> {

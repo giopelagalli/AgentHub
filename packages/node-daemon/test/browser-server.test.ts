@@ -76,6 +76,20 @@ describe('browser server', () => {
     expect(slot1.calls.map((c) => c.op)).toEqual(['navigate', 'read']);
   });
 
+  it('resets only the named slot, back to a blank session', async () => {
+    const slot0 = new FakeDriver(PAGES);
+    const slot1 = new FakeDriver(PAGES);
+    app = createBrowserServer([slot0, slot1]);
+    await app.inject({ method: 'POST', url: '/browser/navigate?slot=0', payload: { url: 'https://start.test/' } });
+    await app.inject({ method: 'POST', url: '/browser/navigate?slot=1', payload: { url: 'https://start.test/docs' } });
+
+    const res = await app.inject({ method: 'POST', url: '/browser/reset?slot=1' });
+    expect(res.json()).toEqual({ reset: true });
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=1' })).json()).toEqual({ url: 'about:blank', title: '(blank)' });
+    expect((await app.inject({ method: 'GET', url: '/browser/state?slot=0' })).json()).toEqual({ url: 'https://start.test/', title: 'Start' });
+    expect(slot0.calls.some((c) => c.op === 'reset')).toBe(false);
+  });
+
   it('400s a slot the browser does not have', async () => {
     app = createBrowserServer([new FakeDriver()]);
     for (const slot of ['1', '-1', 'x']) {
@@ -137,6 +151,7 @@ describe('browser server', () => {
       click: async () => { throw new Error('no element'); },
       type: async () => { throw new Error('no element'); },
       screenshot: async () => { throw new Error('screenshot failed'); },
+      reset: async () => { throw new Error('context gone'); },
       close: async () => {},
     };
     app = createBrowserServer(broken);
@@ -276,6 +291,7 @@ describe('daemon browser capability', () => {
       click: async () => ({ url: 'x', title: 'x' }),
       type: async () => ({ url: 'x', title: 'x' }),
       screenshot: async () => Buffer.from(''),
+      reset: async () => {},
       close: async () => { throw new Error('driver close boom'); },
     };
     daemon = new Daemon(loadConfig(cfgPath), { createBrowserDrivers: async () => [rejectingDriver] });

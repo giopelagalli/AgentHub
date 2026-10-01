@@ -24,6 +24,7 @@ interface PageDocument { querySelectorAll(selector: string): Iterable<{ textCont
 interface PwBrowser {
   newContext(opts: { viewport: { width: number; height: number }; deviceScaleFactor: number }): Promise<PwContext>;
   close(): Promise<void>;
+  on(event: 'disconnected', cb: () => void): void;
 }
 interface PwModule { chromium: { launch(opts: { headless: boolean; env?: NodeJS.ProcessEnv }): Promise<PwBrowser> } }
 
@@ -40,10 +41,27 @@ const VIEWPORT = { width: 1280, height: 720 };
 const SCALE = 0.5;
 const JPEG_QUALITY = 60;
 const ACTION_TIMEOUT_MS = 15_000;
+/** Bounds closing one context, under the daemon's own per-driver close timeout, so a hung context can't keep Chromium alive. */
+const CONTEXT_CLOSE_TIMEOUT_MS = 3_000;
+
+/** Resolves when `p` settles or after `ms`, whichever is first; never rejects. */
+async function settleWithin(p: Promise<unknown>, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([p.catch(() => {}), new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
+  clearTimeout(timer);
+}
+
+/** A fresh isolated context and its one page — what a slot starts as, and what `reset()` returns it to. */
+type OpenSession = () => Promise<{ context: PwContext; page: PwPage }>;
 
 /** One slot: a page in its own context (cookies, storage, cache), so slots never see each other. */
 class PlaywrightDriver implements BrowserDriver {
-  constructor(private context: PwContext, private page: PwPage, private onClosed: () => Promise<void>) {}
+  private constructor(private context: PwContext, private page: PwPage, private open: OpenSession, private onClosed: () => Promise<void>) {}
+
+  static async create(open: OpenSession, onClosed: () => Promise<void>): Promise<PlaywrightDriver> {
+    const { context, page } = await open();
+    return new PlaywrightDriver(context, page, open, onClosed);
+  }
 
   private async state(): Promise<PageState> {
     return { url: this.page.url(), title: await this.page.title() };
@@ -87,19 +105,29 @@ class PlaywrightDriver implements BrowserDriver {
     return this.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY });
   }
 
-  /** Closes this slot's context; the browser process goes once the last slot has closed. */
+  /** Throws the slot's context away — cookies, storage, history — and opens a fresh one. */
+  async reset(): Promise<void> {
+    await settleWithin(this.context.close(), CONTEXT_CLOSE_TIMEOUT_MS);
+    ({ context: this.context, page: this.page } = await this.open());
+  }
+
+  /**
+   * Closes this slot's context, bounded, and then — whatever the context did — hands over to
+   * `onClosed`, which closes the browser process once every slot has closed.
+   */
   async close(): Promise<void> {
-    try {
-      await this.context.close();
-    } finally {
-      await this.onClosed();
-    }
+    await settleWithin(this.context.close(), CONTEXT_CLOSE_TIMEOUT_MS);
+    await this.onClosed();
   }
 }
 
 /**
  * Launches one Chromium and returns `slots` drivers, each on its own isolated context (decision
  * 0059: contexts in one browser rather than a browser per slot). Throws if playwright isn't installed.
+ *
+ * Chromium dying under us (a crash, an OOM kill) takes every slot with it and nothing here can bring
+ * it back, so the daemon exits non-zero and its service manager (systemd/launchd) restarts it with a
+ * fresh browser; the hub sees the node re-register. Only a disconnect we didn't cause does this.
  */
 export async function createPlaywrightDrivers(opts: PlaywrightDriverOptions = {}, slots = 1): Promise<BrowserDriver[]> {
   const specifier = 'playwright';
@@ -108,17 +136,26 @@ export async function createPlaywrightDrivers(opts: PlaywrightDriverOptions = {}
     headless: opts.headless ?? true,
     ...(opts.display ? { env: { ...process.env, DISPLAY: opts.display } } : {}),
   });
-  let open = slots;
+  let closing = false;
+  browser.on('disconnected', () => {
+    if (closing) return;
+    console.error('[daemon] browser process disconnected unexpectedly — exiting so the service manager restarts the daemon');
+    process.exit(1);
+  });
+  let remaining = slots;
   const onClosed = async (): Promise<void> => {
-    if (--open === 0) await browser.close();
+    closing = true;
+    if (--remaining === 0) await browser.close();
+  };
+  const open: OpenSession = async () => {
+    const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
+    return { context, page: await context.newPage() };
   };
   const drivers: BrowserDriver[] = [];
   try {
-    for (let i = 0; i < slots; i++) {
-      const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
-      drivers.push(new PlaywrightDriver(context, await context.newPage(), onClosed));
-    }
+    for (let i = 0; i < slots; i++) drivers.push(await PlaywrightDriver.create(open, onClosed));
   } catch (err) {
+    closing = true;
     await browser.close().catch(() => {});
     throw err;
   }

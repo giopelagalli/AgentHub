@@ -62,6 +62,12 @@ export function createBrowserServer(drivers: BrowserDriver | BrowserDriver[]): F
     return run(reply, () => driver.type(selector, text, submit === true));
   });
 
+  // The hub's call when a slot passes to a different project: nothing of the last one carries over.
+  app.post('/browser/reset', async (req, reply) => {
+    const driver = slotDriver(req, reply);
+    return driver ? run(reply, async () => { await driver.reset(); return { reset: true }; }) : reply;
+  });
+
   app.get('/browser/screenshot', async (req, reply) => {
     const driver = slotDriver(req, reply);
     if (!driver) return reply;

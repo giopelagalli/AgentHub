@@ -116,6 +116,7 @@ export function handleWsMessage(store: Store, raw: string): void {
       type: 'browser-frame',
       frame: {
         nodeName: frame.nodeName,
+        slot: typeof frame.slot === 'number' ? frame.slot : 0,
         leaseId: typeof frame.leaseId === 'string' ? frame.leaseId : null,
         jpegBase64: frame.jpegBase64,
         at: frame.at,

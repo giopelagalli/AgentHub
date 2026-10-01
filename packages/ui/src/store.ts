@@ -20,10 +20,15 @@ export function turnsOf(state: UiState, slug: string | null): ProjectTurns {
 /** One screencast frame off the `browser` topic; `jpegBase64` is decoded by the page. */
 export interface BrowserFrame {
   nodeName: string;
+  /** The pool slot on `nodeName` it shows; 0 from a hub that predates the pool. */
+  slot: number;
   leaseId: string | null;
   jpegBase64: string;
   at: number;
 }
+
+/** Key for `browserFrames`: one slot of the browser pool. */
+export const slotKey = (node: string, slot: number): string => `${node}#${slot}`;
 
 /** Key for the `projectBusy` set: one project agent in one project. */
 export function chatKey(slug: string, who: string): string {
@@ -43,7 +48,8 @@ export interface UiState {
   prdSeed: { slug: string; questions: string[] } | null;
   connection: 'live' | 'polling' | 'down';
   /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
-  browserFrame: BrowserFrame | null;
+  /** The newest frame of every slot being cast, by `slotKey`. */
+  browserFrames: Record<string, BrowserFrame>;
   /** Per project slug: its recent turns, the running one included. */
   turns: Record<string, ProjectTurns>;
 }
@@ -72,7 +78,7 @@ export class Store {
     project: null,
     prdSeed: null,
     connection: 'down',
-    browserFrame: null,
+    browserFrames: {},
     turns: {},
   };
   private listeners = new Set<(s: UiState) => void>();
@@ -113,13 +119,13 @@ export class Store {
       case 'busy-reset':
         this.state = { ...this.state, busy: new Set(), projectBusy: new Set() };
         break;
-      // Leaving the computer page drops the last frame: the cast stops with the
+      // Leaving the computer page drops the last frames: the cast stops with the
       // unsubscribe, and coming back to a frozen still would read as live.
       case 'set-page':
         this.state = {
           ...this.state,
           page: event.page,
-          browserFrame: event.page === 'computer' ? this.state.browserFrame : null,
+          browserFrames: event.page === 'computer' ? this.state.browserFrames : {},
         };
         break;
       case 'set-project':
@@ -131,9 +137,11 @@ export class Store {
       case 'prd-seed-taken':
         this.state = { ...this.state, prdSeed: null };
         break;
-      case 'browser-frame':
-        this.state = { ...this.state, browserFrame: event.frame };
+      case 'browser-frame': {
+        const key = slotKey(event.frame.nodeName, event.frame.slot);
+        this.state = { ...this.state, browserFrames: { ...this.state.browserFrames, [key]: event.frame } };
         break;
+      }
       case 'turn-event': {
         const held = turnsOf(this.state, event.frame.slug);
         const turns = applyTurnEvent(held.turns, event.frame);

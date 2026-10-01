@@ -69,7 +69,7 @@ function hubState(projects: ProjectManifest[]): HubState {
 function uiState(overrides: Partial<UiState> = {}): UiState {
   return {
     hub: null, busy: new Set(), projectBusy: new Set(), page: 'projects',
-    project: null, prdSeed: null, connection: 'down', browserFrame: null, turns: {},
+    project: null, prdSeed: null, connection: 'down', browserFrames: {}, turns: {},
     ...overrides,
   };
 }

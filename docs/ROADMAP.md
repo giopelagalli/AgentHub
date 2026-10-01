@@ -111,8 +111,8 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 2. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
-   claude-code on Linux once its egress can be narrowed to HTTPS (a proxy over a socket or a filtered namespace, 0064), and the installer
-   putting pi (and `bubblewrap`) on a node.
+   claude-code on Linux once its egress can be narrowed to HTTPS (a proxy over a socket or a
+   filtered namespace, 0064), and the installer putting pi (and `bubblewrap`) on a node.
 3. JD drives the hub — JD's tools against the assistant scope (plan Phase 1); the web door (FR-C4–C5).
 4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
    over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).

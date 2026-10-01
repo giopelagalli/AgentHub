@@ -93,14 +93,15 @@ line and is the only route family outside `/api/` that is guarded.
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
 marks unhealthy endpoints, sends per-endpoint `priority` — or a caller's per-request
 `priorityOverride` (0035) — and `requestExtras` (0006, 0008),
-refuses switched-off models and cloud past the spend cap (0002, 0019, 0024). It is the only place
+refuses switched-off models and cloud past the spend cap (0002, 0019, 0024), and skips drained
+and models-paused nodes (0054). It is the only place
 a model is ever called, and it prices each request as it finishes.
 
 **`providers/`** — `anthropic.ts` (SDK streaming) and `fireworks.ts` (base URL, the curated
 model list with `hard` flags and prices, the key env). No I/O beyond what the gateway asks.
 
 **`node-registry.ts`** / **`db.ts`** / **`queue.ts`** — nodes (with owner, token hash,
-draining, hardware), the SQLite schema with `ensureColumn` migrations, and the priority job queue
+draining, models-paused, hardware), the SQLite schema with `ensureColumn` migrations, and the priority job queue
 with fencing and requeue-on-offline. SQLite because one hub, tens of projects, a few users.
 
 **`enrollment.ts`** — one-time enrollment tokens, hashing, the install command; the hub serves

@@ -305,6 +305,14 @@ whatever it's already running finishes, and **Undrain** reverses it. **Remove** 
 outright — its daemon exits once the hub tells it so — so getting it back means re-running its
 service or install.
 
+**⋯ → Pause models** is the narrower lever: the node stays online, keeps heartbeating and keeps
+claiming jobs, but the model gateway stops picking its serving endpoints, so chat and agent turns go
+elsewhere. **Resume models** puts them back. Use it to stop generating on a local model without
+taking the machine offline; use **Drain** when the machine should take no work at all. With every
+local model paused, projects set to Auto fall through to the cloud tier, subject to
+`MAX_CLOUD_USD_PER_DAY`, while projects set to Local fail with "no capacity … (local models paused)"
+rather than spend.
+
 A node is *offline* when its heartbeats stop; the hub requeues its jobs and routes around it.
 
 The one-command installer is `curl -fsSL <hub>/install.sh | sh -s -- --hub <hub> --token <token>`,

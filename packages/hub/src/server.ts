@@ -1014,6 +1014,18 @@ export function createHub(opts: HubOptions = {}): Hub {
     return { ok: true };
   });
 
+  // Narrower than drain: only the gateway stops picking the node's endpoints. It stays online and
+  // keeps claiming jobs, so the owner can send generation to the cloud tier without taking a machine offline.
+  app.post('/api/nodes/:name/models', async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });
+    const body = req.body as Partial<{ paused: boolean }> | undefined;
+    if (!body || typeof body.paused !== 'boolean') return reply.code(400).send({ error: 'invalid models request' });
+    if (!registry.setModelsPaused(name, body.paused)) return reply.code(404).send({ error: 'unknown node' });
+    broadcastState();
+    return { ok: true };
+  });
+
   app.delete('/api/nodes/:name', async (req, reply) => {
     const { name } = req.params as { name: string };
     if (cloudNodes.includes(name)) return reply.code(409).send({ error: 'reserved node name' });

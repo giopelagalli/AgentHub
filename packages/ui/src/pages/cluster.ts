@@ -46,10 +46,19 @@ export function cloudSpendText(report: UsageReport | null): string {
   return `Cloud spend: ${spent > 0 ? formatUsd(spent) : '$0.00'} in the last 24 h${cap === null ? '' : ` · cap ${formatUsd(cap)}`}`;
 }
 
-/** Which buttons a node's row gets. The synthetic cloud nodes aren't machines, so they get none. */
-export function nodeActions(node: NodeInfo): ('drain' | 'undrain' | 'remove')[] {
+type NodeAction = 'drain' | 'undrain' | 'pause-models' | 'resume-models' | 'remove';
+
+/**
+ * Which entries a node's ⋯ menu gets. The synthetic cloud nodes aren't machines, so they get none;
+ * pausing models only means something for a node that serves some.
+ */
+export function nodeActions(node: NodeInfo): NodeAction[] {
   if (node.arch === 'cloud') return [];
-  return [node.draining ? 'undrain' : 'drain', 'remove'];
+  const actions: NodeAction[] = [node.draining ? 'undrain' : 'drain'];
+  if (node.modelsPaused) actions.push('resume-models');
+  else if (node.endpoints.length) actions.push('pause-models');
+  actions.push('remove');
+  return actions;
 }
 
 /** What a node advertises beyond its model endpoints. */
@@ -120,7 +129,7 @@ function copyBox(note: string, what: string): { root: HTMLElement; show: (value:
 
 /** The dot a node's state earns: green online, amber draining, red offline. */
 function nodeDot(node: NodeInfo): string {
-  if (node.draining) return 'dot dot--needs';
+  if (node.draining || node.modelsPaused) return 'dot dot--needs';
   return node.status === 'online' ? 'dot dot--working' : 'dot dot--error';
 }
 
@@ -128,11 +137,11 @@ function nodeDot(node: NodeInfo): string {
 function nodeRow(node: NodeInfo, streams: Record<string, number>): HTMLElement {
   const row = el('div', 'mrow');
   const dot = el('span', nodeDot(node));
-  const state = node.draining ? 'draining' : node.status;
+  const state = node.draining ? 'draining' : node.modelsPaused ? 'models paused' : node.status;
   dot.title = state;
   const text = el('div', 'mrow__text');
   const top = el('div', 'mrow__top');
-  top.append(el('span', 'mrow__name', node.name), el('span', `mrow__state mrow__state--${state}`, state));
+  top.append(el('span', 'mrow__name', node.name), el('span', `mrow__state mrow__state--${state.replace(' ', '-')}`, state));
   if (node.arch === 'cloud') top.appendChild(el('span', 'mrow__tag', 'cloud'));
   for (const extra of extras(node)) top.appendChild(el('span', 'mrow__tag', extra));
   text.append(top, el('span', 'mrow__sub mono', serving(node)));
@@ -152,6 +161,15 @@ function nodeRow(node: NodeInfo, streams: Record<string, number>): HTMLElement {
           if (!window.confirm(`Remove ${node.name}? Its daemon will exit; re-run its install to add it back.`)) return;
           void sendJson(`/api/nodes/${encodeURIComponent(node.name)}`, undefined, 'DELETE')
             .catch((error: unknown) => toast(`Could not remove ${node.name}: ${String(error)}`, 'error'));
+        },
+      }
+      : action === 'pause-models' || action === 'resume-models'
+      ? {
+        label: action === 'pause-models' ? 'Pause models — stop using this node for generation' : 'Resume models — use this node again',
+        icon: action === 'pause-models' ? 'pause' : 'play',
+        onSelect: () => {
+          void sendJson(`/api/nodes/${encodeURIComponent(node.name)}/models`, { paused: action === 'pause-models' })
+            .catch((error: unknown) => toast(`Could not ${action === 'pause-models' ? 'pause' : 'resume'} models on ${node.name}: ${String(error)}`, 'error'));
         },
       }
       : {

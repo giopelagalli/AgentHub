@@ -78,6 +78,17 @@ describe('NodeRegistry', () => {
     expect(registry.setDraining('ghost', true)).toBe(false);
   });
 
+  it('defaults modelsPaused to false; setModelsPaused toggles and persists it, and re-registering keeps it', () => {
+    expect(registry.register(reg('spark'), 100).modelsPaused).toBe(false);
+    expect(registry.setModelsPaused('spark', true)).toBe(true);
+    expect(registry.byName('spark')?.modelsPaused).toBe(true);
+    // A daemon restart re-registers; the owner's pause must survive it, like draining does.
+    expect(registry.register(reg('spark'), 200).modelsPaused).toBe(true);
+    expect(registry.setModelsPaused('spark', false)).toBe(true);
+    expect(registry.byName('spark')?.modelsPaused).toBe(false);
+    expect(registry.setModelsPaused('ghost', true)).toBe(false);
+  });
+
   it('remove deletes the node from memory and the db table', () => {
     registry.register(reg('spark'), 100);
     expect(registry.remove('spark')).toBe(true);
@@ -142,6 +153,9 @@ describe('nodes table migration', () => {
     expect(registry.byName('legacy')?.draining).toBe(false);
     expect(registry.setDraining('legacy', true)).toBe(true);
     expect(registry.byName('legacy')?.draining).toBe(true);
+    expect(registry.byName('legacy')?.modelsPaused).toBe(false);
+    expect(registry.setModelsPaused('legacy', true)).toBe(true);
+    expect(registry.byName('legacy')?.modelsPaused).toBe(true);
     migrated.close();
   });
 });

@@ -1,3 +1,5 @@
+import './styles/tokens.css';
+import './styles/controls.css';
 import './app.css';
 import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';

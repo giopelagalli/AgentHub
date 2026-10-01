@@ -5,9 +5,9 @@ import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
 import { python } from '@codemirror/lang-python';
-import { indentUnit } from '@codemirror/language';
+import { defaultHighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { oneDarkHighlightStyle } from '@codemirror/theme-one-dark';
 import {
   EditorView, drawSelection, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers,
 } from '@codemirror/view';
@@ -15,8 +15,8 @@ import {
 /**
  * The Code screen's editor: CodeMirror 6, assembled by hand rather than through `basic-setup`.
  *
- * Only what the screen actually needs is loaded — a gutter, history, a dark theme and one language
- * per file type — because every extension is bundle weight the whole app pays for. Autocompletion,
+ * Only what the screen actually needs is loaded — a gutter, history, a theme and one language per
+ * file type — because every extension is bundle weight the whole app pays for. Autocompletion,
  * linting, search and folding are deliberately absent: this is where the owner reads their agents'
  * code and fixes a line, not an IDE.
  */
@@ -65,9 +65,37 @@ export interface EditorOptions {
   onSave(): void;
 }
 
+/**
+ * The editor's chrome is the app's own tokens, so it is light in the light theme and dark in the
+ * dark one without a second stylesheet; only the syntax colours have to be swapped by hand.
+ */
+const chrome = EditorView.theme({
+  '&': { height: '100%', color: 'var(--label)', backgroundColor: 'var(--bg)', fontSize: '13px' },
+  '.cm-content': { fontFamily: 'var(--mono)', caretColor: 'var(--accent)' },
+  '.cm-scroller': { fontFamily: 'var(--mono)', lineHeight: '1.6' },
+  '.cm-gutters': { color: 'var(--label-4)', backgroundColor: 'var(--bg)', border: 'none' },
+  '.cm-activeLineGutter': { color: 'var(--label-2)', backgroundColor: 'transparent' },
+  '.cm-activeLine': { backgroundColor: 'var(--hover)' },
+  '.cm-cursor': { borderLeftColor: 'var(--accent)' },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { backgroundColor: 'var(--accent-soft) !important' },
+  '&.cm-focused': { outline: 'none' },
+});
+
+const darkQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+
+/** Whether the page is dark right now: a pinned `data-theme` wins over the system. */
+function isDark(): boolean {
+  const pinned = document.documentElement.dataset.theme;
+  if (pinned === 'dark' || pinned === 'light') return pinned === 'dark';
+  return darkQuery?.matches ?? false;
+}
+
+const palette = (): Extension => syntaxHighlighting(isDark() ? oneDarkHighlightStyle : defaultHighlightStyle);
+
 export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandle {
   const language = new Compartment();
   const editable = new Compartment();
+  const highlight = new Compartment();
 
   const extensions = (): Extension[] => [
     lineNumbers(),
@@ -80,13 +108,18 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandl
     // Save first, so a file's own keymap can never swallow Cmd-S.
     keymap.of([{ key: 'Mod-s', preventDefault: true, run: () => { opts.onSave(); return true; } }]),
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-    oneDark,
+    chrome,
+    highlight.of(palette()),
     language.of([]),
     editable.of([]),
     EditorView.updateListener.of((update) => { if (update.docChanged) opts.onChange(); }),
   ];
 
   const view = new EditorView({ parent: host, state: EditorState.create({ doc: '', extensions: extensions() }) });
+
+  // The system switching between light and dark while a file is open re-colours it in place.
+  const onScheme = (): void => { view.dispatch({ effects: highlight.reconfigure(palette()) }); };
+  darkQuery?.addEventListener('change', onScheme);
 
   return {
     open: (path, text, readOnly) => {
@@ -109,6 +142,9 @@ export function mountEditor(host: HTMLElement, opts: EditorOptions): EditorHandl
       });
       view.focus();
     },
-    destroy: () => view.destroy(),
+    destroy: () => {
+      darkQuery?.removeEventListener('change', onScheme);
+      view.destroy();
+    },
   };
 }

@@ -85,7 +85,9 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
     cursorBlink: true,
     fontSize: 13,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    theme: { background: '#0d0f12', foreground: '#e6e8eb', cursor: '#60a5fa' },
+    // A terminal stays a dark screen in both themes: the ANSI colours programs print are chosen
+    // for one, and a light terminal turns their yellows and whites unreadable.
+    theme: { background: '#1b1b1d', foreground: '#f2f2f4', cursor: '#0a84ff', selectionBackground: 'rgba(10, 132, 255, 0.35)' },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);

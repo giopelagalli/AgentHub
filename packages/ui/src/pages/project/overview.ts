@@ -6,7 +6,7 @@ import type { DocsIndex } from '../../docs.js';
 import { button, el } from '../../dom.js';
 import { icon, type IconName } from '../../icons.js';
 import { orgChartModel, type OrgCard } from '../../org.js';
-import { overviewInvite, overviewNow, recentTurns, turnTone, type CodePart, type OverviewInvite, type PlanPart, type ProjectTab } from '../../overview.js';
+import { overviewInvite, overviewNow, recentTurns, turnTone, type CodePart, type DocsPart, type OverviewInvite, type PlanPart, type ProjectTab } from '../../overview.js';
 import type { Briefing } from '../../panels/master.js';
 import { projectSourceRow } from '../../panels/source.js';
 import type { PrdDoc } from '../../prd.js';
@@ -49,16 +49,16 @@ export interface OverviewData {
 
 export interface OverviewActions {
   openCard(card: OrgCard): void;
-  openTab(tab: ProjectTab, part?: PlanPart | CodePart): void;
+  openTab(tab: ProjectTab, part?: PlanPart | DocsPart | CodePart): void;
   invite(kind: OverviewInvite['kind']): void;
   addEmployee(): void;
 }
 
 /** Which way each "In this project" row goes. */
-const GLANCE: { summary: (d: OverviewData) => ArtifactSummary; icon: IconName; tab: ProjectTab; part?: PlanPart | CodePart }[] = [
+const GLANCE: { summary: (d: OverviewData) => ArtifactSummary; icon: IconName; tab: ProjectTab; part?: PlanPart | DocsPart | CodePart }[] = [
   { summary: (d) => prdSummary(d.prd.state, d.prd.doc), icon: 'doc', tab: 'plan', part: 'prd' },
   { summary: (d) => roadmapSummary(d.roadmap.state, d.roadmap.doc), icon: 'queue', tab: 'plan', part: 'roadmap' },
-  { summary: (d) => docsSummary(d.docs.state, d.docs.doc), icon: 'folder', tab: 'docs' },
+  { summary: (d) => docsSummary(d.docs.state, d.docs.doc), icon: 'folder', tab: 'docs', part: 'pages' },
   { summary: (d) => codeSummary(d.code.state, d.code.doc, Date.now()), icon: 'terminal', tab: 'code', part: 'files' },
   { summary: (d) => previewSummary(d.preview.state, d.preview.doc), icon: 'globe', tab: 'code', part: 'preview' },
 ];

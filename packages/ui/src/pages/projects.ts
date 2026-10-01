@@ -8,7 +8,7 @@ import { button, el } from '../dom.js';
 import { menuButton, type MenuEntry } from '../menu.js';
 import { policyPillText } from '../models.js';
 import { orgChartModel, type OrgCard } from '../org.js';
-import { PROJECT_TABS, TAB_LABELS, type CodePart, type PlanPart, type ProjectTab } from '../overview.js';
+import { PROJECT_TABS, TAB_LABELS, type CodePart, type DocsPart, type PlanPart, type ProjectTab } from '../overview.js';
 import { openChat, type ChatActivity, type ChatTarget } from '../panels/chat.js';
 import { openMasterPanel, type Briefing } from '../panels/master.js';
 import { sourceHref } from '../panels/source.js';
@@ -23,6 +23,7 @@ import { formatClock, formatUsd, runningTurn, type TurnsResponse } from '../turn
 import { mountActivity } from '../views/activity.js';
 import { mountCode } from '../views/code.js';
 import { mountDocs } from '../views/docs.js';
+import { mountMedia } from '../views/media.js';
 import type { ViewContext } from '../views/parts.js';
 import { mountPrd } from '../views/prd.js';
 import { mountPreview } from '../views/preview.js';
@@ -72,10 +73,10 @@ export function managerCard(roster: TeamRoster | null): OrgCard | undefined {
 }
 
 /** Where each old artifact lives now: a tab, and inside Plan and Code, a part of it. */
-const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | CodePart)?]> = {
+const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | DocsPart | CodePart)?]> = {
   prd: ['plan', 'prd'],
   roadmap: ['plan', 'roadmap'],
-  docs: ['docs'],
+  docs: ['docs', 'pages'],
   activity: ['activity'],
   code: ['code', 'files'],
   terminal: ['code', 'terminal'],
@@ -83,11 +84,13 @@ const ARTIFACT_PLACES: Record<ArtifactId, [ProjectTab, (PlanPart | CodePart)?]> 
 };
 
 const PLAN_PARTS = [{ id: 'prd', label: 'Requirements' }, { id: 'roadmap', label: 'Roadmap' }] as const;
+const DOCS_PARTS = [{ id: 'pages', label: 'Pages' }, { id: 'media', label: 'Media' }] as const;
 const CODE_PARTS = [{ id: 'files', label: 'Files' }, { id: 'terminal', label: 'Terminal' }, { id: 'preview', label: 'Preview' }] as const;
 
 /** The tab and parts last looked at, kept across projects (and visits to Machines) for this session. */
 let lastTab: ProjectTab = 'overview';
 let lastPlan: PlanPart = 'prd';
+let lastDocs: DocsPart = 'pages';
 let lastCode: CodePart = 'files';
 
 const loading = <T>(): Held<T> => ({ state: 'loading', doc: null });
@@ -584,10 +587,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     }
 
     if (tab === 'docs') {
-      const sub = subbar<string>(null, null, () => {}, 'Docs');
-      const content = el('div', 'docs-tab');
+      const part = lastDocs;
+      const sub = subbar(DOCS_PARTS, part, (id) => setTab('docs', id), 'Docs');
+      const content = el('div', part === 'media' ? 'media-tab' : 'docs-tab');
       body.append(sub.root, content);
-      mounted = { dispose: mountDocs(content, ctxFor(sub.actions)) };
+      mounted = { dispose: part === 'media' ? mountMedia(content, ctxFor(sub.actions)) : mountDocs(content, ctxFor(sub.actions)) };
       return;
     }
 
@@ -612,12 +616,13 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   }
 
   /** Moves to `tab` (and `part` of it); `force` remounts even when it is already showing. */
-  function setTab(tab: ProjectTab, part?: PlanPart | CodePart, force = false): void {
-    const where = (): string => `${lastTab}:${lastTab === 'plan' ? lastPlan : lastTab === 'code' ? lastCode : ''}`;
+  function setTab(tab: ProjectTab, part?: PlanPart | DocsPart | CodePart, force = false): void {
+    const where = (): string => `${lastTab}:${lastTab === 'plan' ? lastPlan : lastTab === 'code' ? lastCode : lastTab === 'docs' ? lastDocs : ''}`;
     const before = where();
     const leaving = lastTab;
     lastTab = tab;
     if (tab === 'plan' && (part === 'prd' || part === 'roadmap')) lastPlan = part;
+    if (tab === 'docs' && (part === 'pages' || part === 'media')) lastDocs = part;
     if (tab === 'code' && (part === 'files' || part === 'terminal' || part === 'preview')) lastCode = part;
     tabs.set(tab);
     if (before === where() && !force && mounted) return;

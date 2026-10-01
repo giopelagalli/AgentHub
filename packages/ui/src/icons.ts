@@ -43,6 +43,7 @@ const PATHS = {
   browser: '<rect x="3" y="4.5" width="18" height="15" rx="3"/><path d="M3 9h18M6.5 6.75h.01M9 6.75h.01"/>',
   queue: '<path d="M4.5 6.5h15M4.5 12h15M4.5 17.5h9"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
+  image: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="m4 17.5 5-4.5 4 3.5 2.5-2 4.5 3.5"/>',
 } as const;
 
 export type IconName = keyof typeof PATHS;

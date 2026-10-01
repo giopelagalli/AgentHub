@@ -181,6 +181,15 @@ describe('the designer tools', () => {
     expect(out).toMatch(/^error: stopped waiting — job \d+ is still queued/);
   });
 
+  it('hands the turn back when no machine picks the job up in time, naming where it will land', async () => {
+    const h = await setup();
+    const [generateImage] = mediaTools(new MediaDesk({ queue: h.queue, registry: h.registry }), { pollMs: 5, queuedCapMs: 30 });
+    const out = await generateImage!.run({ prompt: 'an icon' }, { bundle: await h.projects.get('app'), sessionId: 1, log: () => {} });
+    const job = h.queue.list().at(-1)!;
+    expect(out).toBe(`job ${job.id} is still queued — it will land in media/image-${job.id}.png when a machine renders it`);
+    expect(job.status).toBe('queued');
+  });
+
   it('a designer is told about them', () => {
     expect(subagentSystemPrompt('designer', ['generate_image', 'generate_video'])).toMatch(/generate_image and generate_video/);
   });

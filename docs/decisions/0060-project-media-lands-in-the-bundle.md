@@ -24,6 +24,12 @@ so every sidecar can reproduce its picture. A sidecar by the same id belonging t
 hub whose database was reset) gets a suffix instead of being overwritten. Jobs without a bundle
 (`_telegram`) keep the memory-root path.
 
+A designer's `generate_image` / `generate_video` that gives up waiting — the turn's signal, or ten
+minutes with no machine having claimed the job — **leaves the job queued** rather than cancelling
+it, and says where it will land (`media/<kind>-<jobId>.<ext>`). The render is still wanted, a
+cancel would throw away GPU work already queued, and the file arrives with its sidecar and commit
+whenever the PC renders it. A job already rendering is waited for, bounded only by the turn.
+
 ## Consequences
 `POST /api/video` with a `project` now lands in `media/` too (one test updated). The commit runs
 outside the per-project turn chain, like every owner edit; a landing during a turn's own commit can

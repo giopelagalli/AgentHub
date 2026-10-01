@@ -6,10 +6,15 @@
     ".": "./src/openai-mock.ts",
     "./daemon-config": "./src/daemon-config.ts",
     "./comfy": "./src/comfy-mock.ts",
-    "./png": "./src/png.ts"
+    "./png": "./src/png.ts",
+    "./jd": "./src/jd-mock.ts"
   },
   "dependencies": {
     "@agenthub/shared": "*",
+    "@fastify/websocket": "^11.3.0",
     "fastify": "^5"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

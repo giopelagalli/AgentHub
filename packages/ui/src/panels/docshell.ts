@@ -54,6 +54,8 @@ export interface DocShellHandle {
   /** The shell's own element, so a view can re-append it without rebuilding it. */
   root: HTMLElement;
   update(next: Partial<DocShellOptions>): void;
+  /** Open a page the way a rail click does — scrolled to its top, or to it in `scroll` mode. */
+  navigate(id: string): void;
   destroy(): void;
 }
 
@@ -66,6 +68,8 @@ const SECTION_HEADING = /^##[ \t]+(.*)$/;
 const LEAD_HEADING = /^(#{1,2})[ \t]+(.*)$/;
 const FRONT_MATTER_LINE = /^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*)$/;
 const FRONT_MATTER_FENCE = /^---[ \t]*$/;
+/** The only keys unfenced front matter may hold; anything else means the lines are prose. */
+const BARE_KEYS = new Set(['section', 'title']);
 
 export interface TocEntry { id: string; level: 2 | 3; text: string }
 
@@ -97,7 +101,10 @@ export interface FrontMatter {
  * `section`, and the parse exists so a page that opens with one does not render it as a paragraph.
  *
  * Bare (unfenced) front matter stops at the first line that is not `key: value`, which is why a
- * page that simply starts with prose keeps every word of it.
+ * page that simply starts with prose keeps every word of it. It is also held to the keys the app
+ * knows (`section`, `title`): a page that opens with "Status: draft" is prose, not metadata, so a
+ * bare block holding any other key is left in the document untouched. Inside `---` fences, any key
+ * goes — the fences say it is front matter.
  */
 export function parseFrontMatter(markdown: string): FrontMatter {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
@@ -119,7 +126,9 @@ export function parseFrontMatter(markdown: string): FrontMatter {
       if (fenced) return { fields: {}, body: markdown };
       break;
     }
-    fields[field[1].toLowerCase()] = field[2].trim();
+    const key = field[1].toLowerCase();
+    if (!fenced && !BARE_KEYS.has(key)) return { fields: {}, body: markdown };
+    fields[key] = field[2].trim();
     read++;
   }
 
@@ -223,6 +232,9 @@ function scrollParent(node: HTMLElement): HTMLElement | null {
 const TOC_BREAK = 1100;
 const RAIL_BREAK = 800;
 
+/** How long the scroller must sit still after a rail jump before the section spy resumes. */
+const SETTLE_MS = 150;
+
 export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocShellHandle {
   let opts: DocShellOptions = { mode: 'page', ...options };
   let current = opts.current;
@@ -270,10 +282,35 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
   // The shell brings its own measure; a host that centres a reading column must stand down.
   host.classList.add('docshell-host');
 
-  const scroller = scrollParent(root);
+  // The scroller is looked up each time it is needed, never cached: a view may re-append the
+  // shell somewhere else, and the observers have to watch whatever it sits in now.
   let headingSpy: IntersectionObserver | null = null;
   let sectionSpy: IntersectionObserver | null = null;
   let activeHeading = '';
+  /**
+   * While set, a rail jump in `scroll` mode is still scrolling, and the section spy keeps quiet —
+   * otherwise a short last section, which can never reach the spy's band, would light the one
+   * above it the moment the jump lands.
+   */
+  let settle: ReturnType<typeof setTimeout> | null = null;
+  let settleOn: EventTarget | null = null;
+  const onSettleScroll = (): void => { armSettle(); };
+  function armSettle(): void {
+    if (settle) clearTimeout(settle);
+    settle = setTimeout(releaseSpy, SETTLE_MS);
+  }
+  function releaseSpy(): void {
+    if (settle) clearTimeout(settle);
+    settle = null;
+    settleOn?.removeEventListener('scroll', onSettleScroll);
+    settleOn = null;
+  }
+  function holdSpy(): void {
+    releaseSpy();
+    settleOn = scrollParent(root) ?? window;
+    settleOn.addEventListener('scroll', onSettleScroll, { passive: true });
+    armSettle();
+  }
 
   const flat = (): DocPage[] => groupPages(opts.pages).flatMap((section) => section.pages);
 
@@ -297,13 +334,14 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
       paintRail();
       paintCrumbs();
       paintToc();
+      holdSpy();
       scrollTo(id);
       opts.onNavigate(id);
       return;
     }
     if (id === current) return;
     opts.onNavigate(id);
-    scroller?.scrollTo({ top: 0 });
+    scrollParent(root)?.scrollTo({ top: 0 });
   };
 
   /** The rail: one group per section, the current page lit, everything the filter drops hidden. */
@@ -399,7 +437,7 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
       for (const link of tocList.querySelectorAll<HTMLElement>('.docshell__toc-link')) {
         link.classList.toggle('is-current', link.dataset.heading === activeHeading);
       }
-    }, { root: scroller, rootMargin: '-8% 0px -70% 0px', threshold: 0 });
+    }, { root: scrollParent(root), rootMargin: '-8% 0px -70% 0px', threshold: 0 });
     for (const entry of entries) {
       const node = article.querySelector(`[id="${CSS.escape(entry.id)}"]`);
       if (node) headingSpy.observe(node);
@@ -436,6 +474,7 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
       }
       heading.textContent = opts.title;
       sectionSpy = new IntersectionObserver((records) => {
+        if (settle) return;
         for (const record of records) {
           if (!record.isIntersecting) continue;
           const id = (record.target as HTMLElement).dataset.page;
@@ -447,7 +486,7 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
           opts.onNavigate(id);
           break;
         }
-      }, { root: scroller, rootMargin: '-10% 0px -75% 0px', threshold: 0 });
+      }, { root: scrollParent(root), rootMargin: '-10% 0px -75% 0px', threshold: 0 });
       for (const block of article.querySelectorAll<HTMLElement>('.docshell__section')) sectionSpy.observe(block);
       return;
     }
@@ -480,11 +519,16 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
 
   // The two breakpoints. A container query styles them; this sets whether they start open, which
   // is the half CSS cannot do — and it watches the shell, not the window, because the sheet's
-  // width changes without the window's when the chat docks beside it.
+  // width changes without the window's when the chat docks beside it. It acts only when a
+  // breakpoint is crossed: a height change, or a width change on the same side, must not undo a
+  // reader who opened or closed one by hand. A zero width is a shell out of the document.
+  let tocWide: boolean | null = null;
+  let railWide: boolean | null = null;
   const sizes = new ResizeObserver((records) => {
     const width = records[0]?.contentRect.width ?? root.clientWidth;
-    toc.open = width > TOC_BREAK;
-    rail.open = width > RAIL_BREAK;
+    if (!width) return;
+    if ((width > TOC_BREAK) !== tocWide) { tocWide = width > TOC_BREAK; toc.open = tocWide; }
+    if ((width > RAIL_BREAK) !== railWide) { railWide = width > RAIL_BREAK; rail.open = railWide; }
   });
   sizes.observe(root);
 
@@ -497,7 +541,11 @@ export function mountDocShell(host: HTMLElement, options: DocShellOptions): DocS
       if (next.current !== undefined) current = next.current;
       paint();
     },
+    navigate(id) {
+      go(id);
+    },
     destroy() {
+      releaseSpy();
       sizes.disconnect();
       headingSpy?.disconnect();
       sectionSpy?.disconnect();

@@ -31,6 +31,26 @@ describe('parseFrontMatter', () => {
     expect(parseFrontMatter('').body).toBe('');
   });
 
+  it('leaves a page alone when its bare opening lines hold a key other than section or title', () => {
+    const status = 'Status: draft\n\nThe plan is still moving.';
+    expect(parseFrontMatter(status)).toEqual({ fields: {}, body: status });
+    const mixed = 'section: Ops\nOwner: Gio\n\n# Title';
+    expect(parseFrontMatter(mixed)).toEqual({ fields: {}, body: mixed });
+  });
+
+  it('reads a bare title alongside section', () => {
+    expect(parseFrontMatter('title: Endpoints\nsection: API\n\nx')).toEqual({
+      fields: { title: 'Endpoints', section: 'API' },
+      body: 'x',
+    });
+  });
+
+  it('accepts any key between --- fences', () => {
+    const { fields, body } = parseFrontMatter('---\nStatus: draft\nsection: Ops\n---\nBody');
+    expect(fields).toEqual({ status: 'draft', section: 'Ops' });
+    expect(body).toBe('Body');
+  });
+
   it('gives the whole document back when a --- block is never closed', () => {
     const unterminated = '---\nsection: Ops\n\n# Title\n';
     expect(parseFrontMatter(unterminated)).toEqual({ fields: {}, body: unterminated });

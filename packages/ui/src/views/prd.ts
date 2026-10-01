@@ -66,8 +66,9 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
           toast(`“${chip.heading}” is not in the document yet.`);
           return;
         }
-        selected = chip.targetId;
-        shell?.update({ current: selected });
+        // Through the shell's own navigation, so a chip lands at the section's top like a rail click.
+        if (shell) shell.navigate(chip.targetId);
+        else selected = chip.targetId;
       });
       row.appendChild(node);
     }
@@ -185,7 +186,13 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
     if (questions) host.appendChild(questions);
 
     const pages = sections();
-    if (!pages.length) { host.appendChild(note('The PRD is empty.')); return; }
+    if (!pages.length) {
+      // A title-only PRD: the shell from a fuller version must not linger, observers and all.
+      shell?.destroy();
+      shell = null;
+      host.appendChild(note('The PRD is empty.'));
+      return;
+    }
 
     const badge = audit.chips.length ? audit.scoreLabel : undefined;
     if (shell) {

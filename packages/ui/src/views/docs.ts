@@ -21,12 +21,20 @@ import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
 /** The two pages that are reference material rather than a chapter of the docs. */
 const CODE_MAP = /^code[-_]?map$/i;
 
+/** What a page shows while its markdown is on its way, and when it arrives with nothing in it. */
+const LOADING_PAGE = '*Loading this page…*';
+const EMPTY_PAGE = ':::note\nThis page is empty — the writer has not filled it in yet.\n:::';
+
 export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
   let index: DocsIndex | null = null;
   let state: 'loading' | 'ready' | 'failed' = 'loading';
   let failure = '';
   let selected = '';
-  /** Page markdown, keyed as `docsEntries` keys them; absent until its fetch lands. */
+  /**
+   * Page markdown, keyed as `docsEntries` keys them; absent until its first fetch lands. A reload
+   * keeps the previous text and overwrites it as each fetch lands, so the page being read and the
+   * rail's groups stay put instead of blanking and reshuffling on every refresh.
+   */
   const fetched = new Map<string, string>();
   let listToken = 0;
   let alive = true;
@@ -50,7 +58,7 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
         id: entry.key,
         title: front?.fields.title?.trim() || entry.title,
         section: isReference ? 'Reference' : section,
-        markdown: front?.body ?? '',
+        markdown: !front ? LOADING_PAGE : front.body.trim() ? front.body : EMPTY_PAGE,
       };
       (isReference ? reference : chapters).push(page);
     }
@@ -62,12 +70,20 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
     else render();
   };
 
-  /** One page's markdown. A failure is written into the page as a callout rather than a toast. */
-  const fetchPage = (key: string): void => {
+  /**
+   * One page's markdown. A failure is written into the page as a callout rather than a toast. An
+   * answer for a load that has since been superseded is dropped; the newer load fetches its own.
+   */
+  const fetchPage = (key: string, mine: number): void => {
+    const land = (markdown: string): void => {
+      if (mine !== listToken || !alive) return;
+      if (fetched.get(key) === markdown) return;
+      fetched.set(key, markdown);
+      refresh();
+    };
     void getJson<DocsPage>(`/api/projects/${ctx.slug}/docs/${encodeURIComponent(key)}`)
-      .then((next) => { fetched.set(key, next.markdown ?? ''); })
-      .catch(() => { fetched.set(key, ':::danger\nThis page could not be read.\n:::'); })
-      .finally(() => { if (alive) refresh(); });
+      .then((next) => { land(next.markdown ?? ''); })
+      .catch(() => { land(':::danger\nThis page could not be read.\n:::'); });
   };
 
   const load = (): void => {
@@ -78,12 +94,11 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
         if (mine !== listToken || !alive) return;
         index = next;
         state = 'ready';
-        fetched.clear();
         const entries = docsEntries(index);
         // Keep the reader where they were, unless that page is gone.
         if (!entries.some((entry) => entry.key === selected)) selected = entries[0]?.key ?? '';
         render();
-        for (const entry of entries) if (entry.markdown === undefined) fetchPage(entry.key);
+        for (const entry of entries) if (entry.markdown === undefined) fetchPage(entry.key, mine);
       })
       .catch((error: unknown) => {
         if (mine !== listToken || !alive) return;

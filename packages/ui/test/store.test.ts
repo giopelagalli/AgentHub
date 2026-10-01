@@ -55,6 +55,18 @@ describe('Store', () => {
     expect(store.getState().browserFrames).toEqual({});
   });
 
+  it("keeps frames while a project's Browser view watches, and drops them when it closes", () => {
+    const store = new Store();
+    store.dispatch({ type: 'project-browser', open: true });
+    store.dispatch({ type: 'browser-frame', frame });
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
+    store.dispatch({ type: 'set-page', page: 'computer' });
+    store.dispatch({ type: 'project-browser', open: false });
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
+    store.dispatch({ type: 'set-page', page: 'projects' });
+    expect(store.getState().browserFrames).toEqual({});
+  });
+
   it('adds and removes busy agents', () => {
     const store = new Store();
     store.dispatch({ type: 'hub-state', state: fabricateHubState([1, 2]) });

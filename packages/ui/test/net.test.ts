@@ -8,7 +8,7 @@ import {
   shouldUsePoll,
   topicTransition,
 } from '../src/net.js';
-import { Store, turnsOf } from '../src/store.js';
+import { Store, turnsOf, wantsCast } from '../src/store.js';
 
 const hubState: HubState = {
   nodes: [
@@ -61,16 +61,25 @@ describe('shouldOpenSocket', () => {
 });
 
 describe('topicTransition', () => {
-  it('subscribes on arriving at the computer page and unsubscribes on leaving', () => {
-    expect(topicTransition(null, 'computer')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
-    expect(topicTransition('projects', 'computer')).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
-    expect(topicTransition('computer', 'cluster')).toEqual({ type: 'unsubscribe', topic: BROWSER_TOPIC });
+  it('subscribes when something starts watching the cast and unsubscribes when nothing does', () => {
+    expect(topicTransition(null, true)).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition(false, true)).toEqual({ type: 'subscribe', topic: BROWSER_TOPIC });
+    expect(topicTransition(true, false)).toEqual({ type: 'unsubscribe', topic: BROWSER_TOPIC });
   });
 
-  it('says nothing when the computer page is neither entered nor left', () => {
-    expect(topicTransition(null, 'projects')).toBeNull();
-    expect(topicTransition('projects', 'allocation')).toBeNull();
-    expect(topicTransition('computer', 'computer')).toBeNull();
+  it('says nothing while watching neither starts nor stops', () => {
+    expect(topicTransition(null, false)).toBeNull();
+    expect(topicTransition(false, false)).toBeNull();
+    expect(topicTransition(true, true)).toBeNull();
+  });
+});
+
+describe('wantsCast', () => {
+  it('is the computer page, or a project page with its Browser view open', () => {
+    expect(wantsCast({ page: 'computer', projectBrowser: false })).toBe(true);
+    expect(wantsCast({ page: 'projects', projectBrowser: true })).toBe(true);
+    expect(wantsCast({ page: 'projects', projectBrowser: false })).toBe(false);
+    expect(wantsCast({ page: 'cluster', projectBrowser: false })).toBe(false);
   });
 });
 

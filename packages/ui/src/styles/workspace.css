@@ -455,6 +455,114 @@
   border-top: 1px solid var(--sep);
 }
 
+/* --- Browser: the project's slot of the pool, large, on the same grouped ground as Preview ----- */
+
+.pbrowser {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pbrowser__status {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-right: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--label-2);
+}
+
+.pbrowser__stage {
+  /* The screencast is sized against the stage's own height, so it never scrolls a short window. */
+  container-type: size;
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  padding: var(--sp-5);
+  overflow: auto;
+  background: var(--bg-grouped);
+}
+
+.pbrowser__shot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  /* 16:10, the width of whichever runs out first — the stage, a comfortable cap, or its height
+     less the caption's line. */
+  width: min(100%, 1180px, calc((100cqh - 28px) * 1.6));
+  margin: 0;
+}
+
+.pbrowser__screen {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--bg-sunk);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-control);
+}
+
+.pbrowser__frame {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.pbrowser__wait {
+  color: var(--label-3);
+}
+
+.pbrowser__caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--sp-2);
+  align-items: baseline;
+  min-height: 20px;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.pbrowser__caption strong {
+  font-weight: 600;
+  color: var(--label);
+}
+
+.pbrowser__empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  max-width: 44ch;
+  text-align: center;
+}
+
+.pbrowser__title {
+  font-size: var(--fs-read);
+  font-weight: 600;
+  color: var(--label);
+}
+
+.pbrowser__line {
+  color: var(--label-3);
+}
+
+/* The Code switch's live dot: small, beside its label. */
+.seg__option .dot {
+  width: 6px;
+  height: 6px;
+}
+
+@media (max-width: 760px) {
+  /* A phone's screen is taller than the cast: it sits at the top, under the switch. */
+  .pbrowser__stage {
+    place-items: start center;
+    padding: var(--sp-3);
+  }
+}
+
 /* --- Activity: the timeline's own rules stay; this re-dresses the frame around them ----------- */
 
 .activity__list {

@@ -54,7 +54,7 @@ repository links of an imported project).
 - **Plan** — the PRD (*Requirements*) and the **Roadmap**, side by side under a small switch. Each
   has an **Ask the …** button that opens a chat beside the document with the agent that edits it
   ("move milestone 4 before 2", "add a section on backups"); it changes the document in place.
-- **Docs**, **Code** (*Files · Terminal · Preview*) and **Activity** — see their sections below.
+- **Docs**, **Code** (*Files · Terminal · Preview · Browser*) and **Activity** — see their sections below.
 
 **Settings** (from **⋯**) is a sheet grouped like macOS Settings: **Models**, **Schedule**,
 **Priority**, **Team** (add or remove employees) and **Pause**. Everything applies as you change it.
@@ -518,6 +518,16 @@ A step's lines run from the linked line to the end of that block, judged by inde
 at 60 lines. The first time anyone opens a step the Guide writes its explanation (a few seconds of
 "reading this step…"); it is saved as a page under `docs/tour/` in the project and committed, so
 every later reader gets it instantly. Edit those lines and the next visit explains them afresh.
+
+**Browser.** **Code → Browser** is this project's slot of the browser pool (see *The browser pool*),
+live: the screencast large, the node and slot (*mini · 1*), and who in the project holds it and since
+when. **Take control** takes the slot over and **Release** gives it back — the same as on the
+Machines tile; a slot you take from a project, here or on Machines, still counts as that project's,
+so it stays on this page with *Held by you*. With no slot it says *No browser in use* — agents open
+one when a task needs the web; there is no button to open one yourself, since the hub only resets a
+slot into a project's own session for that project's agents. When every slot is busy and the project
+is waiting, it says its place in line. While the project holds a slot, *Browser* in the switch
+carries a small green dot.
 
 ## Chatting with the team
 

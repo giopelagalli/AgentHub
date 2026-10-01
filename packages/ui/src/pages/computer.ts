@@ -8,6 +8,20 @@ import { button, el } from './projects.js';
 /** The owner's requester id; the preempt route pins `kind` to owner itself. */
 const OWNER_ID = 'owner';
 
+/**
+ * The owner takes a slot over, preempting its holder. `project` keeps a project's session counted
+ * as that project's while the owner drives it (the hub neither resets the slot nor folds the owner
+ * into the project for it), so the project's own Browser view still shows it.
+ */
+export function takeControl(node: string, slot: number, project: string | null): Promise<unknown> {
+  return sendJson('/api/browser/preempt', { id: OWNER_ID, node, slot, ...(project ? { project } : {}) });
+}
+
+/** Hands a slot back; the hub grants it to whoever is next in the queue. */
+export function releaseLease(leaseId: string): Promise<unknown> {
+  return sendJson(`/api/browser/lease/${leaseId}`, undefined, 'DELETE');
+}
+
 /** One slot of the browser pool as the page words it. */
 export interface BrowserTile {
   key: string;
@@ -17,6 +31,8 @@ export interface BrowserTile {
   label: string;
   /** Who holds the slot, null when it is free. */
   holder: string | null;
+  /** The project the holder works for, null when free or held for no project. */
+  project: string | null;
   /** How long the holder has had it, `—` when free. */
   since: string;
   expires: string;
@@ -30,11 +46,16 @@ export interface BrowserTile {
   frame: BrowserFrame | null;
 }
 
-function who(requester: BrowserRequester): string {
+/** The requester without its project: `owner`, `orchestrator`, `subagent 7`. */
+export function requesterName(requester: BrowserRequester): string {
   // The owner's id is just 'owner', and an orchestrator's is `project:<slug>`; printing those beside
-  // the kind and the project would stutter.
+  // the kind would stutter.
   const bare = requester.id === requester.kind || requester.id === `project:${requester.project}`;
-  const name = bare ? requester.kind : `${requester.kind} ${requester.id}`;
+  return bare ? requester.kind : `${requester.kind} ${requester.id}`;
+}
+
+function who(requester: BrowserRequester): string {
+  const name = requesterName(requester);
   return requester.project ? `${name} — ${requester.project}` : name;
 }
 
@@ -57,6 +78,7 @@ export function browserTiles(status: BrowserStatus | undefined, frames: Record<s
       key, node, slot,
       label: `${node} · ${slot}`,
       holder: lease ? who(lease.requester) : null,
+      project: lease?.requester.project ?? null,
       since: lease?.since ? formatElapsed(now - lease.since) : '—',
       expires: lease ? `${Math.max(0, Math.round((lease.expiresAt - now) / 1000))}s` : '—',
       leaseId: lease?.leaseId ?? null,
@@ -158,11 +180,11 @@ export function mountComputer(host: HTMLElement, store: Store): () => void {
     watch.addEventListener('click', () => { asked = tile.key; render(store.getState()); });
     take.addEventListener('click', () => {
       asked = tile.key;
-      send(() => sendJson('/api/browser/preempt', { id: OWNER_ID, node, slot }));
+      send(() => takeControl(node, slot, take.dataset.project ?? null));
     });
     release.addEventListener('click', () => {
       const leaseId = release.dataset.lease;
-      if (leaseId) send(() => sendJson(`/api/browser/lease/${leaseId}`, undefined, 'DELETE'));
+      if (leaseId) send(() => releaseLease(leaseId));
     });
     return { root, thumb, blank: blankThumb, holder, meta, watch, take, release, shownAt: 0 };
   };
@@ -177,6 +199,7 @@ export function mountComputer(host: HTMLElement, store: Store): () => void {
     view.release.hidden = !tile.leaseId;
     view.release.disabled = busy;
     if (tile.leaseId) view.release.dataset.lease = tile.leaseId; else delete view.release.dataset.lease;
+    if (tile.project) view.take.dataset.project = tile.project; else delete view.take.dataset.project;
     // Decoded once on arrival rather than on paint, so the <img> only ever swaps to a picture the
     // browser already holds.
     if (!tile.frame) {

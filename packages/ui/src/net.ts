@@ -1,6 +1,5 @@
 import type { HubState } from '@agenthub/shared';
-import type { PageId } from './rail.js';
-import type { Store } from './store.js';
+import { wantsCast, type Store } from './store.js';
 import { toast } from './toast.js';
 import type { TurnEvent } from './turns.js';
 
@@ -41,24 +40,20 @@ export function applyHubState(store: Store, payload: unknown): boolean {
 /** The hub only casts the browser screen to sockets that asked for this topic. */
 export const BROWSER_TOPIC = 'browser';
 
-/** The one page that watches the cast. */
-const BROWSER_PAGE: PageId = 'computer';
-
 export interface TopicMessage {
   type: 'subscribe' | 'unsubscribe';
   topic: string;
 }
 
 /**
- * The topic message a page change owes the hub, or null when it owes none:
- * screencast frames are big, so the client subscribes on arriving at the
- * computer page and unsubscribes on leaving. `before` is the page this socket
- * was last told about — null for a socket that has said nothing yet.
+ * The topic message a change in watching owes the hub, or null when it owes none: screencast
+ * frames are big, so the client subscribes while something on screen watches the cast (`wantsCast`)
+ * and unsubscribes when nothing does. `before` is what this socket was last told — null for a
+ * socket that has said nothing yet.
  */
-export function topicTransition(before: PageId | null, after: PageId): TopicMessage | null {
-  const wants = after === BROWSER_PAGE;
-  if (wants === (before === BROWSER_PAGE)) return null;
-  return { type: wants ? 'subscribe' : 'unsubscribe', topic: BROWSER_TOPIC };
+export function topicTransition(before: boolean | null, after: boolean): TopicMessage | null {
+  if (after === (before ?? false)) return null;
+  return { type: after ? 'subscribe' : 'unsubscribe', topic: BROWSER_TOPIC };
 }
 
 /** Pure half of the socket: a raw frame in, store dispatches out. Bad frames are dropped. */
@@ -174,8 +169,8 @@ export function connect(store: Store): void {
   let current: WebSocket | null = null;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let reconnectTimer: ReturnType<typeof setInterval> | undefined;
-  /** The page the open socket has been told about; null while no socket is up. */
-  let announcedPage: PageId | null = null;
+  /** Whether the open socket was last told to cast (`wantsCast`); null while no socket is up. */
+  let announced: boolean | null = null;
 
   const readyState = (): number | null => current?.readyState ?? null;
 
@@ -207,9 +202,9 @@ export function connect(store: Store): void {
   const syncTopics = (): void => {
     const socket = current;
     if (!socket || socket.readyState !== OPEN) return;
-    const page = store.getState().page;
-    const message = topicTransition(announcedPage, page);
-    announcedPage = page;
+    const watching = wantsCast(store.getState());
+    const message = topicTransition(announced, watching);
+    announced = watching;
     if (message) socket.send(JSON.stringify(message));
   };
 
@@ -232,14 +227,14 @@ export function connect(store: Store): void {
       store.dispatch({ type: 'busy-reset' });
       store.dispatch({ type: 'connection', status: 'live' });
       // A new socket carries no subscriptions, whatever the last one had asked for.
-      announcedPage = null;
+      announced = null;
       syncTopics();
     });
     socket.addEventListener('message', (event) => handleWsMessage(store, String(event.data)));
     socket.addEventListener('close', () => {
       if (current !== socket) return;
       current = null;
-      announcedPage = null;
+      announced = null;
       startFallback();
     });
     socket.addEventListener('error', () => socket.close());

@@ -22,7 +22,7 @@ export const TAB_LABELS: Record<ProjectTab, string> = {
 
 /** Plan's two halves and Code's three, each a sub-segmented control under the toolbar. */
 export type PlanPart = 'prd' | 'roadmap';
-export type CodePart = 'files' | 'terminal' | 'preview';
+export type CodePart = 'files' | 'terminal' | 'preview' | 'browser';
 
 export interface OverviewNow {
   /** The milestone being worked on; else the next one planned; null without a roadmap. */

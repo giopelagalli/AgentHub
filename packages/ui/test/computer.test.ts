@@ -25,7 +25,7 @@ describe('browserTiles', () => {
   it('has a quiet tile per free slot', () => {
     expect(browserTiles(status(), {}, NOW)).toEqual([0, 1].map((slot) => ({
       key: `mini#${slot}`, node: 'mini', slot, label: `mini · ${slot}`,
-      holder: null, since: '—', expires: '—', leaseId: null, own: false, draining: false, offline: false, frame: null,
+      holder: null, project: null, since: '—', expires: '—', leaseId: null, own: false, draining: false, offline: false, frame: null,
     })));
   });
 
@@ -36,7 +36,7 @@ describe('browserTiles', () => {
 
   it('names the holder, its project, how long it has held the slot and the seconds left', () => {
     const [tile] = browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: lease() }] }), {}, NOW);
-    expect(tile).toMatchObject({ holder: 'subagent 7 — acme', since: '2m05s', expires: '42s', leaseId: 'l1', own: false });
+    expect(tile).toMatchObject({ holder: 'subagent 7 — acme', project: 'acme', since: '2m05s', expires: '42s', leaseId: 'l1', own: false });
     const orch = lease({ requester: { kind: 'orchestrator', id: 'project:acme', project: 'acme' } });
     expect(browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: orch }] }), {}, NOW)[0].holder).toBe('orchestrator — acme');
   });

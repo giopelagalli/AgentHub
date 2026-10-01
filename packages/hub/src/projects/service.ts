@@ -1,6 +1,6 @@
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PRIORITY_RANK, type AutoRun, type GithubRepoRef, type ModelPolicy, type Priority, type ProjectIntake, type TurnBudget, type TurnEvent } from '@agenthub/shared';
+import { PRIORITY_RANK, type AutoRun, type GithubRepoRef, type HarnessKind, type ModelPolicy, type Priority, type ProjectIntake, type TurnBudget, type TurnEvent } from '@agenthub/shared';
 import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -247,6 +247,13 @@ export class ProjectService {
     const bundle = await this.get(slug);
     await bundle.setModelPolicy(policy);
     await bundle.commit('owner: set model policy');
+    return bundle.manifest();
+  }
+
+  async setHarness(slug: string, harness: HarnessKind | undefined): Promise<Manifest> {
+    const bundle = await this.get(slug);
+    await bundle.setHarness(harness);
+    await bundle.commit(`owner: set harness ${harness ?? 'builtin'}`);
     return bundle.manifest();
   }
 

@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
-import { isMediaJob, MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
+import { CLAUDE_CODE_LOCAL_ONLY_REASON, HARNESS_KINDS, isMediaJob, MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
@@ -1679,6 +1679,28 @@ export function createHub(opts: HubOptions = {}): Hub {
     if ('error' in validated) return reply.code(400).send({ error: validated.error });
     if (!(await resolveProject(slug, reply))) return reply;
     const manifest = await projects.setModelPolicy(slug, validated.policy);
+    await refreshProjects();
+    return manifest;
+  });
+
+  /**
+   * The project's default harness — what its employees run on unless their own `harness` says
+   * otherwise; `builtin` clears it. Refused like the per-employee choice when this host cannot run
+   * it, and claude-code is refused outright for a Local-only project.
+   */
+  app.post('/api/projects/:slug/harness', async (req, reply) => {
+    const { slug } = req.params as { slug: string };
+    const harness = ((req.body ?? {}) as Partial<{ harness: HarnessKind }>).harness;
+    if (!HARNESS_KINDS.includes(harness as HarnessKind)) return reply.code(400).send({ error: 'invalid harness' });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
+    if (harness === 'claude-code' && (await bundle.manifest()).modelPolicy?.prefer === 'local') {
+      return reply.code(400).send({ error: CLAUDE_CODE_LOCAL_ONLY_REASON });
+    }
+    if (harness !== 'builtin' && !(await harnessStatus(selfBase())).find((h) => h.kind === harness)?.available) {
+      return reply.code(400).send({ error: `${harness} is not installed on this hub` });
+    }
+    const manifest = await projects.setHarness(slug, harness === 'builtin' ? undefined : harness);
     await refreshProjects();
     return manifest;
   });

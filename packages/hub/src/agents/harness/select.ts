@@ -1,4 +1,4 @@
-import { HARNESS_KINDS, type HarnessKind, type TeamMember } from '@agenthub/shared';
+import { CLAUDE_CODE_LOCAL_ONLY_REASON, HARNESS_KINDS, type HarnessKind, type TeamMember } from '@agenthub/shared';
 import type { Route } from '../../gateway.js';
 import type { ProjectBundle } from '../../projects/bundle.js';
 import type { AgentLoop } from '../loop.js';
@@ -97,7 +97,7 @@ async function claudeCode(
   if (!opts.bundle) return builtin();
   // A local-only project's work never leaves the cluster; claude-code would send it to Anthropic.
   if (opts.route?.prefer === 'local') {
-    return fallback("the project's model policy is local-only and claude-code sends the workspace to Anthropic");
+    return fallback(CLAUDE_CODE_LOCAL_ONLY_REASON);
   }
   const status = await claudeCodeStatus();
   if (!status.available) return fallback(status.reason);

@@ -758,6 +758,13 @@ export type Avatar = (typeof AVATARS)[number];
 export const HARNESS_KINDS = ['builtin', 'pi', 'claude-code'] as const;
 export type HarnessKind = (typeof HARNESS_KINDS)[number];
 
+/**
+ * Why claude-code is refused for a Local-only project (`modelPolicy.prefer: 'local'`): said by the
+ * run-time fallback, the project-harness route, and the settings sheet's disabled option alike.
+ */
+export const CLAUDE_CODE_LOCAL_ONLY_REASON =
+  "the project's model policy is local-only and claude-code sends the workspace to Anthropic";
+
 /** One entry of `GET /api/harnesses`: whether this hub host can actually run that harness today. */
 export interface HarnessInfo {
   kind: HarnessKind;

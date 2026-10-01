@@ -7,8 +7,12 @@ export type LeaseStatus = Omit<BrowserStatus, 'node'> & { slots: BrowserSlotStat
 
 /** One session in the pool: a browser node and a context on it. */
 export interface SlotRef { node: string; slot: number }
-/** A slot as the pool provider reports it; a draining slot keeps its lease but takes no new one. */
-export interface PoolSlot extends SlotRef { draining?: boolean }
+/**
+ * A slot as the pool provider reports it; a draining slot keeps its lease but takes no new one. An
+ * `offline` slot (its node's heartbeat is stale) is draining too, and left out of the status while
+ * nobody holds it — the node may never come back.
+ */
+export interface PoolSlot extends SlotRef { draining?: boolean; offline?: boolean }
 
 export type AcquireResult = { granted: true; leaseId: string; node: string; slot: number } | { queued: true; position: number };
 
@@ -38,8 +42,9 @@ export class NoSuchSlotError extends Error {
  *
  * A lease is only valid until `expiresAt`; every action renews it, so a crashed or hung holder is
  * swept away and the slot goes to whoever is next instead of wedging forever. A lease on a slot that
- * left the pool (its node went offline, was removed, or re-registered with fewer slots) is dropped
- * the same way. A draining slot is still in the pool — its holder finishes — but is never handed out.
+ * left the pool (its node was removed, or re-registered with fewer slots) is dropped the same way. A
+ * draining slot — the node is draining, or offline — is still in the pool, so its holder finishes or
+ * runs out its TTL, but it is never handed out.
  * Expiry is not the sweep's alone: every read and every renew runs it first, so nobody can observe
  * or use a lease that is already overdue in the gap between sweeps.
  *
@@ -283,9 +288,13 @@ export class LeaseManager {
 
   /** The state as it stands, without running expiry — what `emit()` hands listeners. */
   private snapshot(): LeaseStatus {
-    const slots = this.pool().map((s): BrowserSlotStatus => {
+    const slots = this.pool().flatMap((s): BrowserSlotStatus[] => {
       const lease = this.held.get(key(s));
-      return { node: s.node, slot: s.slot, lease: lease ? { ...lease } : null, ...(s.draining ? { draining: true } : {}) };
+      if (s.offline && !lease) return [];
+      return [{
+        node: s.node, slot: s.slot, lease: lease ? { ...lease } : null,
+        ...(s.draining ? { draining: true } : {}), ...(s.offline ? { offline: true } : {}),
+      }];
     });
     const first = slots.find((s) => s.lease)?.lease ?? null;
     return { holder: first, queue: this.queue(), slots };

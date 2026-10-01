@@ -469,8 +469,10 @@ export interface BrowserSlotStatus {
   node: string;
   slot: number;
   lease: BrowserLease | null;
-  /** True while the node is draining: the slot finishes its lease but takes no new one. */
+  /** True while the node is draining (or offline): the slot finishes its lease but takes no new one. */
   draining?: boolean;
+  /** True while the node's heartbeat is stale; only a held slot is listed then. */
+  offline?: boolean;
 }
 
 /** The browser room as the UI sees it: who holds the lease, who is waiting, which node it runs on. */

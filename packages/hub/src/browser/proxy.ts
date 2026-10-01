@@ -14,16 +14,22 @@ export interface BrowserFrame { nodeName: string; slot: number; leaseId: string 
 const MAX_SLOTS = 8;
 
 /**
- * The browser pool as the registry has it: every slot of every online node advertising a browser,
- * a draining node's slots marked so the lease manager finishes them but hands out none. A node
- * registered before the pool (no `slots`) is one slot. Removed and offline nodes are simply absent.
+ * The browser pool as the registry has it: every slot of every registered node advertising a
+ * browser. A draining node's slots are marked so the lease manager finishes them but hands out
+ * none; so are an offline node's (heartbeat gone stale), marked `offline` too, so a heartbeat gap
+ * doesn't cost a holder its lease — it keeps it until its TTL or a failed renew. A node registered
+ * before the pool (no `slots`) is one slot. A removed node is absent, and so are its leases.
  */
 export function poolSlots(registry: NodeRegistry): PoolSlot[] {
+  const online = new Set(registry.online().map((n) => n.name));
   const slots: PoolSlot[] = [];
-  for (const node of registry.online()) {
+  for (const node of registry.all()) {
     if (!node.browser?.url) continue;
+    const offline = !online.has(node.name);
     const count = Math.min(MAX_SLOTS, Math.max(1, Math.floor(node.browser.slots ?? 1)));
-    for (let slot = 0; slot < count; slot++) slots.push({ node: node.name, slot, ...(node.draining ? { draining: true } : {}) });
+    for (let slot = 0; slot < count; slot++) {
+      slots.push({ node: node.name, slot, ...(node.draining || offline ? { draining: true } : {}), ...(offline ? { offline: true } : {}) });
+    }
   }
   return slots;
 }

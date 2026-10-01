@@ -24,6 +24,8 @@ export interface BrowserTile {
   /** The owner holds it — Take control has nothing left to take. */
   own: boolean;
   draining: boolean;
+  /** Its node's heartbeat is stale; the holder keeps the slot until its lease runs out. */
+  offline: boolean;
   /** The newest frame of *this* lease; a frame from an earlier holder of the slot is not shown. */
   frame: BrowserFrame | null;
 }
@@ -48,7 +50,7 @@ function slotsOf(status: BrowserStatus | undefined): BrowserSlotStatus[] {
  * DOM: the page below is just these tiles painted.
  */
 export function browserTiles(status: BrowserStatus | undefined, frames: Record<string, BrowserFrame>, now: number): BrowserTile[] {
-  return slotsOf(status).map(({ node, slot, lease, draining }) => {
+  return slotsOf(status).map(({ node, slot, lease, draining, offline }) => {
     const key = slotKey(node, slot);
     const frame = frames[key];
     return {
@@ -60,6 +62,7 @@ export function browserTiles(status: BrowserStatus | undefined, frames: Record<s
       leaseId: lease?.leaseId ?? null,
       own: lease?.requester.kind === 'owner',
       draining: draining === true,
+      offline: offline === true,
       frame: lease && frame?.leaseId === lease.leaseId ? frame : null,
     };
   });
@@ -168,7 +171,7 @@ export function mountComputer(host: HTMLElement, store: Store): () => void {
     view.root.classList.toggle('btile--free', !tile.leaseId);
     view.root.classList.toggle('is-watched', watched);
     view.holder.textContent = tile.holder ?? (tile.draining ? 'Draining' : 'Free');
-    view.meta.textContent = tile.leaseId ? `for ${tile.since} · lease ${tile.expires}` : '';
+    view.meta.textContent = tile.leaseId ? `for ${tile.since} · lease ${tile.expires}${tile.offline ? ' · node offline' : ''}` : '';
     view.watch.disabled = watched;
     view.take.disabled = busy || tile.own;
     view.release.hidden = !tile.leaseId;

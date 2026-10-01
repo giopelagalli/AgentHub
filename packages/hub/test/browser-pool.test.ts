@@ -6,6 +6,10 @@ import type { FastifyInstance } from 'fastify';
 import { FakeDriver } from '../../node-daemon/src/browser/driver.js';
 import { createBrowserServer } from '../../node-daemon/src/browser/server.js';
 import { createHub, type Hub } from '../src/server.js';
+import { openDb } from '../src/db.js';
+import { NodeRegistry } from '../src/node-registry.js';
+import { LeaseManager } from '../src/browser/lease.js';
+import { poolSlots } from '../src/browser/proxy.js';
 
 /** FR-D8 through the hub's routes: one daemon browser server with two slots, each its own FakeDriver. */
 let slots: FakeDriver[];
@@ -93,5 +97,24 @@ describe('browser pool routes', () => {
     const status = await (await fetch(`${base}/api/browser`)).json();
     expect(status.holder.leaseId).toBe(res.leaseId);
     expect(status.node).toBe('mini');
+  });
+});
+
+describe('browser pool and node liveness', () => {
+  it('keeps a lease through a heartbeat gap, hides the offline node’s free slots, and drops it on remove', () => {
+    const registry = new NodeRegistry(openDb(':memory:'));
+    const mini = { name: 'mini', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: 'http://127.0.0.1:9', slots: 2 } };
+    registry.register(mini);
+    const leases = new LeaseManager({ slots: () => poolSlots(registry) });
+    const granted = leases.acquire({ kind: 'orchestrator', id: 'project:alpha', project: 'alpha' });
+    if (!('granted' in granted)) throw new Error('expected a grant');
+
+    registry.register(mini, Date.now() - 60_000); // heartbeat long stale: offline
+    expect(leases.renew(granted.leaseId)).toBe(true);
+    expect(leases.status().slots).toEqual([{ node: 'mini', slot: 0, lease: expect.objectContaining({ leaseId: granted.leaseId }), draining: true, offline: true }]);
+    expect(leases.acquire({ kind: 'orchestrator', id: 'project:beta', project: 'beta' })).toEqual({ queued: true, position: 1 });
+
+    registry.remove('mini');
+    expect(leases.renew(granted.leaseId)).toBe(false);
   });
 });

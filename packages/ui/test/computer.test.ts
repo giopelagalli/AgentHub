@@ -25,7 +25,7 @@ describe('browserTiles', () => {
   it('has a quiet tile per free slot', () => {
     expect(browserTiles(status(), {}, NOW)).toEqual([0, 1].map((slot) => ({
       key: `mini#${slot}`, node: 'mini', slot, label: `mini · ${slot}`,
-      holder: null, since: '—', expires: '—', leaseId: null, own: false, draining: false, frame: null,
+      holder: null, since: '—', expires: '—', leaseId: null, own: false, draining: false, offline: false, frame: null,
     })));
   });
 
@@ -57,9 +57,11 @@ describe('browserTiles', () => {
     expect(stale.frame).toBeNull();
   });
 
-  it('marks a draining slot', () => {
+  it('marks a draining slot, and a held slot on an offline node', () => {
     const [tile] = browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: null, draining: true }] }), {}, NOW);
     expect(tile.draining).toBe(true);
+    const [gone] = browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: lease(), draining: true, offline: true }] }), {}, NOW);
+    expect(gone).toMatchObject({ offline: true, leaseId: 'l1' });
   });
 
   it('reads a hub from before the pool as one slot 0', () => {

@@ -261,11 +261,13 @@ describe('node daemon', () => {
     const attachedPort = await getEphemeralPort();
 
     const supervisor = new Supervisor([
-      { tier: 'worker', model: 'mock-model', port: spawnedPort, maxStreams: 4, cmd: ['npx', 'tsx', MOCK_SERVE, String(spawnedPort)] },
+      // node + TSX_CLI (not npx) and a 6 s window: under load the spawned mock must come up before the
+      // attached entry's deadline, or the race flips which health check fails first (a flake seen in CI).
+      { tier: 'worker', model: 'mock-model', port: spawnedPort, maxStreams: 4, cmd: ['node', TSX_CLI, MOCK_SERVE, String(spawnedPort)] },
       { tier: 'worker', model: 'mock-model', port: attachedPort, maxStreams: 4 },
     ]);
 
-    await expect(supervisor.startAll(1500)).rejects.toThrow(/attached\) failed health check/);
+    await expect(supervisor.startAll(6000)).rejects.toThrow(/attached\) failed health check/);
 
     // the spawned sibling must have been torn down too, not left orphaned
     const deadline = Date.now() + 5000;

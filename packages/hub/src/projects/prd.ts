@@ -4,7 +4,7 @@ import { PRD_SECTIONS, type Milestone, type PrdAudit } from '@agenthub/shared';
 import type { AgentLoop } from '../agents/loop.js';
 import type { Transcript } from '../agents/transcript.js';
 import { routeFor, type ModelGateway } from '../gateway.js';
-import type { ProjectBundle } from './bundle.js';
+import { byline, type ProjectBundle } from './bundle.js';
 import { workspaceDigest } from './digest.js';
 import type { PlanningContext } from './prompts.js';
 import { currentMilestoneId, normalizeMilestones } from './roadmap.js';
@@ -267,6 +267,8 @@ export interface DraftResult {
 export interface DraftOptions {
   onToken?: (t: string) => void;
   signal?: AbortSignal;
+  /** The API token label that asked for the run, for its commit (0067); absent for the owner. */
+  by?: string;
 }
 
 /** Drops a ``` fence the model wrapped the whole answer in. */
@@ -341,7 +343,7 @@ export class PrdDrafter {
       if (!markdown) throw new Error('the model returned no PRD');
 
       await bundle.writePrd(`${markdown}\n`);
-      await bundle.commit('agent: draft prd');
+      await bundle.commit(`agent: draft prd${byline(opts.by)}`);
       return { markdown, questions, audit: auditPrd(markdown) };
     });
   }
@@ -360,7 +362,7 @@ export class PrdDrafter {
       const text = await this.run(slug, 'roadmap', bundle, system, code ? `${prd}\n\n${code}` : prd, opts);
       const milestones = normalizeMilestones(parseJsonArray(text));
       await bundle.writeRoadmap(milestones);
-      await bundle.commit('agent: generate roadmap');
+      await bundle.commit(`agent: generate roadmap${byline(opts.by)}`);
       return milestones;
     });
   }

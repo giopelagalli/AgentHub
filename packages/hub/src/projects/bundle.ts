@@ -177,6 +177,16 @@ async function findNestedRepos(dir: string, acc: string[] = []): Promise<string[
   return acc;
 }
 
+/**
+ * The suffix a commit message carries when an API client, not the owner, asked for the write —
+ * ` (by JD)`, from the token's label (0067). Empty for the owner and for the hub's own work.
+ */
+export const byline = (by?: string): string => {
+  // A label may hold newlines or runs of spaces; a commit subject must stay one line.
+  const label = by?.replace(/\s+/g, ' ').trim();
+  return label ? ` (by ${label})` : '';
+};
+
 export class ProjectBundle {
   readonly workspace: string;
 
@@ -184,7 +194,7 @@ export class ProjectBundle {
     this.workspace = join(dir, 'workspace');
   }
 
-  static async create(root: string, init: { slug: string; title: string; intent: string; priority?: Priority; intake?: ProjectIntake }): Promise<ProjectBundle> {
+  static async create(root: string, init: { slug: string; title: string; intent: string; priority?: Priority; intake?: ProjectIntake; by?: string }): Promise<ProjectBundle> {
     validateSlug(init.slug);
     const dir = join(root, init.slug);
     if (existsSync(dir)) throw new Error(`project bundle already exists: ${init.slug}`);
@@ -228,7 +238,7 @@ export class ProjectBundle {
     await git.addConfig('user.email', 'agent@agenthub.local');
 
     const bundle = new ProjectBundle(dir, git);
-    await bundle.commit('chore: scaffold project bundle');
+    await bundle.commit(`chore: scaffold project bundle${byline(init.by)}`);
     return bundle;
   }
 

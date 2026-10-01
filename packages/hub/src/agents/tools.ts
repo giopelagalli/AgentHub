@@ -5,7 +5,7 @@ import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/sha
 import { resolveWorkspace, runShellTask, secretsStripped, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
-import type { ProjectBundle } from '../projects/bundle.js';
+import { byline, type ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
 import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
@@ -43,6 +43,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** The owning run's live event sink: a tool that runs a subagent or a verification reports through it. */
   onEvent?: (e: TurnEvent) => void;
+  /** The API token label that asked for the owning turn (0067), for the commits its tools make. */
+  requestedBy?: string;
 }
 
 export interface Tool {
@@ -602,7 +604,7 @@ export function bundleTools(): Tool[] {
         };
         validateBriefing(briefing);
         await bundle.publishBriefing(briefing as Briefing);
-        await bundle.commit('agent: publish briefing');
+        await bundle.commit(`agent: publish briefing${byline(ctx.requestedBy)}`);
         return 'briefing published';
       },
     },

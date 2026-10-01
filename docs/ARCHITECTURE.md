@@ -79,7 +79,12 @@ the shell itself is tested in happy-dom (0052). `renderDocMarkdown` (callouts:
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. `sameOriginWrite` is
+`open`, `daemon`, `door`, `assistant` or `owner` by an explicit table; unknown routes deny.
+`assistant` is an allow-list of project routes (`ASSISTANT_ROUTES`: state, briefings, projects,
+turns, create, PRD draft, roadmap, turn, pause/resume, priority) that take the owner session or an
+`assistant`-kind user API token, verified in `server.ts`'s hook through the door's `TokenGate`; an
+`agent` token gets 403 there, and the token's label reaches the handlers as `requestedBy` (0065,
+0067). `sameOriginWrite` is
 the CSRF guard: a cookie-authenticated write must carry `Sec-Fetch-Site: same-origin` or the hub's
 own `Origin`, because the preview listener is a different port on the same *site* and a
 `SameSite=Lax` cookie would otherwise ride along (0040). Daemon routes declare the node they are
@@ -87,7 +92,8 @@ about so a node token cannot act for another node (0016). Login throttling per I
 
 **`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
 stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
-mints, `GET` lists, `DELETE` revokes. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
+mints, `GET` lists, `DELETE` revokes. `TokenGate` pairs the store with one bad-bearer lockout and is
+shared with the assistant scope (0065), so `/v1` and `/api` guesses count together. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
 `agenthub/worker`; each also takes a route suffix, `@local`/`@cloud`/`@<provider>`, 0050) and
 `POST /v1/chat/completions` turns the OpenAI wire shape into
 `ChatMessage[]`/`ToolDef[]`, hands it to the gateway, and turns the `ChatResult` back — streaming

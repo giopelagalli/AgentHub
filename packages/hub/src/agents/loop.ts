@@ -107,6 +107,12 @@ export class AgentLoop {
   get gateway(): ModelGateway { return this.deps.gateway; }
   get transcript(): Transcript { return this.deps.transcript; }
 
+  /**
+   * Reports model usage that did not go through `run()` — an external harness that calls its model
+   * itself (claude-code, decision 0064) — to the same ledger hook every other call reaches.
+   */
+  recordUsage(u: LoopUsage): void { this.deps.onUsage?.(u); }
+
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});

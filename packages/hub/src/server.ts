@@ -455,10 +455,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     const host = wildcard ? '127.0.0.1' : address.family === 'IPv6' ? `[${address.address}]` : address.address;
     return `http://${host}:${address.port}`;
   };
+  const harnessTokens = new ApiTokens(db);
+  // No pi run survives a restart, so a live run token now is one a crash left behind.
+  const leftover = harnessTokens.revokeHarnessTokens();
+  if (leftover) console.warn(`[harness] revoked ${leftover} pi run token(s) left live by an earlier hub`);
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
     loop, gateway, queue, registry, transcript, github, leases, browser, external: projectExternal,
-    door: { base: selfBase, tokens: new ApiTokens(db) },
+    door: { base: selfBase, tokens: harnessTokens },
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),

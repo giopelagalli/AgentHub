@@ -248,9 +248,9 @@ else changes: their model override, their standing instructions and their histor
   instructions from somewhere you don't control.
 - The reviewer always runs on the built-in loop, whatever you set. It judges a milestone with
   read-only tools, and that guarantee is worth more than the choice.
-- Spend on a pi run lands on the usage page (as `door:pi:<project>/<employee>`) and counts toward
-  the daily cloud cap like any other call. While a run is live its token shows in the API tokens
-  list; it disappears when the run ends.
+- Spend on a pi run lands on the usage page under its project, like any other employee's, and
+  counts toward the daily cloud cap. While a run is live its token shows in the API tokens list;
+  it disappears when the run ends (or, after a crash, when the hub next starts).
 - If pi isn't installed, or the hub's door isn't reachable yet, the employee runs on the built-in
   loop instead and the run's session events say why — the work still gets done. pi's own error
   output lands in the same place.

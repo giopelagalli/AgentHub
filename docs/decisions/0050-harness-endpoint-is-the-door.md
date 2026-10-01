@@ -34,8 +34,10 @@ not listening yet), pi is refused and the run falls back to `builtin` with the r
 the run's session events.
 
 Because every pi model call is now an ordinary door request into `gateway.chat`:
-- pi spend lands in the usage ledger (as `door:pi:<project>/<member>`, kind `door`) and counts
-  under `MAX_CLOUD_USD_PER_DAY`;
+- pi spend lands in the usage ledger and counts under `MAX_CLOUD_USD_PER_DAY`. The door reads
+  the run token's label back (`harnessAttribution`): an `agent` token labelled
+  `pi:<project>/<who>` books its rows to `subject = <project>`, `member_id = <who>` (kind stays
+  `door`), so pi spend is in the project's cost exactly as the built-in loop's is;
 - each call counts toward its endpoint's `maxStreams` like any other stream;
 - pi gets the gateway's failover and health marking;
 - pi's calls carry the `agent` priority (10), so the owner's assistant still goes first.
@@ -48,7 +50,11 @@ tokens with `usd: null` and the ledger row is the priced record.
 pi can now be served by anything the gateway can, Anthropic included, since the door translates.
 The spike's "spend is invisible to the usage page" caveat is closed, which removes one of the two
 reasons pi is not yet the default — containment (0049) is the one left. A token minted for a run
-shows in the owner's token list while that run is live; a hub that dies mid-run leaves that one
-token unrevoked until the owner revokes it. A concrete model id must be one the door can resolve
+shows in the owner's token list while that run is live. A run cannot survive a restart, so at
+startup the hub revokes every live `agent` token labelled `pi:` — a crash leaves no token open past
+the next boot. The label is the attribution: an owner who mints an `agent` token named
+`pi:<project>/…` by hand books its spend to that project, which is the owner's own choice to make.
+The member's live cost chip sums the turn's `usage` events, where pi's `usd` is null, so it shows
+pi's tokens but not its dollars; the dollars are in the project's ledger total. A concrete model id must be one the door can resolve
 (an endpoint currently serving it); a member override naming any other model fails the run at
 pi's first call rather than silently substituting.

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { TokenUsage, TurnEvent } from '@agenthub/shared';
 import { secretsStripped } from '@agenthub/shared/shell';
-import type { ApiTokens, MintedApiToken } from '../../door.js';
+import { harnessTokenLabel, type ApiTokens, type MintedApiToken } from '../../door.js';
 import { ADMIN_USER } from '../../enrollment.js';
 import { costUsd, priceFor } from '../../providers/fireworks.js';
 import { piSubagentPrompt } from '../../projects/prompts.js';
@@ -28,8 +28,6 @@ const API_KEY_ENV = 'AGENTHUB_HARNESS_KEY';
 const WORKER_MODEL = 'agenthub/worker';
 /** How much of one stderr line reaches the session's event log. */
 const STDERR_LINE_LIMIT = 200;
-/** The longest token label the door accepts (`MAX_LABEL_LENGTH`). */
-const TOKEN_LABEL_LIMIT = 64;
 
 /**
  * pi's built-in tools, by policy. `bash` is what makes the workspace-writing set useful and is also
@@ -160,7 +158,7 @@ export function piHarness(deps: PiHarnessDeps): Harness {
         let workspace: string;
         try {
           // One `agent` token per run, revoked below: it is the only credential pi is given.
-          token = deps.door.tokens.mint(ADMIN_USER, 'agent', clip(`pi:${ctx.subject}/${ctx.who}`, TOKEN_LABEL_LIMIT));
+          token = deps.door.tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel(ctx.subject, ctx.who));
           configDir = await mkdtemp(join(tmpdir(), 'agenthub-pi-'));
           await writeFile(join(configDir, 'models.json'), modelsConfig(deps.door.base, model), 'utf8');
           // Resolved once, so a workspace behind a symlink (macOS's /var) still contains pi's paths.

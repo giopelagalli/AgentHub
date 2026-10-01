@@ -1,4 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { routeAccess } from '../src/auth.js';
 import { API_TOKEN_PREFIX, KIND_PRIORITY, type MintedApiToken, type TokenKind } from '../src/door.js';
@@ -132,6 +135,45 @@ describe('POST /v1/chat/completions', () => {
     expect(summary.bySubject).toEqual([{ subject: 'door:pi', usd: 0, tokens: expect.any(Number) }]);
     const row = hub.db.prepare('SELECT kind, member_id, session_id, subject FROM usage').get() as Record<string, unknown>;
     expect(row).toEqual({ kind: 'door', member_id: null, session_id: null, subject: 'door:pi' });
+  });
+
+  it("books a pi run token's spend to its project and member, and no other token's", async () => {
+    const { hub, base } = await harness();
+    const run = await mint(hub, 'agent', 'pi:demo/coder-1');
+    // Only an `agent` token is a pi run's; an assistant token that happens to look like one is not.
+    const lookalike = await mint(hub, 'assistant', 'pi:demo/coder-2');
+    for (const token of [run, lookalike]) {
+      expect((await completions(base, token.token, { model: 'agenthub/worker', messages: hello })).status).toBe(200);
+    }
+
+    const rows = hub.db.prepare('SELECT kind, member_id, subject FROM usage ORDER BY id').all();
+    expect(rows).toEqual([
+      { kind: 'door', member_id: 'coder-1', subject: 'demo' },
+      { kind: 'door', member_id: null, subject: 'door:pi:demo/coder-2' },
+    ]);
+    // Which is what the project's own cost reads.
+    expect(hub.usage.summary({ since: 0, subject: 'demo' }).bySubject).toEqual([
+      { subject: 'demo', usd: 0, tokens: expect.any(Number) },
+    ]);
+  });
+
+  it('revokes pi run tokens a crashed hub left live, and only those, at startup', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agenthub-door-'));
+    try {
+      const dbPath = join(dir, 'hub.db');
+      const first = createHub({ dbPath });
+      const leftover = await mint(first, 'agent', 'pi:demo/coder-1');
+      const kept = await mint(first, 'agent', 'jd');
+      await first.stop();
+
+      const second = createHub({ dbPath });
+      hubs.push(second);
+      const live = (await second.app.inject({ method: 'GET', url: '/api/tokens' })).json() as { tokens: { id: number }[] };
+      expect(live.tokens.map((t) => t.id)).toEqual([kept.id]);
+      expect(leftover.id).not.toBe(kept.id);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('streams OpenAI chunks, with usage in the last one when asked for', async () => {

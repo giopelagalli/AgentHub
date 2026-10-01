@@ -43,6 +43,26 @@ export const MAX_LABEL_LENGTH = 64;
 
 export const newApiToken = (): string => `${API_TOKEN_PREFIX}${randomBytes(API_TOKEN_BYTES).toString('hex')}`;
 
+/**
+ * The label of the `agent` token a pi run is minted (decision 0050): `pi:<project>/<who>`. The door
+ * reads it back to put the run's spend under its project and member, as the built-in loop's is.
+ */
+const HARNESS_LABEL_PREFIX = 'pi:';
+const HARNESS_LABEL_RE = /^pi:([a-z0-9-]{1,40})\/(.+)$/;
+
+export const harnessTokenLabel = (project: string, who: string): string =>
+  `${HARNESS_LABEL_PREFIX}${project}/${who}`.slice(0, MAX_LABEL_LENGTH);
+
+/** The project and member a harness token's spend belongs to; null for any other token. */
+export function harnessAttribution(token: ApiTokenView): { subject: string; memberId: string | null } | null {
+  if (token.kind !== 'agent') return null;
+  const match = HARNESS_LABEL_RE.exec(token.label);
+  if (!match) return null;
+  // A label cut at the length limit has lost the end of its member id, so it names no member.
+  const full = token.label.length < MAX_LABEL_LENGTH;
+  return { subject: match[1]!, memberId: full ? match[2]! : null };
+}
+
 /** One token as the owner sees it — never its hash, and never its plaintext after the mint. */
 export interface ApiTokenView {
   id: number;
@@ -98,6 +118,16 @@ export class ApiTokens {
   revoke(id: number, user: string): boolean {
     return this.db.prepare(`UPDATE api_tokens SET revoked_at=? WHERE id=? AND user=? AND revoked_at IS NULL`)
       .run(this.now(), id, user).changes > 0;
+  }
+
+  /**
+   * Revokes every live pi run token. A run cannot outlive the hub process that started it, so at
+   * startup any such token is a leftover of a crash, and it is closed rather than left to the owner.
+   */
+  revokeHarnessTokens(): number {
+    return this.db.prepare(
+      `UPDATE api_tokens SET revoked_at=? WHERE kind='agent' AND label LIKE ? AND revoked_at IS NULL`,
+    ).run(this.now(), `${HARNESS_LABEL_PREFIX}%`).changes;
   }
 
   /**
@@ -410,8 +440,17 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
       });
       // The door's own row in the hub's one ledger, so the cost chip and the daily cloud cap see an
       // outside client exactly as they see a project turn.
+      // A pi run's token books its spend to its project and member instead (0050), so it shows in
+      // the project's cost like the built-in loop's.
       if (result.usage) {
-        opts.usage.record({ ...result.usage, subject: `door:${token.label}`, sessionId: null, memberId: null, kind: 'door' });
+        const harness = harnessAttribution(token);
+        opts.usage.record({
+          ...result.usage,
+          subject: harness?.subject ?? `door:${token.label}`,
+          sessionId: null,
+          memberId: harness?.memberId ?? null,
+          kind: 'door',
+        });
       }
       const usage = wireUsage(result);
       // What actually served the request, which for a tier name is only known now.

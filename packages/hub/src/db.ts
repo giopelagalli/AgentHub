@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   ended_at INTEGER,
   outcome TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_sessions_kind_subject ON sessions(kind, subject, ended_at);
 CREATE TABLE IF NOT EXISTS job_logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   job_id INTEGER NOT NULL,

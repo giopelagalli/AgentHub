@@ -1,6 +1,6 @@
 import { connect } from 'node:net';
 import { describe, it, expect, afterAll } from 'vitest';
-import { daemonRouteSubject, routeAccess, safeEqual, SESSION_COOKIE } from '../src/auth.js';
+import { daemonRouteSubject, originOf, routeAccess, safeEqual, sameOriginWrite, SESSION_COOKIE } from '../src/auth.js';
 import { createHub, type Hub } from '../src/server.js';
 
 const PASSWORD = 'let-me-in';
@@ -112,6 +112,37 @@ describe('auth policy', () => {
   });
 });
 
+describe('sameOriginWrite', () => {
+  const self = 'http://hub.local:4000';
+
+  it('lets a read through however it was reached', () => {
+    for (const method of ['GET', 'HEAD', 'OPTIONS', 'get']) {
+      expect(sameOriginWrite(method, { 'sec-fetch-site': 'cross-site', origin: 'http://evil' }, self)).toBe(true);
+    }
+  });
+
+  it('takes Sec-Fetch-Site as the answer when the browser sent one', () => {
+    expect(sameOriginWrite('POST', { 'sec-fetch-site': 'same-origin' }, self)).toBe(true);
+    // Same *site*, different port — which is exactly what the preview listener is.
+    expect(sameOriginWrite('POST', { 'sec-fetch-site': 'same-site' }, self)).toBe(false);
+    expect(sameOriginWrite('POST', { 'sec-fetch-site': 'cross-site' }, self)).toBe(false);
+    expect(sameOriginWrite('POST', { 'sec-fetch-site': 'none' }, self)).toBe(false);
+  });
+
+  it('falls back to Origin, and lets a request with neither header through', () => {
+    expect(sameOriginWrite('POST', { origin: self }, self)).toBe(true);
+    expect(sameOriginWrite('POST', { origin: 'http://hub.local:4010' }, self)).toBe(false);
+    expect(sameOriginWrite('POST', { origin: 'http://evil.example' }, self)).toBe(false);
+    // curl, a script, a test: not a browser acting for a page, which is the attack.
+    expect(sameOriginWrite('POST', {}, self)).toBe(true);
+  });
+
+  it('writes the origin the way a browser would', () => {
+    expect(originOf('hub.local:4000', false)).toBe('http://hub.local:4000');
+    expect(originOf('hub.example.com', true)).toBe('https://hub.example.com');
+  });
+});
+
 describe('hub auth', () => {
   it('leaves every route open when no auth is configured', async () => {
     const open = createHub();
@@ -131,6 +162,45 @@ describe('hub auth', () => {
     const cookie = await login(hub);
     expect((await hub.app.inject({ method: 'GET', url: '/api/state', headers: { cookie } })).statusCode).toBe(200);
     expect((await hub.app.inject({ method: 'GET', url: '/api/me', headers: { cookie } })).json()).toEqual({ owner: true });
+  });
+
+  it('refuses a cookie-authenticated write that came from another origin', async () => {
+    const hub = spawn();
+    const cookie = await login(hub);
+    const write = (headers: Record<string, string>) => hub.app.inject({
+      method: 'POST', url: '/api/projects/ghost/pause', headers: { cookie, host: 'hub.local:4000', ...headers },
+    });
+
+    // The preview listener is another *port* on the same site, so a Lax cookie rides along; this
+    // is the check that stops project code posting to the hub as the owner.
+    const refused = await write({ origin: 'http://hub.local:4010' });
+    expect(refused.statusCode).toBe(403);
+    expect(refused.json()).toEqual({ error: 'cross-origin request refused' });
+    expect((await write({ 'sec-fetch-site': 'cross-site' })).statusCode).toBe(403);
+
+    // The hub's own page gets through — to the route's own 404 for a project that isn't there.
+    expect((await write({ origin: 'http://hub.local:4000' })).statusCode).toBe(404);
+    expect((await write({ 'sec-fetch-site': 'same-origin' })).statusCode).toBe(404);
+    // A read from anywhere is still a read.
+    expect((await hub.app.inject({ method: 'GET', url: '/api/state', headers: { cookie, origin: 'http://evil' } })).statusCode).toBe(200);
+  });
+
+  it('exempts a bearer-carrying write, which no browser sends by itself', async () => {
+    const hub = spawn();
+    const registered = await hub.app.inject({
+      method: 'POST', url: '/api/nodes/register',
+      headers: { authorization: `Bearer ${DAEMON_TOKEN}`, origin: 'http://evil.example' },
+      payload: { name: 'spark', arch: 'arm64', endpoints: [] },
+    });
+    expect(registered.statusCode).toBe(200);
+  });
+
+  it('lets the owner log in from a page it has not served yet', async () => {
+    const hub = spawn();
+    const res = await hub.app.inject({
+      method: 'POST', url: '/api/login', payload: { password: PASSWORD }, headers: { origin: 'null' },
+    });
+    expect(res.statusCode).toBe(200);
   });
 
   it('refuses a wrong, missing or malformed password without issuing a cookie', async () => {

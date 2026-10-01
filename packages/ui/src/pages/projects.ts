@@ -1,6 +1,7 @@
-import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus, type UsageReport } from '@agenthub/shared';
+import { AVATARS, PRIORITY_RANK, TEAM_ROLES, type AutoRun, type ModelCatalog, type ModelPolicy, type PreviewStatus, type Priority, type ProjectManifest, type TeamMemberView, type TeamRoster, type TeamStatus, type UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
-import { ARTIFACT_TITLES, activitySummary, docsSummary, prdSummary, roadmapSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
+import { ARTIFACT_TITLES, activitySummary, codeSummary, docsSummary, prdSummary, previewSummary, roadmapSummary, terminalSummary, type ArtifactId, type ArtifactSummary, type DocState } from '../artifacts.js';
+import type { CodeSummaryDoc } from '../code/model.js';
 import { AUTO_RUN_INTERVALS, autoRunFromForm, autoRunLabel, budgetText, formatInterval } from '../autorun.js';
 import { avatarSvg } from '../avatars.js';
 import type { DocsIndex } from '../docs.js';
@@ -17,10 +18,13 @@ import { turnsOf, type Store, type UiState } from '../store.js';
 import { toast } from '../toast.js';
 import { doingCaption, formatClock, formatUsd, openSubagents, runningTurn, type TurnRecord, type TurnsResponse } from '../turns.js';
 import { mountActivity } from '../views/activity.js';
+import { mountCode } from '../views/code.js';
 import { mountDocs } from '../views/docs.js';
 import type { ViewContext } from '../views/parts.js';
 import { mountPrd } from '../views/prd.js';
+import { mountPreview } from '../views/preview.js';
 import { mountRoadmap } from '../views/roadmap.js';
+import { mountTerminal } from '../views/terminal.js';
 
 export { button, el };
 
@@ -397,11 +401,16 @@ function autoRunForm(
 }
 
 /** The three documents, each mounted into the sheet rather than into the page. */
-const DOC_VIEWS: Record<Exclude<ArtifactId, 'activity'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
+const DOC_VIEWS: Record<Exclude<ArtifactId, 'activity' | 'terminal'>, (host: HTMLElement, ctx: ViewContext, seed?: string[]) => () => void> = {
   prd: mountPrd,
   roadmap: mountRoadmap,
   docs: mountDocs,
+  code: mountCode,
+  preview: mountPreview,
 };
+
+/** The artifacts that manage their own columns, and so take the whole sheet body. */
+const WIDE_ARTIFACTS: ArtifactId[] = ['activity', 'code', 'terminal', 'preview'];
 
 /** One artifact's document, and where its fetch got to. */
 interface Held<T> {
@@ -473,6 +482,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   let prd: Held<PrdDoc> = { state: 'loading', doc: null };
   let roadmap: Held<RoadmapDoc> = { state: 'loading', doc: null };
   let docs: Held<DocsIndex> = { state: 'loading', doc: null };
+  let preview: Held<PreviewStatus> = { state: 'loading', doc: null };
+  let code: Held<CodeSummaryDoc> = { state: 'loading', doc: null };
   /** Bumped per artifact reload, so three slow replies for a project we've left are dropped. */
   let artifactToken = 0;
 
@@ -529,6 +540,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     take<PrdDoc>(`/api/projects/${slug}/prd`, (held) => { prd = held; });
     take<RoadmapDoc>(`/api/projects/${slug}/roadmap`, (held) => { roadmap = held; });
     take<DocsIndex>(`/api/projects/${slug}/docs`, (held) => { docs = held; });
+    take<PreviewStatus>(`/api/projects/${slug}/preview`, (held) => { preview = held; });
+    take<CodeSummaryDoc>(`/api/projects/${slug}/code`, (held) => { code = held; });
   };
 
   /** Each project's trailing-24h spend, as the header chip shows it; empty until a fetch lands. */
@@ -576,6 +589,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
           sheetView?.dispose();
           sheetView = null;
           sheet = null;
+          renderArtifacts();
           // The writer may have changed the document while it was open.
           loadArtifacts(project.slug);
         },
@@ -584,7 +598,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     sheetView?.dispose();
     sheet.body.replaceChildren();
     sheet.setTitle(ARTIFACT_TITLES[id], project.title);
-    sheet.setLayout(id === 'activity' ? 'wide' : 'document');
+    sheet.setLayout(WIDE_ARTIFACTS.includes(id) ? 'wide' : 'document');
     const ctx: ViewContext = {
       slug: project.slug,
       title: project.title,
@@ -593,8 +607,12 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     };
     const dispose = id === 'activity'
       ? mountActivity(sheet.body, ctx, { store, roster: () => roster })
-      : DOC_VIEWS[id](sheet.body, ctx, seed);
+      : id === 'terminal'
+        ? mountTerminal(sheet.body, ctx)
+        : DOC_VIEWS[id](sheet.body, ctx, seed);
     sheetView = { id, dispose };
+    // The Terminal button's line is "open" or "closed", which only this knows.
+    renderArtifacts();
   }
 
   const openCard = (slug: string, card: OrgCard): void => {
@@ -814,6 +832,9 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       artifactButton(roadmapSummary(roadmap.state, roadmap.doc), openArtifact),
       artifactButton(docsSummary(docs.state, docs.doc), openArtifact),
       artifactButton(activitySummary(held.state, held.turns, roster, Date.now()), openArtifact),
+      artifactButton(codeSummary(code.state, code.doc, Date.now()), openArtifact),
+      artifactButton(terminalSummary(sheetView?.id === 'terminal'), openArtifact),
+      artifactButton(previewSummary(preview.state, preview.doc), openArtifact),
     );
   }
 

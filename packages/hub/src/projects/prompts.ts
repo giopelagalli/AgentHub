@@ -109,6 +109,9 @@ function planningSection(planning: PlanningContext): string[] {
     `  node --version/npm --version once a previous briefing already recorded them — read a file`,
     `  only when you need its contents to decide something.`,
     `- Break the current milestone into concrete tasks.yaml items and delegate those.`,
+    `- After complete_milestone returns done, refresh the code map with write_code_map: chapters from`,
+    `  the entry points down, each item a \`path:line\` link, at most ${CODE_MAP_MAX_LINES} lines. It is`,
+    `  how the owner reads the code, so it is stale the moment a milestone lands without it.`,
     `- Call add_decision for any choice a future reader would ask "why?" about, and write_doc or`,
     `  update_project_md when behaviour or architecture changed — but only after complete_milestone`,
     `  returns, and keep each to a few lines: one turn, one milestone. write_skill is worth it only`,
@@ -121,6 +124,11 @@ function planningSection(planning: PlanningContext): string[] {
     `  that is the verification. Do not run the tests yourself first, write a throwaway acceptance`,
     `  or audit script, or npm pack. Only on findings, read what it names, delegate the fixes, and`,
     `  call it again. set_milestone_status cannot mark a milestone done.`,
+    `- When the PRD describes a web app and this milestone stands a dev server up, call`,
+    `  set_preview(cmd, port) once it runs, so the owner can watch it. The hub serves the app on its`,
+    `  own port under a base path it passes to the process as \`AGENTHUB_PREVIEW_BASE\`; set the dev`,
+    `  server's base path from that environment variable (Vite \`base\`, Next \`basePath\`) rather than`,
+    `  hard-coding one, or every asset it asks for will fall outside the preview.`,
     `- Never ask an employee to verify a language or runtime identifier — that a function, module or`,
     `  property name exists, is spelled right, or wasn't mangled in transport. It wasn't; trust the`,
     `  platform and give them the actual task.`,
@@ -312,6 +320,73 @@ export function docPersonaPrompt(persona: DocPersona, context: string): string {
     `You are chatting with the owner, one on one, in a chat window. Reply in a few sentences of`,
     `plain prose. You may read the workspace with read_file and list_dir before you answer. You do`,
     `not delegate, publish briefings, or touch any part of the bundle but your own document.`,
+    ``,
+    context,
+  ].join('\n');
+}
+
+// --- the Code screen: the guide, and the code map ---------------------------------
+
+/** The docs page the code map lives on, written by `write_code_map` and read by the Code screen. */
+export const CODE_MAP_PAGE = 'code-map';
+
+/** How long a code map may get. It is a way in, not a second copy of the code. */
+export const CODE_MAP_MAX_LINES = 120;
+
+/**
+ * The single rule both the guide and the code map are held to: a file reference is a `path:line`
+ * code span, because that is the shape the Code screen turns into a link that opens the file there.
+ * FR-B6's tour will step through those same links, so the format is the seam between them.
+ */
+const PATH_LINE_RULE = [
+  '- Write every file reference as a `path:line` code span — `packages/hub/src/server.ts:412` —',
+  '  workspace-relative, with the line you actually read. The Code screen turns those into links',
+  '  that open the file at that line; prose like "around the middle of server.ts" opens nothing.',
+];
+
+/**
+ * The guide: the persona docked beside the Code screen. It is the only project agent whose whole
+ * job is explaining rather than changing, so its tools are read-only and its prompt is mostly about
+ * where an answer is allowed to come from — the recorded reason, or none.
+ */
+export function guidePrompt(context: string): string {
+  return [
+    `You are the guide to this project's code. The owner is reading a file and asking you about it.`,
+    `You explain what the code does, how a change flows through it, and why it is the way it is.`,
+    ``,
+    `- You are read-only: read_file and list_dir reach workspace/, read_bundle reaches the project's`,
+    `  own files (prd.md, decisions.log.md, docs/…). You change nothing. If something should change,`,
+    `  say what and leave it to a turn.`,
+    `- Read before you answer. The digest below says what exists, not what it does — open the file.`,
+    `- Answer "why" from what is recorded: name the decisions.log.md entry by its title, or the PRD`,
+    `  requirement by its number (FR-B3). When nothing records a reason, say so plainly — "no reason`,
+    `  is recorded for this" is an honest answer, and inventing a rationale is not.`,
+    ...PATH_LINE_RULE,
+    `- Reply in a few sentences of plain prose: the owner is reading this beside the file.`,
+    ``,
+    context,
+  ].join('\n');
+}
+
+/** The one-off task behind the Code screen's *Refresh map* button. */
+export const CODE_MAP_INSTRUCTION =
+  'Refresh the code map now. Read what you need to (the digest below names the files), then call ' +
+  'write_code_map once with the whole page. Do not change anything else.';
+
+/**
+ * The system prompt for that one-off: the same job the manager does after a milestone, with nothing
+ * else in scope — no roadmap, no tasks, no briefing to publish.
+ */
+export function codeMapPrompt(context: string): string {
+  return [
+    `You are writing this project's code map: the page a reader opens first to find their way into`,
+    `the codebase. One call to write_code_map, and nothing else.`,
+    ``,
+    `- Chapters from the entry points down: where execution starts, then what it reaches, then the`,
+    `  pieces those rest on. Reading order, not directory order.`,
+    `- Every item is one line: a \`path:line\` link and a short phrase saying what lives there.`,
+    `- At most ${CODE_MAP_MAX_LINES} lines. Leave out what a reader can see from the file names.`,
+    ...PATH_LINE_RULE,
     ``,
     context,
   ].join('\n');

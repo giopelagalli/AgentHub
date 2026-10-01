@@ -29,19 +29,38 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
 the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs and activity; a drawer per agent with a live *Now* feed and a chat. Pure model functions
-(`turns.ts`, `models.ts`, `org.ts`, `rail.ts`) are separated from DOM code so they are testable
-without a browser.
+docs, activity, code, the terminal and the preview; a drawer per agent with a live *Now* feed and a
+chat. Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, `code/model.ts`, and the
+terminal's frame helpers) are separated from DOM code so they are testable without a browser — the
+UI's tests run in node, and nothing that needs a DOM is tested at all. No framework, but no longer
+no runtime dependencies: CodeMirror is the Code sheet's and is loaded only when that sheet opens
+(0043); `@xterm/xterm` and `@xterm/addon-fit` are the terminal's, and they are imported eagerly,
+which is what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on
+ROADMAP).
 
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is
-`open`, `daemon` or `owner` by an explicit table; unknown routes deny. Daemon routes declare the
-node they are about so a node token cannot act for another node (0016). Login throttling per IP.
+`open`, `daemon`, `door` or `owner` by an explicit table; unknown routes deny. `sameOriginWrite` is
+the CSRF guard: a cookie-authenticated write must carry `Sec-Fetch-Site: same-origin` or the hub's
+own `Origin`, because the preview listener is a different port on the same *site* and a
+`SameSite=Lax` cookie would otherwise ride along (0040). Daemon routes declare the node they are
+about so a node token cannot act for another node (0016). Login throttling per IP.
+
+**`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
+stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
+mints, `GET` lists, `DELETE` revokes. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
+`agenthub/worker`) and `POST /v1/chat/completions` turns the OpenAI wire shape into
+`ChatMessage[]`/`ToolDef[]`, hands it to the gateway, and turns the `ChatResult` back — streaming
+(SSE, with usage in the final chunk on request) or not. The token's `kind` picks the vLLM priority
+(0020, 0035) and its label becomes the ledger's subject, so an outside client costs and caps like a
+project turn (0034). Bad bearers meet login's throttle. It is registered in `server.ts` with one
+line and is the only route family outside `/api/` that is guarded.
 
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
-marks unhealthy endpoints, sends per-endpoint `priority` and `requestExtras` (0006, 0008),
+marks unhealthy endpoints, sends per-endpoint `priority` — or a caller's per-request
+`priorityOverride` (0035) — and `requestExtras` (0006, 0008),
 refuses switched-off models and cloud past the spend cap (0002, 0019, 0024). It is the only place
 a model is ever called, and it prices each request as it finishes.
 
@@ -94,9 +113,75 @@ also kept out of every child the hub spawns: `secretsStripped()` in `@agenthub/s
 `run_shell`, the verify command and the daemon's shell-task runner hand `runShellTask`.
 `ProjectService.create` drives the clone on the request's own path and removes the half-made bundle
 if it fails; `PrdDrafter` reads the clone so the PRD describes the product that exists (0029);
-`GET /api/github/status` answers `{ configured, method }` and never the token. The workspace is a
-real checkout, so the bundle ignores all of `workspace/` and a milestone's changed files are read
-from that checkout's own index.
+`GET /api/github/status` answers `{ configured, method, connected }` and never the token. The
+workspace is a real checkout, so the bundle ignores all of `workspace/` and a milestone's changed
+files are read from that checkout's own index.
+
+**`projects/github-app.ts`, `projects/github-installations.ts`** — the GitHub App half, so
+connecting GitHub is a button rather than a token a member has to mint: `GET /api/github/connect`
+sends the browser to GitHub's own "choose repositories" screen with a signed `state` (a nonce, the
+member and an expiry — nothing is stored, 0032), and `GET /api/github/callback` exchanges the
+`code` for a *user* token used once, to ask GitHub which installations that user has, and then
+dropped (0031). GitHub's `installation_id` is never trusted; only an id in `GET /user/installations`
+is stored, in `github_installations` (installation id, user, account — no token). `AppCredentials`
+is a second `GithubCredentials` beside `PatCredentials`: it finds the installation covering a
+repository by that installation's own repository listing (cached 5 minutes; the account name is the
+fallback only when a listing cannot be read, so a repository an installation was not given falls
+through to the token rather than stopping the chain) and mints a per-installation token, cached
+until five minutes before GitHub expires it, with the app's
+own RS256 JWT signed by `node:crypto`. `ChainedCredentials` is the precedence — the App, then the
+personal access token (0033). `GET /api/github/repos` is what the New-project dialog's picker
+shows; `DELETE /api/github/installations/:id` forgets one, the grant itself being the member's to
+revoke on GitHub.
+
+**`projects/terminal.ts`** — FR-B2, the Terminal: one Fastify plugin, registered with a single
+line in `server.ts`, that owns `GET /api/projects/:slug/terminal` as a WebSocket upgrade. It spawns
+the owner's shell (`$SHELL`, else `/bin/sh`) through node-pty in the project's `workspace/` and
+joins pty and socket as binary frames both ways; the only text frames are `{type:'resize'}` up and a
+one-line notice down. The route is `owner` by `routeAccess`'s default, so the daemon bearer and
+per-node tokens cannot reach it, and the shell is handed `secretsStripped(process.env)` plus `TERM`
+and `AGENTHUB_PROJECT` — a terminal is not a way to read the hub's credentials out of its own
+process (0041). One socket is one shell: the process *group* is killed on close, so a backgrounded
+grandchild goes with it. Four sessions per hub, a 30-second sweep that closes an idle session at the
+hour and ends one whose peer stopped answering keepalive pings, and a start/end log line that is a
+slug and a duration, never a transcript. Output is paused when a slow socket has a megabyte still
+to write, so a `cat` of something enormous cannot be buffered into the hub's memory at pty speed;
+at shutdown the groups are killed outright, since the hub will not be there to run an escalation.
+It is registered only when the hub has a password, and refuses an upgrade whose `Origin` names any
+host:port but its own — a WebSocket handshake is not same-origin-policed and carries cookies. The socket is paused until the pty and its
+listeners are wired, because the handshake completes before the handler runs and xterm's first frame
+is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
+addon, reconnect with a banner — a reconnect is a *new* shell and says so).
+
+**`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
+per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and
+`AGENTHUB_PREVIEW_BASE`, killed by process group, holding a 200-line log ring, joining concurrent
+starts on one promise, and stopping itself after 30 minutes with no proxied traffic (0039).
+`PreviewServer` is a **second HTTP listener on its own port** (`PREVIEW_PORT`, default the hub's
+plus ten) that serves previews and nothing else: a preview document is project code, so it must not
+share an origin with the hub's API (0040). Access is a per-project capability in the path,
+`/p/<slug>/<cap>/…`, compared in constant time; the path is forwarded verbatim (0037), requests are
+piped with `stream.pipeline` and upgrades are spliced at the TCP level (0038). The `previewRoutes`
+plugin carries the owner's routes on the hub — `GET/PUT/DELETE /api/projects/:slug/preview`,
+`POST …/preview/start|stop|restart|rotate` — and answers with the preview's absolute URL. The
+manager sets a project's preview with the `set_preview` tool.
+
+**`projects/code.ts`** — the Code screen's hub half (FR-B3–B5), registered into the server with one
+line. Five owner-only routes under `/api/projects/:slug/code`: the tree (the workspace as one flat
+sorted list, `.git`/`node_modules`/`dist`/… never descended into because `digest.ts` already decided
+what is not the project's own code, binary and >2 MB files listed but marked unopenable, 5,000
+entries then it says it stopped), one file read (UTF-8 only, decoded strictly so a mislabelled
+binary is a 415 rather than a lossy round trip), one file written, and *Refresh map*. It shares the
+agents' containment check rather than keeping a second one — `realWorkspacePath` in
+`agents/tools.ts`, which is the tools' own lexical check with `realpath` on both sides so a symlink
+inside the workspace cannot point out of it: a path an agent may not reach is a path the owner's
+editor may not write either. A save commits where the workspace actually lives, the clone for an
+imported project and the bundle otherwise, and reports `committed: 'none'` for the files it holds
+out of history on purpose — credentials by convention, and whatever the repository ignores (0044).
+*Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`, which is
+`docs/code-map.md` and nothing more exotic (0046); it is one run per project at a time, aborts with
+the request, and reports whether the page was actually rewritten. The guide it sits beside is a
+persona in `chat.ts`, read-only by construction (0045).
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

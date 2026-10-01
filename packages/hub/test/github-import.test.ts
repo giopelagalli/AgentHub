@@ -216,12 +216,12 @@ describe('importing a repository', () => {
   it('reports whether a token is configured, and never the token', async () => {
     makeHub();
     expect((await app().inject({ method: 'GET', url: '/api/github/status' })).json())
-      .toEqual({ configured: true, method: 'token' });
+      .toEqual({ configured: true, method: 'token', connected: false });
 
     await hub!.stop();
     makeHub({ token: '' });
     expect((await app().inject({ method: 'GET', url: '/api/github/status' })).json())
-      .toEqual({ configured: false, method: 'none' });
+      .toEqual({ configured: false, method: 'none', connected: false });
   });
 });
 

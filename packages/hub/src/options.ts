@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AuthOptions } from './auth.js';
 import { SEARCH_PROVIDERS, type ExternalOptions, type SearchProvider } from './external/index.js';
+import type { GithubAppConfig } from './projects/github-app.js';
+import { PREVIEW_PORT_OFFSET } from './projects/preview.js';
 import type { AssistantOptions, HubOptions } from './server.js';
 
 /** Where the hub listens when `HUB_HOST` says nothing. */
@@ -26,6 +29,46 @@ function parseTrustProxy(raw: string | undefined): boolean | string | undefined 
   if (['1', 'true', 'yes'].includes(raw.toLowerCase())) return true;
   if (['0', 'false', 'no'].includes(raw.toLowerCase())) return false;
   return raw;
+}
+
+/** The five `hub.env` keys behind the registered GitHub App, and the sixth that points at its key. */
+const GITHUB_APP_ENV = ['GITHUB_APP_ID', 'GITHUB_APP_CLIENT_ID', 'GITHUB_APP_CLIENT_SECRET', 'GITHUB_APP_SLUG', 'GITHUB_APP_PRIVATE_KEY'] as const;
+
+/**
+ * The GitHub App's configuration, with its private key read from disk here rather than at the first
+ * callback — a `.pem` the hub cannot read is a startup problem and says so at startup, in the log
+ * the owner is already watching. Nothing about the app is ever logged beyond the names of what is
+ * missing; the key, the secret and the client id never appear.
+ *
+ * All five or none, because four of them cannot connect anything and would only fail later.
+ */
+function readGithubApp(env: NodeJS.ProcessEnv, log: (line: string) => void): GithubAppConfig | undefined {
+  const present = GITHUB_APP_ENV.filter((key) => env[key]);
+  if (present.length === 0) return undefined;
+  const missing = GITHUB_APP_ENV.filter((key) => !env[key]);
+  if (missing.length) {
+    log(`[hub] GitHub App not configured: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing — "Connect GitHub" is off`);
+    return undefined;
+  }
+  const path = env.GITHUB_APP_PRIVATE_KEY as string;
+  let privateKey: string;
+  try {
+    privateKey = readFileSync(path, 'utf8');
+  } catch (err) {
+    log(`[hub] GITHUB_APP_PRIVATE_KEY=${path} could not be read (${err instanceof Error ? err.message : String(err)}) — "Connect GitHub" is off`);
+    return undefined;
+  }
+  if (!privateKey.includes('PRIVATE KEY')) {
+    log(`[hub] GITHUB_APP_PRIVATE_KEY=${path} is not a PEM private key — "Connect GitHub" is off`);
+    return undefined;
+  }
+  return {
+    appId: env.GITHUB_APP_ID as string,
+    clientId: env.GITHUB_APP_CLIENT_ID as string,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET as string,
+    slug: env.GITHUB_APP_SLUG as string,
+    privateKey,
+  };
 }
 
 /**
@@ -140,7 +183,13 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
   // branch back. Only its presence is ever reported (`GET /api/github/status`); the value is read
   // here and handed to the git and REST calls, and is never logged or sent to the UI.
   const githubToken = env.GITHUB_TOKEN;
-  if (!githubToken) log('[hub] GITHUB_TOKEN not set; only public repositories can be imported, and nothing can be pushed back');
+  // The registered GitHub App, which is how a member connects GitHub with a button instead of
+  // minting a token. All five values or none: a half-configured app would fail at the callback,
+  // hours after the hub started, so it is refused here with the missing names said out loud.
+  const githubApp = readGithubApp(env, log);
+  if (!githubToken && !githubApp) {
+    log('[hub] no GitHub App and no GITHUB_TOKEN; only public repositories can be imported, and nothing can be pushed back');
+  }
 
   // A turn is the hub's most expensive unit, so the scheduler has a kill switch and a hub-wide cap.
   // `AUTO_TURNS=0` is the only value that disables it; a bad cap is dropped with one log line.
@@ -169,6 +218,23 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     else log(`[hub] TURN_TIMEOUT_MINUTES=${env.TURN_TIMEOUT_MINUTES} is not a whole number of at least 1; ignored`);
   }
 
+  // The preview listener is a second port on this machine, serving project code on its own origin
+  // (0040). It defaults to the hub's port plus ten so a hub on 4000 previews on 4010; behind the
+  // public site it is a separate hostname, and `PREVIEW_PUBLIC_BASE` is what the UI then links to.
+  const port = Number(env.PORT ?? DEFAULT_PORT);
+  const host = env.HUB_HOST || DEFAULT_HUB_HOST;
+  let previewPort = port + PREVIEW_PORT_OFFSET;
+  if (env.PREVIEW_PORT !== undefined && env.PREVIEW_PORT !== '') {
+    const n = Number(env.PREVIEW_PORT);
+    if (Number.isInteger(n) && n > 0 && n <= 65535 && n !== port) previewPort = n;
+    else log(`[hub] PREVIEW_PORT=${env.PREVIEW_PORT} is not a free port number; using ${previewPort}`);
+  }
+  const preview = {
+    port: previewPort,
+    host,
+    ...(env.PREVIEW_PUBLIC_BASE ? { publicBase: env.PREVIEW_PUBLIC_BASE } : {}),
+  };
+
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
     projectsRoot: env.PROJECTS_ROOT ?? (dataRoot ? join(dataRoot, 'projects') : 'data/projects'),
@@ -178,19 +244,22 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(auth ? { auth } : {}),
     ...(dataRoot ? { controlNode: { dataRoot, ...(controlNodeName ? { name: controlNodeName } : {}) } } : {}),
     ...(cloud ? { cloud } : {}),
-    ...(githubToken ? { github: { token: githubToken } } : {}),
+    ...(githubToken || githubApp
+      ? { github: { ...(githubToken ? { token: githubToken } : {}), ...(githubApp ? { app: githubApp } : {}) } }
+      : {}),
     ...(autoTurns !== undefined ? { autoTurns } : {}),
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
     ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+    preview,
   };
 
   return {
     options,
-    port: Number(env.PORT ?? DEFAULT_PORT),
+    port,
     // The tailnet address on a deployed control node, so the hub is not on every interface the
     // machine happens to have; `0.0.0.0` stays the default for local dev.
-    host: env.HUB_HOST || DEFAULT_HUB_HOST,
+    host,
     telegram,
   };
 }

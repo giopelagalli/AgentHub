@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -8,9 +9,10 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
-import { Auth, LoginThrottle, daemonRouteSubject, routeAccess, type AuthOptions, type NodeSubject } from './auth.js';
+import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
+import { door, openAiError } from './door.js';
 import {
   ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
 } from './enrollment.js';
@@ -30,9 +32,16 @@ import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
+import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
-import { Github, GithubError, PatCredentials, validBranch, type GithubOptions } from './projects/github.js';
+import { previewRoutes } from './projects/preview.js';
+import { codeRoutes } from './projects/code.js';
+import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
+import {
+  AppCredentials, ConnectState, GithubAppClient, GithubAppError, type GithubAppConfig,
+} from './projects/github-app.js';
+import { GithubInstallations } from './projects/github-installations.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
 import { currentMilestoneId, moveMilestone, patchMilestone } from './projects/roadmap.js';
@@ -222,17 +231,30 @@ export interface HubOptions {
   turnTimeoutMs?: number;
   assistant?: AssistantOptions;
   browser?: BrowserOptions;
+  /**
+   * The preview listener (FR-B1, 0040): its port (`PREVIEW_PORT`, defaulting to the hub's plus ten),
+   * the interface it binds, and the public origin it is reached at behind a proxy
+   * (`PREVIEW_PUBLIC_BASE`). Omitted, it still runs — on an ephemeral port, which is what a test
+   * wants and what a hub that was never configured gets.
+   */
+  preview?: { port?: number; host?: string; publicBase?: string };
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
   auth?: AuthOptions;
   /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
   external?: ExternalOptions;
   /**
-   * How the hub reaches GitHub for imported projects. `token` is `GITHUB_TOKEN` from `hub.env` — the
-   * one credential, never logged and never sent to the UI; only `GET /api/github/status` says
-   * whether there is one. The rest are test seams (`cloneBase` points the clone at a bare repo on
-   * disk; `fetch`/`apiBase` at a stubbed REST API), so production only ever reaches github.com.
+   * How the hub reaches GitHub for imported projects. `app` is the registered GitHub App a member
+   * connects with a button, and is preferred; `token` is `GITHUB_TOKEN` from `hub.env` and stays as
+   * the fallback (0033). Neither is ever logged or sent to the UI — only `GET /api/github/status`
+   * says which of the two is configured. The rest are test seams (`cloneBase` points the clone at a
+   * bare repo on disk; `fetch`/`apiBase`/`webBase` at a stubbed GitHub), so production only ever
+   * reaches github.com.
    */
-  github?: Omit<GithubOptions, 'credentials'> & { token?: string };
+  github?: Omit<GithubOptions, 'credentials'> & {
+    token?: string;
+    app?: GithubAppConfig;
+    webBase?: string;
+  };
   /** Video slot knobs: how long a node is passed over after a failed swap, and the clock that times it. */
   video?: { cooldownMs?: number; now?: () => number };
   /**
@@ -386,11 +408,35 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...(opts.external ? { options: opts.external } : { log: () => {} }),
   });
   const projectExternal = external.filter((t) => !t.outward);
-  // One GitHub client per hub: it holds the credential lookup and nothing else, so the token is read
-  // in exactly one place and never travels further than a git environment or a REST header.
+  // One GitHub client per hub: it holds the credential lookup and nothing else, so no token is read
+  // in more than one place or travels further than a git environment or a REST header.
+  //
+  // Precedence is the App, then the personal access token (0033): a connected installation mints a
+  // token scoped to the repositories the member chose, which is narrower than any PAT, so it is
+  // asked first and the PAT answers only for what it cannot reach.
+  const { app: githubAppConfig, token: githubToken, webBase: githubWebBase, ...githubSeams } = opts.github ?? {};
+  const githubInstallations = new GithubInstallations(db);
+  const githubApp = githubAppConfig
+    ? new GithubAppClient({
+        config: githubAppConfig,
+        ...(githubSeams.fetch ? { fetch: githubSeams.fetch } : {}),
+        ...(githubSeams.apiBase ? { apiBase: githubSeams.apiBase } : {}),
+        ...(githubWebBase ? { webBase: githubWebBase } : {}),
+      })
+    : null;
+  const appCredentials = githubApp
+    ? new AppCredentials(githubApp, githubInstallations, ADMIN_USER)
+    : null;
+  // The connect round trip's `state` is signed with the hub's session key when there is one, and
+  // with a per-process key otherwise (a hub with no password never restarts mid-connect in anger).
+  const connectState = new ConnectState(opts.auth?.sessionSecret ?? randomBytes(32).toString('hex'));
+  const githubChain: GithubCredentials[] = [
+    ...(appCredentials ? [appCredentials] : []),
+    ...(githubToken ? [new PatCredentials(githubToken)] : []),
+  ];
   const github = new Github({
-    ...(opts.github ?? {}),
-    ...(opts.github?.token ? { credentials: new PatCredentials(opts.github.token) } : {}),
+    ...githubSeams,
+    ...(githubChain.length ? { credentials: new ChainedCredentials(githubChain) } : {}),
   });
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
@@ -538,8 +584,20 @@ export function createHub(opts: HubOptions = {}): Hub {
       // nothing at all. An unmatched request has no route and is denied.
       const route = req.routeOptions?.url;
       const access = routeAccess(req.method, route);
-      if (access === 'none' || access === 'open') return;
-      if (auth.ownerOk(req.headers.cookie)) return;
+      // The door checks its own bearer — a user API token, not the owner's cookie (`door.ts`).
+      if (access === 'none' || access === 'open' || access === 'door') return;
+      if (auth.ownerOk(req.headers.cookie)) {
+        // A session cookie is `SameSite=Lax`, and the preview listener is a different *port* rather
+        // than a different site — so a page served there (project code) could otherwise post to the
+        // hub as the owner. A cookie-authenticated write has to say it came from the hub's own
+        // origin. Bearer-carrying requests skip this: nothing attaches a bearer by itself.
+        const bearer = auth.bearerOk(req.headers.authorization) || !!nodeByBearer(req.headers.authorization);
+        if (!bearer && !sameOriginWrite(req.method, req.headers, originOf(req.headers.host, isHttps(req)))) {
+          console.warn(`[auth] cross-origin ${req.method} ${route} refused (origin ${req.headers.origin ?? 'none'})`);
+          return reply.code(403).send({ error: 'cross-origin request refused' });
+        }
+        return;
+      }
       if (access === 'daemon') {
         // The shared DAEMON_TOKEN stays the admin's break-glass: it speaks for every node, and for
         // the ones that registered before enrollment existed it is the only credential there is.
@@ -554,9 +612,11 @@ export function createHub(opts: HubOptions = {}): Hub {
       }
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
-      // half-dead and hold `app.close()` open forever. Only the one route it owns, so an ordinary
+      // half-dead and hold `app.close()` open forever. Only the websocket routes, so an ordinary
       // request carrying an `Upgrade` header is not hung up on.
-      if (route === '/ws' && req.headers.upgrade) reply.raw.on('finish', () => reply.raw.socket?.end());
+      if ((route === '/ws' || route === TERMINAL_ROUTE) && req.headers.upgrade) {
+        reply.raw.on('finish', () => reply.raw.socket?.end());
+      }
       return reply.code(401).send({ error: 'unauthorized' });
     });
 
@@ -581,8 +641,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   // ever sees it.
   if (controlSwitch) {
     app.addHook('onRequest', async (req, reply) => {
-      if (!controlSwitch.switching || req.method === 'GET' || req.method === 'HEAD') return;
+      if (!controlSwitch.switching) return;
       const route = req.routeOptions?.url;
+      // The door writes on every request — a usage row, a token's last-used stamp, possibly cloud
+      // dollars — so it is refused whole, `GET /v1/models` included, unlike the read-only API.
+      const isDoor = routeAccess(req.method, route) === 'door';
+      if (!isDoor && (req.method === 'GET' || req.method === 'HEAD')) return;
+      if (isDoor) {
+        return reply.code(503).send(openAiError('control-node switch in progress', 'server_error', 'switching'));
+      }
       if (route === '/api' || route?.startsWith('/api/')) {
         return reply.code(503).send({ error: 'control-node switch in progress' });
       }
@@ -626,6 +693,8 @@ export function createHub(opts: HubOptions = {}): Hub {
   const busyAgents = new Set<number>();
   // Frames are only produced while somebody is watching the screening room, so the browser node is
   // left alone until the first `subscribe` and stops being polled after the last unsubscribe/close.
+  app.register(door, { db, gateway, registry, usage, ...(opts.auth?.now ? { now: opts.auth.now } : {}) });
+
   const { broadcastState, broadcast, broadcastTo } = registerWs(app, getState, () => [...busyAgents], {
     onTopicCount: (topic, count) => {
       if (topic !== 'browser') return;
@@ -635,6 +704,11 @@ export function createHub(opts: HubOptions = {}): Hub {
   const screencast = browser.screencast(opts.browser?.screencastIntervalMs);
   screencast.onFrame((frame) => broadcastTo('browser', { type: 'browser-frame', ...frame }));
   leases.onChange(() => broadcastState());
+  // After `registerWs`, which is what registers @fastify/websocket: a route may only ask for
+  // `websocket: true` once that plugin has booted, and plugins boot in the order they were added.
+  // Only on a hub that has a password: `owner` means nothing where there is no credential to hold,
+  // and a shell is not something to offer on an unguarded hub.
+  if (auth) app.register(terminalRoutes, { projects });
 
   // Refreshes read the db (via getState), so `stop()` waits for the in-flight ones before closing it.
   const refreshes = new Set<Promise<void>>();
@@ -663,6 +737,10 @@ export function createHub(opts: HubOptions = {}): Hub {
       return null;
     }
   };
+
+  // FR-B1 — the preview: the owner's config and lifecycle routes here, and the separate listener
+  // that serves the app itself on its own origin (0040).
+  void app.register(previewRoutes, { projects, refresh: refreshProjects, ...(opts.preview ? { listen: opts.preview } : {}) });
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
   // hangs off it; briefings pass straight through to the service's own listeners, and a settled job
@@ -1267,8 +1345,111 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   app.get('/api/projects', async () => projects.list());
 
-  /** Whether a private repository can be imported at all. Never the token — only that there is one. */
-  app.get('/api/github/status', async () => github.status());
+  /**
+   * Whether a private repository can be imported at all, and — when the hub has a GitHub App —
+   * whether this member has connected one. Never a token and never an installation token: only
+   * which method is configured, which accounts are connected, and the two github.com URLs the UI
+   * links to.
+   */
+  app.get('/api/github/status', async () => {
+    const rows = githubApp ? githubInstallations.list(ADMIN_USER) : [];
+    return {
+      ...github.status(),
+      connected: rows.length > 0,
+      ...(githubApp ? { installUrl: '/api/github/connect' } : {}),
+      ...(rows.length
+        ? {
+            installations: rows.map((row) => ({
+              id: row.installationId,
+              login: row.accountLogin,
+              type: row.accountType,
+              manageUrl: githubApp!.manageUrl(row.installationId),
+            })),
+          }
+        : {}),
+    };
+  });
+
+  /**
+   * The Connect button: straight to GitHub's own "choose repositories" screen. The `state` is a
+   * signed nonce naming this member and an expiry, which comes back on the callback and is the
+   * proof that the install being reported started here (0032).
+   */
+  app.get('/api/github/connect', async (req, reply) => {
+    if (!githubApp) return reply.code(400).send({ error: 'no GitHub App is configured on this hub' });
+    return reply.redirect(githubApp.installUrl(connectState.sign(ADMIN_USER)), 302);
+  });
+
+  /**
+   * Where GitHub sends the browser back. An owner route like any other — the member is logged in to
+   * this hub in the same browser, and `SameSite=Lax` sends the session cookie on a top-level GET.
+   *
+   * Nothing on this URL is trusted. The `state` must be one this hub signed for this member (0032),
+   * and GitHub warns that the `installation_id` can be spoofed, so that is checked too: the `code`
+   * is exchanged for a *user* token, GitHub is asked which installations that user has
+   * (`GET /user/installations`, which covers their own account and every organisation they can
+   * administer), and only an id in that list is stored. The user token is dropped immediately —
+   * everything afterwards runs on installation tokens (0031).
+   */
+  app.get('/api/github/callback', async (req, reply) => {
+    if (!githubApp) return reply.code(400).send({ error: 'no GitHub App is configured on this hub' });
+    const query = req.query as Partial<Record<'installation_id' | 'setup_action' | 'code' | 'state', string>>;
+    // A return with no `code` cannot tell us who is connecting, so it can neither be trusted nor
+    // acted on — but it is also what a "redirect on update" looks like when the member only changed
+    // which repositories an installation covers, which is not an error to shout about. Nothing is
+    // stored and the browser goes home. This comes first so the check below cannot turn a routine
+    // update into a 400.
+    if (!query.code) return reply.redirect('/?github=connected', 302);
+    // Everything past here binds an installation to a member, so the `state` this hub signed is
+    // required, not merely verified when it happens to be there: GitHub preserves `state` through
+    // `installations/new`, and without that requirement a callback URL someone else assembled —
+    // their `code`, their `installation_id` — would attach their installation to this account the
+    // moment the member opened it (or to anyone at all on a hub running without a password).
+    if (connectState.verify(query.state) !== ADMIN_USER) {
+      return reply.code(400).send({ error: 'this connection link has expired — press Connect GitHub again' });
+    }
+    const installationId = Number(query.installation_id);
+    if (!Number.isInteger(installationId) || installationId <= 0) {
+      return reply.code(400).send({ error: 'GitHub named no installation — press Connect GitHub again' });
+    }
+    try {
+      const userToken = await githubApp.exchangeCode(query.code);
+      const mine = await githubApp.userInstallations(userToken);
+      const found = mine.find((i) => i.id === installationId);
+      if (!found) {
+        return reply.code(400).send({ error: 'that installation does not belong to the GitHub account that signed in' });
+      }
+      githubInstallations.upsert({
+        installationId, user: ADMIN_USER,
+        accountLogin: found.account.login, accountType: found.account.type,
+      });
+      appCredentials?.forget(installationId);
+    } catch (err) {
+      if (!(err instanceof GithubAppError)) throw err;
+      return reply.code(502).send({ error: err.message });
+    }
+    return reply.redirect('/?github=connected', 302);
+  });
+
+  /**
+   * Every repository the member's installations reach, newest first — what the New-project dialog's
+   * repository picker shows. Empty when nothing is connected, so the page needs no special case.
+   */
+  app.get('/api/github/repos', async () => (appCredentials ? appCredentials.repositoriesFor(ADMIN_USER) : []));
+
+  /**
+   * Forgets an installation. The grant itself lives on GitHub — uninstalling the app there is the
+   * member's own action, and this only stops the hub using it — so the reply says so.
+   */
+  app.delete('/api/github/installations/:id', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id) || id <= 0) return reply.code(400).send({ error: 'invalid installation' });
+    if (!githubInstallations.remove(ADMIN_USER, id)) {
+      return reply.code(404).send({ error: 'no such installation' });
+    }
+    appCredentials?.forget(id);
+    return { removed: id };
+  });
 
   app.post('/api/projects', async (req, reply) => {
     const body = req.body as Partial<{ slug: string; title: string; intent: string; priority: Priority; idea: string; prd: string; source: { url?: unknown; branch?: unknown } }> | undefined;
@@ -1797,6 +1978,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { pages } = await bundle.docs();
     return { slug: page, title: pages.find((p) => p.slug === page)?.title ?? page, markdown };
   });
+
+  // --- the Code screen ------------------------------------------------------------
+
+  codeRoutes(app, { resolveProject, loop });
 
   app.get('/api/briefings', async () => projects.briefings());
 

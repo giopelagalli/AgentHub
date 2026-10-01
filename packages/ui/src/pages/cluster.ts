@@ -2,6 +2,7 @@ import type { Job, NodeInfo, UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import type { Store, UiState } from '../store.js';
 import { toast } from '../toast.js';
+import { githubLineText, type GithubStatus } from '../github.js';
 import { formatUsd } from '../turns.js';
 import { button, el } from './projects.js';
 
@@ -158,6 +159,124 @@ function addNodePanel(): { head: HTMLElement; panel: HTMLElement } {
   return { head, panel };
 }
 
+/** One API token as `GET /api/tokens` reports it — never its hash, never its plaintext. */
+interface ApiTokenView {
+  id: number;
+  kind: 'assistant' | 'agent';
+  label: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/** What `POST /api/tokens` answers with: the view plus the one and only look at the secret. */
+interface MintedApiToken extends ApiTokenView {
+  token: string;
+}
+
+const TOKEN_COLUMNS = ['Label', 'Kind', 'Created', 'Last used', ''] as const;
+
+/** The line under a freshly minted token — it is the only time the hub will ever show it. */
+export const NEW_TOKEN_NOTE =
+  'Copy it now: the hub stores only a hash, so this is the last time it can be shown. '
+  + 'Use it as the API key of any OpenAI-compatible client, against this hub’s /v1.';
+
+/** A timestamp as the table shows it; a token nothing has used yet has no last-used date. */
+export function tokenWhen(at: number | null): string {
+  return at === null ? 'never' : new Date(at).toLocaleString();
+}
+
+/**
+ * The *API tokens* panel (PRD FR-D6): what opens the hub's OpenAI-compatible door. A token is
+ * minted with a label and a kind — `assistant` goes ahead of `agent` on a shared server (decision
+ * 0020) — shown once, and revocable from the same table.
+ */
+function apiTokensPanel(): HTMLElement {
+  const pane = el('section', 'panel');
+  const head = el('div', 'cluster__head');
+  const label = el('input', 'input');
+  label.placeholder = 'Label (e.g. jd)';
+  const kind = el('select', 'select');
+  for (const value of ['assistant', 'agent']) {
+    const option = el('option', undefined, value);
+    option.value = value;
+    kind.appendChild(option);
+  }
+  const create = button('Create token', 'btn btn--primary');
+  head.append(el('h2', undefined, 'API tokens'), label, kind, create);
+
+  const reveal = el('div', 'addnode');
+  reveal.hidden = true;
+  const secret = el('input', 'input mono addnode__cmd');
+  secret.readOnly = true;
+  const copy = button('Copy');
+  const row = el('div', 'addnode__row');
+  row.append(secret, copy);
+  reveal.append(row, el('p', 'addnode__note', NEW_TOKEN_NOTE));
+
+  const list = table(TOKEN_COLUMNS);
+  const empty = el('p', 'empty', 'No API tokens yet.');
+  pane.append(head, reveal, list.node, empty);
+
+  const render = (tokens: ApiTokenView[]): void => {
+    list.body.replaceChildren();
+    empty.hidden = tokens.length > 0;
+    list.node.classList.toggle('table--empty', tokens.length === 0);
+    for (const token of tokens) {
+      const line = list.body.insertRow();
+      [token.label, token.kind, tokenWhen(token.createdAt), tokenWhen(token.lastUsedAt)].forEach((value, index) => {
+        const cell = line.insertCell();
+        cell.textContent = value;
+        if (index < 2) cell.className = 'mono';
+      });
+      const revoke = button('Revoke');
+      revoke.addEventListener('click', () => {
+        if (!window.confirm(`Revoke ${token.label}? Anything using it stops working at once.`)) return;
+        void sendJson(`/api/tokens/${token.id}`, undefined, 'DELETE')
+          .then(load)
+          .catch((error: unknown) => toast(`Could not revoke ${token.label}: ${String(error)}`, 'error'));
+      });
+      line.insertCell().appendChild(revoke);
+    }
+  };
+
+  function load(): void {
+    void getJson<{ tokens: ApiTokenView[] }>('/api/tokens')
+      .then((body) => { render(body.tokens); })
+      .catch((error: unknown) => toast(`Could not read the API tokens: ${String(error)}`, 'error'));
+  }
+
+  create.addEventListener('click', () => {
+    if (!label.value.trim()) return toast('A token needs a label.', 'error');
+    create.disabled = true;
+    void sendJson<MintedApiToken>('/api/tokens', { kind: kind.value, label: label.value.trim() })
+      .then((minted) => {
+        if (!minted) return;
+        secret.value = minted.token;
+        copy.textContent = 'Copy';
+        reveal.hidden = false;
+        secret.select();
+        label.value = '';
+        load();
+      })
+      .catch((error: unknown) => toast(`Could not create the token: ${String(error)}`, 'error'))
+      .finally(() => { create.disabled = false; });
+  });
+
+  copy.addEventListener('click', () => {
+    // Same bargain as the install command: no clipboard (or a refused write) selects instead.
+    const selectInstead = () => {
+      secret.select();
+      toast('Could not reach the clipboard — the token is selected, copy it by hand.', 'error');
+    };
+    const written = navigator.clipboard?.writeText(secret.value);
+    if (!written) return selectInstead();
+    void written.then(() => { copy.textContent = 'Copied'; }).catch(selectInstead);
+  });
+
+  load();
+  return pane;
+}
+
 /** Nodes and jobs, straight off the hub state — so the WS keeps both tables live. */
 export function mountCluster(host: HTMLElement, store: Store): () => void {
   const page = el('div', 'cluster');
@@ -168,14 +287,18 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   const addNode = addNodePanel();
   // What the cloud half of the cluster has cost, above the machines it was spent on.
   const spend = el('p', 'cluster__spend', cloudSpendText(null));
-  nodesPane.append(addNode.head, addNode.panel, spend, nodes.node, nodesEmpty);
+  // How this hub reaches GitHub, with the way in (or out) beside it. It lives here because this is
+  // the page for what the hub itself is wired to; connecting from scratch is offered where the need
+  // arises, in New project → Import a repo (0034).
+  const githubLine = el('p', 'cluster__spend', githubLineText(null));
+  nodesPane.append(addNode.head, addNode.panel, spend, githubLine, nodes.node, nodesEmpty);
 
   const jobsPane = el('section', 'panel');
   const jobs = table(JOB_COLUMNS);
   const jobsEmpty = el('p', 'empty', 'Waiting for the hub…');
   jobsPane.append(el('h2', undefined, 'Jobs'), jobs.node, jobsEmpty);
 
-  page.append(nodesPane, jobsPane);
+  page.append(nodesPane, jobsPane, apiTokensPanel());
   host.appendChild(page);
 
   const fill = (
@@ -241,6 +364,39 @@ export function mountCluster(host: HTMLElement, store: Store): () => void {
   // Spend moves with turns, not with the hub state frames these tables follow, so it has its own
   // slow refresh rather than a fetch per broadcast.
   const spendTimer = setInterval(loadSpend, SPEND_REFRESH_MS);
+
+  /**
+   * The GitHub line and the one action that goes with it. Connect and Manage are plain navigations
+   * (the hub's connect route redirects to GitHub); Disconnect only forgets the installation here —
+   * the grant itself is removed on GitHub, which is what the confirmation says.
+   */
+  const loadGithub = (): void => {
+    void getJson<GithubStatus>('/api/github/status')
+      .then((status) => {
+        githubLine.replaceChildren(githubLineText(status));
+        const installation = (status.installations ?? [])[0];
+        if (installation) {
+          const manage = el('a', undefined, 'Manage on GitHub');
+          manage.href = installation.manageUrl;
+          manage.target = '_blank';
+          manage.rel = 'noreferrer';
+          const drop = button('Disconnect');
+          drop.addEventListener('click', () => {
+            if (!window.confirm('Forget this GitHub connection? The app stays installed on GitHub until you remove it there.')) return;
+            void sendJson(`/api/github/installations/${installation.id}`, undefined, 'DELETE')
+              .then(() => { toast('GitHub disconnected.'); loadGithub(); })
+              .catch((error: unknown) => toast(`Could not disconnect: ${String(error)}`, 'error'));
+          });
+          githubLine.append(' · ', manage, ' ', drop);
+        } else if (status.installUrl) {
+          const start = button('Connect GitHub');
+          start.addEventListener('click', () => { window.location.assign(status.installUrl!); });
+          githubLine.append(' ', start);
+        }
+      })
+      .catch(() => { /* a hub too old to know the route leaves the line reading… */ });
+  };
+  loadGithub();
 
   const unsubscribe = store.subscribe(render);
   render(store.getState());

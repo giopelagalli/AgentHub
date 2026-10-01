@@ -12,8 +12,12 @@ import type { GithubRepoRef, ProjectSource } from '@agenthub/shared';
 export const GITHUB_CLONE_BASE = 'https://github.com';
 export const GITHUB_API_BASE = 'https://api.github.com';
 
-/** How the hub found a token, as `GET /api/github/status` reports it. */
-export type GithubAuthMethod = 'token' | 'none';
+/**
+ * How the hub found a token, as `GET /api/github/status` reports it. `app` is a GitHub App
+ * installation the member connected with a button; `token` is the personal access token in
+ * `hub.env`, which stays as the fallback (0033).
+ */
+export type GithubAuthMethod = 'app' | 'token' | 'none';
 
 /**
  * Where a token for one repository comes from.
@@ -36,6 +40,31 @@ export class PatCredentials implements GithubCredentials {
 
   async tokenFor(): Promise<string | null> {
     return this.token;
+  }
+}
+
+/**
+ * Credentials tried in order, answering with the first that produces a token. This is what "the
+ * App, with the personal access token as the fallback" means literally: a member who connected the
+ * App still imports a repository the App cannot see if the owner also set `GITHUB_TOKEN` (0033).
+ * `method` is the first one's, because that is what the hub is set up with.
+ *
+ * A link that throws — GitHub unreachable while minting an installation token — is passed over
+ * rather than fatal, so one broken credential cannot take out a working one behind it.
+ */
+export class ChainedCredentials implements GithubCredentials {
+  readonly method: GithubAuthMethod;
+
+  constructor(private readonly chain: GithubCredentials[]) {
+    this.method = chain[0]?.method ?? 'none';
+  }
+
+  async tokenFor(owner: string, repo: string): Promise<string | null> {
+    for (const link of this.chain) {
+      const token = await link.tokenFor(owner, repo).catch(() => null);
+      if (token) return token;
+    }
+    return null;
   }
 }
 
@@ -126,7 +155,7 @@ const isBlockTimeout = (err: unknown): boolean => /block timeout reached/i.test(
  * The identity the hub commits a milestone's work under. The clone is the owner's repository, so
  * nothing is written into its `.git/config`; these travel per invocation instead.
  */
-const COMMITTER_ENV = {
+export const COMMITTER_ENV = {
   GIT_AUTHOR_NAME: 'AgentHub Bot',
   GIT_AUTHOR_EMAIL: 'agent@agenthub.local',
   GIT_COMMITTER_NAME: 'AgentHub Bot',
@@ -165,11 +194,25 @@ const GIT_BLOCK_TIMEOUT_MS = 120_000;
  * It is a convention, not a classifier: a secret under another name still goes (see 0030), and a
  * tracked `.env.example` is held back with the rest.
  */
-const COMMIT_EXCLUDES = [
+export const COMMIT_EXCLUDES = [
   ':(glob,exclude)**/.env*',
   ':(glob,exclude)**/*.pem',
   ':(glob,exclude)**/*.key',
 ];
+
+/**
+ * The same convention as a predicate, for the callers that stage one named path instead of the
+ * whole tree — the Code screen's owner edit (0044). A pathspec exclusion only subtracts from a
+ * wider `add`; `git add -- path` with the exclusions appended still stages `path`, so a caller
+ * naming a file has to ask this first.
+ *
+ * It is deliberately the same three rules, read off the basename, so "what never gets committed"
+ * has one answer in this module rather than one per caller.
+ */
+export function isCommitExcluded(path: string): boolean {
+  const name = path.split('/').pop() ?? '';
+  return name.startsWith('.env') || name.endsWith('.pem') || name.endsWith('.key');
+}
 
 export class Github {
   private readonly credentials: GithubCredentials | undefined;

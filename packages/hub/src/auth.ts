@@ -29,9 +29,10 @@ export interface AuthOptions {
 /**
  * How a route is guarded. `none` is unguarded (the static UI, which has to be reachable to render
  * the login box), `open` is a guarded prefix's explicit exception, `daemon` accepts the daemon
- * bearer *or* an owner session, and `owner` accepts the session cookie only.
+ * bearer *or* an owner session, `door` is the OpenAI-compatible door, whose own user-API-token
+ * bearer `door.ts` checks, and `owner` accepts the session cookie only.
  */
-export type Access = 'none' | 'open' | 'daemon' | 'owner';
+export type Access = 'none' | 'open' | 'daemon' | 'door' | 'owner';
 
 /**
  * Where a daemon route names the node it is about. A per-node token is only good for its own node,
@@ -92,12 +93,48 @@ export function daemonRouteSubject(method: string, route: string | undefined): N
 export function routeAccess(method: string, route: string | undefined): Access {
   if (route === undefined) return 'owner';
   if (route === '/ws') return 'owner';
+  // `/v1/*` is the OpenAI-compatible door (PRD FR-D6). It is not `none`: it is guarded, by a user
+  // API token the plugin that owns the routes checks itself, because only that plugin knows which
+  // token — and so which priority tier — the request speaks for.
+  if (route.startsWith('/v1/')) return 'door';
   if (route !== '/api' && !route.startsWith('/api/')) return 'none';
   if ((method === 'GET' || method === 'HEAD') && route === '/api/health') return 'open';
   if (method === 'POST' && route === '/api/login') return 'open';
   if (method === 'POST' && route === '/api/nodes/enroll') return 'open';
   if (DAEMON_ROUTES.has(`${method} ${route}`)) return 'daemon';
   return 'owner';
+}
+
+/** Methods a browser may issue cross-site without the user meaning to write anything. */
+const SAFE_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+/**
+ * Whether a cookie-authenticated write came from the hub's own pages.
+ *
+ * The session cookie is `SameSite=Lax`, which stops cross-site *sub-resource* requests from
+ * carrying it but not a top-level form post — and a same-site page on another port (the preview
+ * listener serves project code) is not cross-site at all, so Lax lets it through. This is the
+ * check that does not: a write authenticated by the cookie must say, through `Sec-Fetch-Site` or
+ * `Origin`, that it came from this origin.
+ *
+ * A request with neither header is let through: that is curl, a script, or a test — never a
+ * browser doing something on a page's behalf, which is the whole attack. Bearer-authenticated
+ * requests never reach here; nothing attaches a bearer to a cross-site request by itself.
+ */
+export function sameOriginWrite(
+  method: string, headers: { origin?: string; 'sec-fetch-site'?: string }, selfOrigin: string,
+): boolean {
+  if (SAFE_METHODS.includes(method.toUpperCase())) return true;
+  const site = headers['sec-fetch-site'];
+  if (site !== undefined) return site === 'same-origin';
+  const origin = headers.origin;
+  if (origin !== undefined) return origin === selfOrigin;
+  return true;
+}
+
+/** The origin this request was addressed to, as a browser would have written it. */
+export function originOf(host: string | undefined, https: boolean): string {
+  return `${https ? 'https' : 'http'}://${host ?? ''}`;
 }
 
 /**

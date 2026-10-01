@@ -48,10 +48,10 @@ A **project page** has, top to bottom:
    - **Chat** — one-on-one with the project's Manager (`c`). The same drawer the Manager card in
      the org chart opens, and it works while a turn is running.
    - **Pause / Resume**, **Run turn** (shows `Running · m:ss` while one runs), **Add employee**.
-2. **Four big buttons.** PRD, Roadmap, Docs, Activity. Each opens a full-screen sheet
-   (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
+2. **The big buttons.** PRD, Roadmap, Docs, Activity, Code, Terminal, Preview. Each opens a
+   full-screen sheet (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
    the document's editor ("move milestone 4 before 2", "add a section on backups") and it
-   changes the document in place.
+   changes the document in place. Code docks the Guide the same way — see *Code* below.
 3. **The org chart.** You → Assistant / Master → the project's Manager → its employees. Click any
    card to open that person: what they are doing, their history, and a chat.
 
@@ -91,13 +91,31 @@ roadmap starts with what the code already delivers, listed as **done** milestone
 planned milestone is the first new thing. The project header shows `owner/repo @ branch` under the
 intent, linking to GitHub.
 
-**The token.** Public repositories clone without one. A private repository needs a token on the
-hub, and so does pushing anything back — the line under the Repository field says whether there is
-one. Make it at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained
-tokens**: *Only select repositories*, and under Repository permissions set **Contents: Read and
-write** (and **Pull requests: Read and write** if you want the button below to work). Put it in
-`hub.env` as `GITHUB_TOKEN` and restart the hub. It is never logged, never written into the clone,
-and never sent to the browser.
+**Connect GitHub.** Public repositories clone without anything. For a private one — and for
+pushing anything back — the hub needs to reach GitHub as you. If the hub has the AgentHub GitHub
+App set up (the owner does that once; see *Operating the hub*), the Import a repo tab shows a
+**Connect GitHub** button. Press it and you are on GitHub's own screen, signed in as yourself,
+choosing **which repositories AgentHub may use** — all of them, or a list you pick. Approve, and
+you land back on the hub with "GitHub connected".
+
+There is no token to make and nothing to paste. After that, the Repository field is a **picker** of
+the repositories you chose, newest first, with the branch shown; the text box stays beside it if
+you would rather type `owner/repo`. The picker lists up to 500 repositories per connection — past
+that, type the name instead; importing it still works.
+
+**Changing your mind.** The repositories are yours to change at any time: **GitHub → Settings →
+Applications → Installed GitHub Apps → AgentHub → Configure**, or the **Manage on GitHub** link on
+the Cluster page. **Disconnect**, on that same line, makes the hub forget the connection; the app
+stays installed on GitHub until you remove it there, under the same Configure screen
+(*Uninstall*).
+
+**The token (the other way).** A hub with no GitHub App uses one token instead, for everybody. Make
+it at **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**:
+*Only select repositories*, and under Repository permissions set **Contents: Read and write** (and
+**Pull requests: Read and write** if you want the button below to work). Put it in `hub.env` as
+`GITHUB_TOKEN` and restart the hub. Either way the credential is never logged, never written into
+the clone, and never sent to the browser — the line under the Repository field says only *how* the
+hub reaches GitHub, never with what.
 
 **Getting work back.** Agents never push to your branch. After each *verified* milestone the hub
 commits what the milestone produced in `workspace/` and pushes it to **`agenthub/<slug>`** — one
@@ -241,12 +259,157 @@ node in place; `--uninstall` reverses it. `--dry-run` prints the whole plan with
 machine, which is the quickest way to see what a given box would become. The flags, the recipe
 table and everything it writes are in `deploy/README-install.md`.
 
+## Using the hub as an API
+
+The hub speaks OpenAI. Anything that can point at an OpenAI-compatible base URL — JD, pi, the
+`openai` SDK, plain `curl` — can use your nodes through it, with the hub's routing, the hub's
+spend cap, and one line per request in the same cost ledger the Cluster page shows.
+
+**A token.** Cluster → **API tokens** → a label and a kind → **Create token**. The token
+(`ah_…`) is shown once and never again; the hub keeps only a hash. Revoke it from the same table
+and it stops working immediately.
+
+**The two kinds** set the request's priority on a shared server (the Spark runs one model for
+everyone):
+
+| Kind | For | vLLM priority |
+|---|---|---|
+| `assistant` | something you are waiting on — JD, a chat client | 0 (first in line) |
+| `agent` | something running by itself — a coding harness, a batch | 10 (yields to the above) |
+
+**The base URL** is the hub's, plus `/v1`: `https://rosenroot.com/v1` from outside,
+`http://<hub>:4000/v1` on the tailnet. Bad tokens are locked out per client address after five
+tries, so behind the droplet's proxy `TRUST_PROXY` must be set (`configs/hub.env`) or every
+outside client counts as one — a valid token is never affected either way.
+
+```sh
+curl https://rosenroot.com/v1/chat/completions \
+  -H "Authorization: Bearer ah_…" -H "content-type: application/json" \
+  -d '{"model":"agenthub/worker","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+**The models.** `GET /v1/models` lists the two that matter:
+
+- `agenthub/orchestrator` — the thinking tier.
+- `agenthub/worker` — the working tier.
+
+Both are *tiers*, not models: the hub picks the node, exactly as it does for a project's turns,
+and the response's `model` field says what actually served it. A concrete model id that is
+serving right now also works — a cloud id routes to that provider, a local id stays local.
+
+Streaming and non-streaming both work, as do `tools` and `tool_calls`; ask for
+`stream_options: {"include_usage": true}` and the last chunk carries the token counts. Fields the
+hub has no use for (`temperature`, `max_tokens`, …) are accepted and ignored. Spend through the
+door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the Cluster page's
+cloud-spend line.
+
+## Preview (seeing the app)
+
+A **Preview** button sits with the PRD, Roadmap, Docs and Activity buttons on the project page. It
+opens a sheet with the project's own app running inside it, plus **Start**, **Stop**, **Restart**,
+**Open in tab**, a **Settings** form and the dev server's last 50 lines of output.
+
+The hub runs the dev server on its own machine, in the project's `workspace/`. It does **not** serve
+it on the hub's own address: previews get a second listener on their own port (`PREVIEW_PORT`,
+`4010` when the hub is on `4000`), because the app is code the agents wrote and it must not share an
+origin with the hub's API. The manager usually sets a preview up itself (the `set_preview` tool)
+once a milestone stands a dev server up; you can also set it by hand under **Settings**: the command
+(run in the workspace, split on spaces), the port, and optionally the path the preview should open
+on.
+
+**The link is the key.** There is no login on the preview port, so each project's address carries a
+secret: `http://<host>:4010/p/<slug>/<32 hex>/`. Anyone holding that link can open that app, so
+treat it like a password — and if it gets out, **Settings → Reset link** mints a new one and the old
+address stops working immediately.
+
+**About base paths.** The hub does not rewrite anything on the way through: your app is served under
+`/p/<slug>/<cap>/`, so the dev server has to be told that is where it lives. Read it from the
+environment rather than writing it out — the hub puts it in the child's environment as
+`AGENTHUB_PREVIEW_BASE`:
+
+    // vite.config.js
+    export default { base: process.env.AGENTHUB_PREVIEW_BASE ?? '/' }
+
+A hard-coded path works until the next link reset, and then silently stops. Without a base path at
+all, the page loads and every script and stylesheet it asks for 404s.
+
+Two things it does on its own: a preview nobody has looked at for 30 minutes is **stopped** (the log
+says so — press Start), and a preview that dies on its own reads **Crashed** with its last lines
+still on screen. The dev server never sees your session cookie, and nothing but previews is served
+on that port.
+
+Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
+`deploy/do/README.md` §8b.
+
 ## The shared browser (Computer)
 
 One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and
 release it; the **Computer** page shows who holds it, the queue, and lets you **Take control**
 (you drive, agents wait) and **Release**. Recordings of agent sessions are kept under the data
 root. Multiple simultaneous sessions are planned (Phase D).
+
+## The terminal
+
+The **Terminal** button on a project page opens a real shell in that project's `workspace/`, on the
+machine the hub runs on. `Esc` closes the sheet; the button underneath reads *open* or *closed*.
+
+- It is a proper terminal, not a command box: `vim`, `top`, an interactive rebase, tab completion
+  and colours all work, because a pseudo-terminal is what is on the other end.
+- **One sheet is one shell.** Close the sheet, or lose the connection, and the shell is killed —
+  along with anything it started in the background. Reconnecting gives you a *new* shell, which the
+  banner says; **New session** does the same on purpose.
+- Four terminals at a time across the whole hub, and one that sits untouched for an hour closes
+  itself. A tab that went away without saying so — a closed laptop, a dropped tunnel — is noticed
+  within a minute and its shell ended, so it cannot sit on one of the four.
+- When the hub says why a session ended (the hour, the shell exiting, all four in use), the sheet
+  stops there and waits: **New session** is how you start another. Only an unexplained drop
+  reconnects on its own, and a reconnect is always a new shell.
+- The hub logs that a session happened — which project, how long — and never what you typed.
+
+**No password, no terminal.** A hub started without `HUB_PASSWORD` has no terminal route at all —
+the sheet opens and reports that it cannot connect — because owner-only means nothing on a hub
+where there is no owner to be. A browser page on another site cannot open one either, even in a
+browser you are logged in on: the hub checks where the request came from before it upgrades.
+
+**It is your shell, with your reach.** It is scoped to the workspace only in the sense that it
+*starts* there: everything the user running the hub can do, this can do. It is owner-only for that
+reason — the daemon token and a node's own token are refused at the door — and it stays owner-only
+until per-member access arrives, when a terminal will only ever open on a node you own. The one
+thing it cannot see is the hub's own secrets: model keys, the session secret and the GitHub token
+are stripped out of its environment, the same way they are for anything an agent runs.
+
+## Code
+
+The **Code** button opens the project's workspace: the file tree on the left, the file you picked
+in the middle, and the **Guide** docked on the right. The button's line says how many files the
+workspace has and how long ago the map was refreshed.
+
+**Files.** Click a folder to fold it open or shut, a file to read it. Arrow keys walk the tree and
+Enter opens what is selected. Binary files and anything over 2 MB are listed but say *not text* —
+they are there so you know they exist, not to be opened. Dependencies, build output and `.git` are
+never listed at all.
+
+**Editing.** The file is editable as it stands. **Save** (or `Cmd`/`Ctrl`-`S`) writes it and commits
+it as `Owner edit: <path>` — to the project's own repository if it was imported from GitHub, to the
+bundle otherwise. That commit is the point: the next turn reads the workspace, so an edit nobody
+recorded is an edit the agents overwrite. A dot beside the filename means unsaved changes, and
+leaving the file asks before discarding them.
+
+Two kinds of file save but are not committed, and the toast says so: a `.env`, `.pem` or `.key`
+(never committed, so a secret can't ride a milestone push to your GitHub repository) and anything
+the repository's own `.gitignore` excludes. Those edits are on disk but not in history, so a later
+turn may overwrite them without knowing.
+
+**The Guide.** A chat with one job: explaining this codebase. Ask it what a file does, how a request
+gets from the UI to the database, or why something is the way it is. It answers "why" from what the
+project actually recorded — a decision-log entry, a PRD requirement number — and says so plainly
+when nothing recorded a reason, rather than making one up. It can read anything and change nothing:
+if something needs fixing, it says so and you either fix it yourself here or run a turn. Its replies
+cite files as `` `path:line` `` — click one and it opens here, the same as a link in the Map.
+
+**Map.** The second tab is `docs/code-map.md`: chapters from the entry points down, each item a
+`` `path:line` `` link. Click one and the file opens at that line. The Manager refreshes the map
+when a milestone lands; **Refresh map** does it on demand, which takes a model call or two.
 
 ## Chatting with the team
 
@@ -272,6 +435,12 @@ Two systemd *user* units, installed from `deploy/spark/`:
 | Data | `DATA_ROOT` (`~/agenthub-data`): `projects/<slug>/`, the hub database, memory, recordings |
 | Update | `cd ~/AgentHub && git pull && npm run build:ui && systemctl --user restart agenthub-hub` |
 
+**The terminal needs node-pty.** It ships prebuilt binaries for macOS and 64-bit Linux (the Spark
+included), so a normal `npm ci` is all it takes. Anywhere else it compiles on install and needs
+build tools — Xcode command line tools on a Mac (`xcode-select --install`), `build-essential` and
+`python3` on Debian or Ubuntu. If `npm ci` fails on node-pty, that is what is missing; the hub does
+not start without it.
+
 **Restarting the hub cuts any running turn short.** Check the project header for
 `Running · m:ss` first, or expect a "cut short" briefing.
 
@@ -287,6 +456,34 @@ Two systemd *user* units, installed from `deploy/spark/`:
 | `MAX_TURNS_PER_DAY`, `AUTO_TURNS` | The hub-wide cap (default 24) and the scheduler kill switch (`0`) |
 | `TURN_TIMEOUT_MINUTES` | How long a turn may run before it is cut short (default 45) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_CHAT_ID` | The hub's own Telegram alerts (optional; JD is separate) |
+| `GITHUB_APP_*` | The GitHub App behind **Connect GitHub** (below); `GITHUB_TOKEN` is the fallback |
+
+**Registering the GitHub App (once).** This is what turns "Connect GitHub" on for everybody who
+uses the hub. At **GitHub → Settings → Developer settings → GitHub Apps → New GitHub App**:
+
+- **Callback URL** `https://<your hub>/api/github/callback` — and the same URL as the **Setup URL**.
+- Tick **Request user authorization (OAuth) during installation**, **Redirect on update** and
+  **Expire user authorization tokens**.
+- **Repository permissions**: Contents *Read and write*, Pull requests *Read and write*, Metadata
+  *Read-only*. No webhook is needed.
+- **Where can this app be installed**: any account, so members can connect their own.
+- Generate a private key; a `.pem` downloads. Keep it beside `hub.env`, readable only by the hub's
+  user (`chmod 600`).
+
+Then five keys in `hub.env`, and a restart:
+
+| Key | Where it comes from |
+|---|---|
+| `GITHUB_APP_ID` | the App's *App ID* |
+| `GITHUB_APP_CLIENT_ID` | the App's *Client ID* (`Iv…`) |
+| `GITHUB_APP_CLIENT_SECRET` | *Generate a client secret* on the App's page |
+| `GITHUB_APP_SLUG` | the App's URL name — the last part of `github.com/apps/<slug>` |
+| `GITHUB_APP_PRIVATE_KEY` | the **path** to the `.pem`, not its contents |
+
+All five or none: with four of them the hub logs which one is missing and leaves Connect GitHub
+off. It reads the `.pem` at startup, so an unreadable key is one clear line in the log rather than
+a failure hours later. Nothing about the App is ever logged, and no token it mints reaches the
+browser.
 
 Backups: `DATA_ROOT` is the whole state. Every project folder is a git repo, so `git log` inside
 `projects/<slug>` is the full history of that project.
@@ -325,7 +522,7 @@ DATA_ROOT/
     project.md  tasks.yaml  the manager's board
     team.yaml               employees
     decisions.log.md        the why
-    docs/                   the team's pages
+    docs/                   the team's pages (code-map.md is the Code screen's Map tab)
     briefings/              one per turn
     workspace/              the code — its own git repo when the team inits one
   memory/                   the built-in assistant's notes

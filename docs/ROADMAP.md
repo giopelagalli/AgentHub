@@ -74,20 +74,17 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 ## Next (in order)
 
-1. Load xterm lazily: a dynamic `import()` in `mountTerminal` so the Terminal's 337 kB leaves the
-   main bundle (123.50 → 460.53 kB today, 0041). Settle the lazy-mount shape once — Preview and
-   Code want it too.
-2. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
+1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-3. Workbench: the Tour over the Code map (FR-B6, FR-B7).
-4. Harnesses, the rest: workspace containment so pi can become the default and the reviewer can
+2. Workbench: the Tour over the Code map (FR-B6, FR-B7).
+3. Harnesses, the rest: workspace containment so pi can become the default and the reviewer can
    leave `builtin` (0049), a project-level Harness select in the header, `claude-code` (FR-G3),
    and the installer putting pi on a node.
-5. JD drives the hub; the web door (FR-C1–C5).
-6. Media on the 7900 XTX (FR-E1–E4).
-7. Browser pool (FR-D8).
-8. Accounts, grants, per-member JD, the public site (FR-F1–F6).
-9. A hub branch for two things the redesign wants from the API (0053): each project's last turn
+4. JD drives the hub; the web door (FR-C1–C5).
+5. Media on the 7900 XTX (FR-E1–E4).
+6. Browser pool (FR-D8).
+7. Accounts, grants, per-member JD, the public site (FR-F1–F6).
+8. A hub branch for two things the redesign wants from the API (0053): each project's last turn
    outcome in `/api/state`, so every sidebar dot can be red after a failure and not only for
    projects whose turns the browser has loaded; and a move-to-index roadmap route, so a drag is
    one request rather than one per step.

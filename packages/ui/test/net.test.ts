@@ -125,6 +125,7 @@ describe('handleWsMessage', () => {
 
   it('applies browser-frame frames, defaulting a missing lease to null and a missing slot to 0', () => {
     const store = new Store();
+    store.dispatch({ type: 'set-page', page: 'computer' });
     handleWsMessage(store, JSON.stringify({
       type: 'browser-frame', nodeName: 'macmini', slot: 1, leaseId: 'l1', jpegBase64: 'abc', at: 5,
     }));

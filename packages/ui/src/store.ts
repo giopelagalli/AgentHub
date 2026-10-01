@@ -147,6 +147,8 @@ export class Store {
         this.state = { ...this.state, prdSeed: null };
         break;
       case 'browser-frame': {
+        // A frame still in flight after the unsubscribe would otherwise outlive the drop.
+        if (!wantsCast(this.state)) break;
         const key = slotKey(event.frame.nodeName, event.frame.slot);
         this.state = { ...this.state, browserFrames: { ...this.state.browserFrames, [key]: event.frame } };
         break;

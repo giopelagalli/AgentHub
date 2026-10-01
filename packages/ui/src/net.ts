@@ -199,13 +199,24 @@ export function connect(store: Store): void {
     store.dispatch({ type: 'connection', status: result === 'ok' ? 'polling' : 'down' });
   };
 
-  const syncTopics = (): void => {
+  const sendTopics = (): void => {
     const socket = current;
     if (!socket || socket.readyState !== OPEN) return;
     const watching = wantsCast(store.getState());
     const message = topicTransition(announced, watching);
     announced = watching;
     if (message) socket.send(JSON.stringify(message));
+  };
+
+  /**
+   * Settles the topic once the current dispatch is done, so a view that closes and reopens within
+   * one (switching projects with Browser open) says nothing rather than unsubscribe-then-subscribe.
+   */
+  let topicsQueued = false;
+  const syncTopics = (): void => {
+    if (topicsQueued) return;
+    topicsQueued = true;
+    queueMicrotask(() => { topicsQueued = false; sendTopics(); });
   };
 
   const startFallback = (): void => {

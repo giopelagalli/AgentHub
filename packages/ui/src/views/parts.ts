@@ -1,15 +1,24 @@
 import type { ArtifactId } from '../artifacts.js';
 import { button, el } from '../dom.js';
+import { icon } from '../icons.js';
 import type { ChatTarget } from '../panels/chat.js';
 
-/** What a document view needs from the sheet it lives in. */
+/** What a view needs from the project page it lives in. */
 export interface ViewContext {
   slug: string;
   title: string;
-  /** Opens the chat drawer beside this view, closing whichever one is already open. */
+  /**
+   * Opens the chat pane beside this view, closing whichever one is already open; asking again for
+   * the conversation already open closes it, so the button that opened it is also its toggle.
+   */
   openChat(target: ChatTarget): void;
-  /** Swaps the sheet to another artifact, e.g. an empty roadmap pointing at the PRD. */
+  /** Moves the page to another part of the project, e.g. an empty roadmap pointing at the PRD. */
   openArtifact(id: ArtifactId): void;
+  /**
+   * Where the view's own actions go, when the page gives it a place for them (the bar under the
+   * toolbar); absent, they sit in a row at the top of the view.
+   */
+  actions?: HTMLElement;
 }
 
 /** The three document agents a view can talk to; each is a `who` on the project's chat routes. */
@@ -21,13 +30,22 @@ const WHO_NAMES: Record<DocWho, string> = {
   docs: 'Docs writer',
 };
 
+/** The button's words: who you would be talking to. */
+const ASK: Record<DocWho, string> = {
+  prd: 'Ask the PRD writer',
+  roadmap: 'Ask the planner',
+  docs: 'Ask the docs writer',
+};
+
 /**
  * "Chat to adjust": the same drawer the org chart opens, pointed at the agent that owns this
  * document. `onReply` re-reads the document after each answer, so an edit the agent just made is
  * on screen by the time it says it made one.
  */
 export function chatToAdjust(ctx: ViewContext, who: DocWho, onReply: () => void): HTMLButtonElement {
-  const open = button('Chat to adjust');
+  const open = button('', 'btn btn--plain btn--small');
+  open.append(icon('chat', 15), document.createTextNode(ASK[who]));
+  open.title = `Talk it through with the agent that keeps this ${who === 'roadmap' ? 'plan' : 'document'} — it can edit it for you`;
   open.addEventListener('click', () => {
     ctx.openChat({
       name: WHO_NAMES[who],
@@ -41,12 +59,17 @@ export function chatToAdjust(ctx: ViewContext, who: DocWho, onReply: () => void)
 }
 
 /**
- * The toolbar above every document. The sheet's header already names the artifact, so this row is
- * only what can be done to it, held hard right.
+ * What can be done to a document, held hard right. Where the page gave the view a place for its
+ * actions (`ctx.actions`), they go there and the row in the view stays empty and hidden.
  */
-export function docBar(): { bar: HTMLElement; actions: HTMLElement } {
+export function docBar(ctx?: ViewContext): { bar: HTMLElement; actions: HTMLElement } {
   const bar = el('div', 'doc__bar');
   const actions = el('div', 'actions');
+  if (ctx?.actions) {
+    ctx.actions.replaceChildren(actions);
+    bar.hidden = true;
+    return { bar, actions };
+  }
   bar.appendChild(actions);
   return { bar, actions };
 }

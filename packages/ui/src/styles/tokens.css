@@ -1,0 +1,318 @@
+/* AgentHub — tokens and base.
+
+   A quiet window, the way a good Mac app is one: content on a plain surface, navigation and
+   chrome a step dimmer and translucent, hairlines instead of boxes, one accent (system blue) for
+   the one thing to press, and status told by a dot. Light and dark are both real themes; the
+   system picks, and `data-theme="light|dark"` on <html> overrides it.
+
+   Every colour the app uses is named here. The older names further down (`--bg0`, `--text-dim`,
+   `--line`…) are aliases onto the new set, so the component styles that predate the redesign
+   follow the theme without being rewritten one by one. */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces, back to front. */
+  --bg: #ffffff;                         /* the window's content */
+  --bg-chrome: rgba(246, 246, 248, 0.82); /* sidebar and toolbar, over a blur */
+  --bg-chrome-solid: #f6f6f8;
+  --bg-grouped: #f5f5f7;                 /* behind an inset grouped list */
+  --bg-raised: #ffffff;                  /* the rows of a grouped list, a sheet, a menu */
+  --bg-sunk: #f2f2f4;                    /* code, wells, the inside of an input */
+  --fill: rgba(118, 118, 128, 0.12);     /* a control's resting fill */
+  --fill-strong: rgba(118, 118, 128, 0.2);
+  --hover: rgba(0, 0, 0, 0.045);
+  --press: rgba(0, 0, 0, 0.08);
+  --selection: rgba(0, 0, 0, 0.065);     /* the sidebar's current row */
+  --scrim: rgba(0, 0, 0, 0.22);
+
+  /* Hairlines. */
+  --sep: rgba(60, 60, 67, 0.13);
+  --sep-strong: rgba(60, 60, 67, 0.24);
+
+  /* Text. Secondary and tertiary both stay above 4.5:1 on --bg. */
+  --label: #1d1d1f;
+  --label-2: #5c5c63;
+  --label-3: #6f6f76;
+  --label-4: #a1a1a8;                    /* placeholders and disabled only */
+
+  /* One accent. */
+  --accent: #0071e3;
+  --accent-hover: #0068d1;
+  --accent-text: #0066cc;
+  --accent-soft: rgba(0, 113, 227, 0.1);
+  --on-accent: #ffffff;
+  --ring: rgba(0, 113, 227, 0.45);
+
+  /* Status — for status only. */
+  --green: #1f9d48;
+  --green-dot: #30c158;
+  --amber: #b25f00;
+  --amber-dot: #ff9f0a;
+  --red: #d70015;
+  --red-dot: #ff3b30;
+  --grey-dot: #b4b4ba;
+
+  --shadow-pop: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 10px 32px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --shadow-sheet: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 24px 64px rgba(0, 0, 0, 0.2);
+  --shadow-control: 0 0.5px 1.5px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+
+  /* Type. 13px for the interface, 15px for reading, titles semibold. */
+  --sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, system-ui, 'Segoe UI', sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, system-ui, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-ui: 13px;
+  --fs-read: 15px;
+  --fs-h3: 17px;
+  --fs-title: 22px;
+  --fs-large: 28px;
+
+  /* Space: the 8-point grid, with a 4 for the tight places. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --content-max: 1100px;
+  --measure: 72ch;
+
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 180ms;
+
+  --sidebar-w: 248px;
+  --toolbar-h: 52px;
+
+  /* --- aliases: the names the component styles were written against ----------------------- */
+  --bg0: var(--bg);
+  --bg1: var(--bg-grouped);
+  --bg2: var(--bg-sunk);
+  --line: var(--sep);
+  --line-lit: var(--sep-strong);
+  --text: var(--label);
+  --text-dim: var(--label-2);
+  --text-mute: var(--label-3);
+  --accent-hi: var(--accent-text);
+  --accent-fill: var(--accent);
+  --radius: var(--r-md);
+
+  /* The documentation shell's own set, each pointing at a token above. */
+  --doc-heading: var(--label);
+  --doc-text: var(--label);
+  --doc-mute: var(--label-3);
+  --doc-line: var(--sep);
+  --doc-line-lit: var(--sep-strong);
+  --doc-code-bg: var(--bg-sunk);
+  --doc-rail-bg: transparent;
+  --doc-current: var(--accent-text);
+  --doc-current-bg: var(--accent-soft);
+  --doc-current-line: var(--accent);
+  --adm-info: var(--accent);
+  --adm-tip: var(--green-dot);
+  --adm-note: var(--sep-strong);
+  --adm-warning: var(--amber-dot);
+  --adm-danger: var(--red-dot);
+}
+
+/* Dark, twice: once when the system asks for it (unless the page pinned light), once when the
+   page pins it. The two blocks are identical on purpose. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #1b1b1d;
+    --bg-chrome: rgba(36, 36, 39, 0.78);
+    --bg-chrome-solid: #232326;
+    --bg-grouped: #161618;
+    --bg-raised: #242427;
+    --bg-sunk: #141416;
+    --fill: rgba(118, 118, 128, 0.24);
+    --fill-strong: rgba(118, 118, 128, 0.34);
+    --hover: rgba(255, 255, 255, 0.055);
+    --press: rgba(255, 255, 255, 0.09);
+    --selection: rgba(255, 255, 255, 0.09);
+    --scrim: rgba(0, 0, 0, 0.45);
+    --sep: rgba(255, 255, 255, 0.09);
+    --sep-strong: rgba(255, 255, 255, 0.16);
+    --label: #f2f2f4;
+    --label-2: #b0b0b6;
+    --label-3: #94949b;
+    --label-4: #66666c;
+    --accent: #0a84ff;
+    --accent-hover: #2290ff;
+    --accent-text: #4aa3ff;
+    --accent-soft: rgba(10, 132, 255, 0.18);
+    --ring: rgba(10, 132, 255, 0.55);
+    --green: #4cd27a;
+    --green-dot: #32d74b;
+    --amber: #ffb340;
+    --amber-dot: #ff9f0a;
+    --red: #ff6961;
+    --red-dot: #ff453a;
+    --grey-dot: #6e6e75;
+    --shadow-pop: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 12px 36px rgba(0, 0, 0, 0.5);
+    --shadow-sheet: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 28px 72px rgba(0, 0, 0, 0.6);
+    --shadow-control: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1b1b1d;
+  --bg-chrome: rgba(36, 36, 39, 0.78);
+  --bg-chrome-solid: #232326;
+  --bg-grouped: #161618;
+  --bg-raised: #242427;
+  --bg-sunk: #141416;
+  --fill: rgba(118, 118, 128, 0.24);
+  --fill-strong: rgba(118, 118, 128, 0.34);
+  --hover: rgba(255, 255, 255, 0.055);
+  --press: rgba(255, 255, 255, 0.09);
+  --selection: rgba(255, 255, 255, 0.09);
+  --scrim: rgba(0, 0, 0, 0.45);
+  --sep: rgba(255, 255, 255, 0.09);
+  --sep-strong: rgba(255, 255, 255, 0.16);
+  --label: #f2f2f4;
+  --label-2: #b0b0b6;
+  --label-3: #94949b;
+  --label-4: #66666c;
+  --accent: #0a84ff;
+  --accent-hover: #2290ff;
+  --accent-text: #4aa3ff;
+  --accent-soft: rgba(10, 132, 255, 0.18);
+  --ring: rgba(10, 132, 255, 0.55);
+  --green: #4cd27a;
+  --green-dot: #32d74b;
+  --amber: #ffb340;
+  --amber-dot: #ff9f0a;
+  --red: #ff6961;
+  --red-dot: #ff453a;
+  --grey-dot: #6e6e75;
+  --shadow-pop: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 12px 36px rgba(0, 0, 0, 0.5);
+  --shadow-sheet: 0 0 0 0.5px rgba(255, 255, 255, 0.1), 0 28px 72px rgba(0, 0, 0, 0.6);
+  --shadow-control: 0 0 0 0.5px rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* --- base ------------------------------------------------------------------------------------- */
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--sans);
+  font-size: var(--fs-ui);
+  line-height: 1.45;
+  color: var(--label);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--label);
+}
+
+h1 {
+  font-family: var(--display);
+  font-size: var(--fs-title);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: var(--fs-h3);
+  letter-spacing: -0.005em;
+}
+
+h4 {
+  font-size: var(--fs-sm);
+  color: var(--label-2);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+.icon {
+  display: block;
+  flex: none;
+}
+
+/* The only place monospace is allowed: ids, slugs, model names, tool output. */
+.mono,
+.chat__activity-details .chat__said {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-variant-ligatures: none;
+}
+
+/* Costs, times and counts line up. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible only to assistive technology. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Thin, quiet scrollbars that follow the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--fill-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

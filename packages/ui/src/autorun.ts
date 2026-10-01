@@ -40,3 +40,27 @@ export function autoRunFromForm(
   if (!Number.isInteger(maxTurnsPerDay) || maxTurnsPerDay < 1 || maxTurnsPerDay > 100) return null;
   return { enabled: form.enabled, everyMinutes, maxTurnsPerDay };
 }
+
+/** An interval as a sentence says it: `15 minutes`, `hour`, `2 hours` — for "every …". */
+export function intervalWords(minutes: number): string {
+  if (minutes === 60) return 'hour';
+  if (minutes < 60 || minutes % 60 !== 0) return `${minutes} minutes`;
+  return `${minutes / 60} hours`;
+}
+
+/** The schedule in words people use, for the settings sheet and the Overview. */
+export function scheduleSentence(autoRun: AutoRun | undefined): string {
+  if (!autoRun || !autoRun.enabled) return 'Runs only when you start a turn';
+  const cap = `at most ${autoRun.maxTurnsPerDay} turn${autoRun.maxTurnsPerDay === 1 ? '' : 's'} a day`;
+  return `Runs on its own every ${intervalWords(autoRun.everyMinutes)}, ${cap}`;
+}
+
+/** The turns left today in a sentence — empty until a budget has arrived. */
+export function budgetSentence(budget: TurnBudget | undefined): string {
+  if (!budget) return '';
+  const hubLeft = Math.max(0, budget.hubMaxPerDay - budget.hubUsedToday);
+  const hub = `${hubLeft} of ${budget.hubMaxPerDay} left across the hub`;
+  if (budget.maxPerDay === null) return `No cap for this project · ${hub}`;
+  const left = Math.max(0, budget.maxPerDay - budget.usedToday);
+  return `${left} of ${budget.maxPerDay} turns left today · ${hub}`;
+}

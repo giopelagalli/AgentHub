@@ -2,6 +2,7 @@ import { getJson, sendJson } from '../api.js';
 import type { EditorHandle } from '../code/editor.js';
 import { ancestors, formatSize, step, visibleRows, type CodeEntry, type CodeFileDoc, type CodeTreeDoc } from '../code/model.js';
 import { button, el } from '../dom.js';
+import { icon } from '../icons.js';
 import { renderMarkdown } from '../markdown.js';
 import { toast } from '../toast.js';
 import { note, type ViewContext } from './parts.js';
@@ -67,8 +68,10 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
   tabs.append(filesTab, mapTab);
 
   const actions = el('div', 'actions');
-  const refreshButton = button('Refresh map');
-  const guideButton = button('Guide');
+  const refreshButton = button('Refresh map', 'btn btn--small');
+  const guideButton = button('', 'btn btn--plain btn--small');
+  guideButton.append(icon('chat', 15), document.createTextNode('Ask the guide'));
+  guideButton.title = 'Ask the guide about this code — its answers link to the lines they mean';
   actions.append(refreshButton, guideButton);
 
   const bar = el('div', 'code__bar');
@@ -96,7 +99,11 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
 
   const mapBox = el('article', 'md code__map');
 
-  root.append(bar, panes, mapBox);
+  // The page's bar under the toolbar takes this view's bar when it offers one.
+  if (ctx.actions) {
+    ctx.actions.replaceChildren(bar);
+    root.append(panes, mapBox);
+  } else root.append(bar, panes, mapBox);
   host.replaceChildren(root);
 
   /**
@@ -142,7 +149,11 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
     row.dataset.path = entry.path;
     row.style.paddingLeft = `${8 + depth * 14}px`;
     if (entry.path === selected) row.setAttribute('aria-current', 'true');
-    row.append(el('span', 'code__name', entry.dir ? `${expanded.has(entry.path) ? '▾' : '▸'} ${name}` : name));
+    // A folder carries a disclosure chevron and a folder; a file a page, set in a line with them.
+    const twist = el('span', 'code__twist');
+    if (entry.dir) twist.appendChild(icon(expanded.has(entry.path) ? 'chevronDown' : 'chevronRight', 12));
+    if (entry.dir) row.setAttribute('aria-expanded', String(expanded.has(entry.path)));
+    row.append(twist, icon(entry.dir ? 'folder' : 'doc', 15), el('span', 'code__name', name));
     if (!entry.dir) row.append(el('span', 'code__size', entry.openable ? formatSize(entry.size) : 'not text'));
     row.addEventListener('click', () => activate(entry));
     return row;
@@ -361,7 +372,9 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
   renderMap();
   loadTree();
   loadMap();
-  openGuide();
+  // Beside the files where there is room for both; on a narrow window the pane would cover them,
+  // so there it waits to be asked for.
+  if (window.matchMedia?.('(min-width: 1001px)').matches ?? true) openGuide();
 
   return () => {
     alive = false;

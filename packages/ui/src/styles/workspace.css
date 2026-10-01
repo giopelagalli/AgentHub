@@ -1,0 +1,474 @@
+/* The workspace sections — Code (Files · Terminal · Preview) and Activity. Each fills the space
+   under the toolbar and scrolls inside itself, so these set heights and hairlines rather than
+   margins. */
+
+.fill {
+  display: flex;
+  flex-direction: column;
+}
+
+.fill > * {
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- Files ------------------------------------------------------------------------------------ */
+
+.code {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* `hidden` has to win over the display rules below, or a hidden pane still lays out. */
+.code [hidden] {
+  display: none;
+}
+
+.code__bar {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+/* Files / Map: a small segmented control, the Code section's own. */
+.code__tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--fill);
+  border-radius: 7px;
+}
+
+.code__tab {
+  min-height: 20px;
+  padding: 1px 10px;
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--label-2);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.code__tab:hover {
+  color: var(--label);
+}
+
+.code__tab[aria-current='true'] {
+  color: var(--label);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-control);
+}
+
+.code__panes {
+  display: grid;
+  flex: 1;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.code__tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--sp-2) 6px;
+  overflow: auto;
+  background: var(--bg-grouped);
+  border-right: 1px solid var(--sep);
+}
+
+.code__row {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--label);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.code__row:hover {
+  background: var(--hover);
+}
+
+.code__row[aria-current='true'] {
+  background: var(--selection);
+}
+
+.code__row .icon {
+  color: var(--label-3);
+}
+
+.code__row--dir > .icon {
+  color: var(--accent-text);
+}
+
+.code__twist {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 12px;
+}
+
+.code__twist .icon {
+  color: var(--label-3);
+}
+
+.code__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code__size {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--label-3);
+}
+
+.code__view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.code__head {
+  display: flex;
+  flex: none;
+  gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid var(--sep);
+}
+
+.code__path {
+  flex: 1;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label-2);
+}
+
+.code__dirty {
+  color: var(--amber-dot);
+}
+
+.code__note {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  padding: var(--sp-6);
+  color: var(--label-3);
+  text-align: center;
+}
+
+/* CodeMirror fills what is left, and scrolls inside it rather than growing the page. */
+.code__editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.code__editor .cm-editor {
+  height: 100%;
+}
+
+.code__map {
+  flex: 1;
+  width: 100%;
+  max-width: calc(78ch + 64px);
+  padding: var(--sp-5) var(--sp-6);
+  margin: 0 auto;
+  overflow: auto;
+}
+
+/* A `path:line` citation. The renderer marks every one, but only the two places that can actually
+   open a file — the Map and the guide's replies — look clickable; the same span in the PRD or a
+   docs page is left reading as the code span it is. */
+.code__map .md__ref,
+.project__pane .chat__said .md__ref {
+  cursor: pointer;
+  border-bottom: 1px solid var(--sep-strong);
+}
+
+.code__map .md__ref:hover code,
+.project__pane .chat__said .md__ref:hover code {
+  color: var(--accent-text);
+}
+
+/* --- Terminal --------------------------------------------------------------------------------- */
+
+.term {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background: #1b1b1d;
+}
+
+.term__bar {
+  min-height: 0;
+}
+
+.term__banner {
+  color: var(--amber);
+}
+
+.term__banner:empty {
+  display: none;
+}
+
+.subbar .term__bar .btn {
+  margin-left: 0;
+}
+
+.term__screen {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px;
+  background: #1b1b1d;
+  border: 0;
+  border-radius: 0;
+}
+
+.term__foot {
+  padding: 6px 16px 8px;
+  font-size: var(--fs-sm);
+  color: #8e8e93;
+  background: #1b1b1d;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* --- Preview ---------------------------------------------------------------------------------- */
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.preview__bar {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.preview__pill {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--label-2);
+  background: none;
+  border: 0;
+}
+
+.preview__pill::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--grey-dot);
+}
+
+.preview__pill--running {
+  color: var(--label);
+}
+
+.preview__pill--running::before {
+  background: var(--green-dot);
+}
+
+.preview__pill--crashed {
+  color: var(--red);
+}
+
+.preview__pill--crashed::before {
+  background: var(--red-dot);
+}
+
+.preview__settings {
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--bg-grouped);
+  border-bottom: 1px solid var(--sep);
+}
+
+.preview__field input {
+  min-height: 28px;
+  padding: 4px 9px;
+  font: inherit;
+  color: var(--label);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--sep-strong);
+}
+
+.preview__label {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--label-2);
+}
+
+.preview__hint {
+  font-size: var(--fs-xs);
+  color: var(--label-3);
+}
+
+.preview__stage {
+  background: var(--bg-grouped);
+}
+
+.preview__stage .empty {
+  max-width: 44ch;
+  text-align: center;
+}
+
+.preview__log {
+  max-height: 148px;
+  padding: 10px 16px;
+  font-size: var(--fs-xs);
+  color: var(--label-2);
+  background: var(--bg-grouped);
+  border-top: 1px solid var(--sep);
+}
+
+/* --- Activity: the timeline's own rules stay; this re-dresses the frame around them ----------- */
+
+.activity__list {
+  padding: var(--sp-2) 6px var(--sp-4);
+  background: var(--bg-grouped);
+  border-right: 1px solid var(--sep);
+}
+
+.activity__listhead {
+  padding: 6px 8px 8px;
+}
+
+.activity__listhead h3 {
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--label-3);
+}
+
+.activity__count,
+.turn__head,
+.turn__cost,
+.activity__elapsed,
+.activity__calls {
+  font-family: var(--sans);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn {
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--r-md);
+}
+
+.turn:hover {
+  background: var(--hover);
+}
+
+.turn[aria-current='true'] {
+  background: var(--selection);
+}
+
+.turn__time {
+  font-weight: 500;
+}
+
+.turn__dot {
+  background: var(--grey-dot);
+}
+
+.turn__dot--running {
+  background: var(--green-dot);
+}
+
+.turn__dot--failed {
+  background: var(--red-dot);
+}
+
+.turn__line {
+  font-size: var(--fs-ui);
+  color: var(--label);
+}
+
+.turn__meta {
+  font-size: var(--fs-xs);
+  color: var(--label-3);
+}
+
+.activity__feedhead {
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--sep);
+}
+
+.activity__feedhead h3 {
+  font-size: var(--fs-ui);
+}
+
+.tl__sub {
+  border: 0;
+  border-radius: 10px;
+  background: var(--bg-grouped);
+}
+
+.tl__sub--open {
+  box-shadow: inset 2px 0 0 var(--green-dot);
+}
+
+.tl__subhead {
+  border-bottom: 1px solid var(--sep);
+}
+
+@media (max-width: 760px) {
+  .activity {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(110px, 30%) minmax(0, 1fr);
+  }
+
+  .activity__list {
+    border-right: 0;
+    border-bottom: 1px solid var(--sep);
+  }
+}
+
+@media (max-width: 760px) {
+  .code__panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+  }
+
+  .code__tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--sep);
+  }
+}

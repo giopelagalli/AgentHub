@@ -105,6 +105,20 @@ describe('renderMarkdown — supported syntax', () => {
     expect(renderMarkdown('- one\n\n- two')).toBe('<ul><li>one</li><li>two</li></ul>');
   });
 
+  it('keeps a hard-wrapped item one item, indented or not, and a nested one too', () => {
+    expect(renderMarkdown('- **Hub.** One process that holds\n  the projects and the API.\n- two'))
+      .toBe('<ul><li><strong>Hub.</strong> One process that holds the projects and the API.</li><li>two</li></ul>');
+    expect(renderMarkdown('1. first line\nsecond line')).toBe('<ol><li>first line second line</li></ol>');
+    expect(renderMarkdown('- one\n  - deep and\n    wrapped\n- two'))
+      .toBe('<ul><li>one<ul><li>deep and wrapped</li></ul></li><li>two</li></ul>');
+  });
+
+  it('still ends a list at a heading, a fence or a blank line before a paragraph', () => {
+    expect(renderMarkdown('- one\n## Next')).toMatch(/^<ul><li>one<\/li><\/ul>\s*<h2[^>]*>Next<\/h2>$/);
+    expect(renderMarkdown('- one\n```\ncode\n```')).toMatch(/^<ul><li>one<\/li><\/ul>\s*<pre>/);
+    expect(renderMarkdown('- one\n\nAfter.')).toMatch(/^<ul><li>one<\/li><\/ul>\s*<p>After\.<\/p>$/);
+  });
+
   it('renders blockquotes and horizontal rules', () => {
     expect(renderMarkdown('> quoted')).toBe('<blockquote>quoted</blockquote>');
     expect(renderMarkdown('---')).toBe('<hr>');

@@ -1,138 +1,105 @@
 import type { ProjectManifest } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
+import { button, el } from '../dom.js';
 import {
   repoFieldMode, repoFieldNote, repoLabel, type GithubRepo, type GithubStatus,
 } from '../github.js';
+import { icon, type IconName } from '../icons.js';
 import { deriveSlug, repoProblem, slugProblem, wizardPayload, type Source } from '../newproject.js';
 import { streamPost } from '../stream.js';
+import { openModal } from './modal.js';
 
 /**
- * The New Project wizard: a name, a slug, and one of three starting points — a paragraph to expand
- * into a PRD, a PRD to adopt, or a repository to import. Continue creates the project (cloning the
- * repository first, when there is one) and then drafts its PRD, streaming the draft into the same
- * card so the owner watches the document being written rather than a spinner.
+ * The New project sheet. Three big choices first — describe an idea, paste a PRD, import from
+ * GitHub — then one thing at a time: the name, then what the PRD starts from. Create makes the
+ * project (cloning the repository first, when there is one) and then drafts its PRD, streaming the
+ * draft into the same sheet so the owner watches the document being written rather than a spinner.
  *
- * The same card, opened with `existing`, is the "draft one" flow for a project that has no PRD
- * yet: same source choice, same stream, no creation step.
+ * The same sheet, opened with `existing`, is the "draft one" flow for a project that has no PRD
+ * yet: the same choice (without the import), the same stream, no name and no creation step.
  */
 
 export interface WizardOptions {
-  /** Draft into a project that already exists; the name and slug step is skipped. */
+  /** Draft into a project that already exists; the name step is skipped. */
   existing?: { slug: string; title: string };
   /** The draft finished: the project to select, and the questions the drafter left open. */
   onDone: (slug: string, questions: string[]) => void;
 }
 
-const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), select, textarea, [href]';
+type Step = 'choose' | 'name' | 'source' | 'draft';
 
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K, className?: string, text?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-function button(label: string, className = 'btn'): HTMLButtonElement {
-  const node = el('button', className, label);
-  node.type = 'button';
-  return node;
-}
+const CHOICES: { id: Source; icon: IconName; title: string; line: string }[] = [
+  { id: 'idea', icon: 'sparkle', title: 'Describe an idea', line: 'A paragraph is enough — the PRD is drafted from it.' },
+  { id: 'prd', icon: 'doc', title: 'Paste a PRD', line: 'Bring the requirements you already have.' },
+  { id: 'repo', icon: 'branch', title: 'Import from GitHub', line: 'Start from a repository’s code and say what to do with it.' },
+];
 
 /** A labelled field: the caption, the control, and room for a complaint under it. */
-function field(label: string, control: HTMLElement): { wrap: HTMLElement; note: HTMLElement } {
+function field(label: string, control: HTMLElement, hint?: string): { wrap: HTMLElement; note: HTMLElement; label: HTMLElement } {
   const wrap = el('label', 'field');
+  const caption = el('span', 'field__label', label);
   const note = el('span', 'field__note');
-  wrap.append(el('span', 'field__label', label), control, note);
-  return { wrap, note };
+  wrap.append(caption, control);
+  if (hint) wrap.appendChild(el('span', 'field__hint', hint));
+  wrap.appendChild(note);
+  return { wrap, note, label: caption };
 }
 
 export function openProjectWizard(host: HTMLElement, options: WizardOptions): () => void {
-  const scrim = el('div', 'modal');
-  scrim.setAttribute('role', 'dialog');
-  scrim.setAttribute('aria-modal', 'true');
-  const box = el('div', 'modal__box');
-  scrim.appendChild(box);
+  /** Aborts the draft when the sheet closes; null once the stream is over. */
+  let draft: AbortController | null = null;
+  let closed = false;
+  const modal = openModal(host, {
+    className: 'wizard-sheet',
+    label: options.existing ? 'Draft a PRD' : 'New project',
+    onClose: () => { closed = true; draft?.abort(); },
+  });
+  const dispose = modal.close;
 
-  const heading = options.existing ? 'Draft a PRD' : 'New project';
-  const subtitle = options.existing
-    ? `${options.existing.title} — tell the drafter what it is`
-    : 'Name it, then say what it is. The PRD gets drafted from there.';
-
-  const head = el('header', 'modal__head');
-  const headText = el('div');
-  headText.append(el('h2', undefined, heading), el('p', 'modal__sub', subtitle));
-  const close = button('×', 'drawer__close');
+  const head = el('header', 'wizard__head');
+  const back = button('', 'btn btn--icon wizard__back');
+  back.appendChild(icon('chevronLeft', 18));
+  back.setAttribute('aria-label', 'Back');
+  back.title = 'Back';
+  const titles = el('div', 'wizard__titles');
+  const heading = el('h2');
+  const subtitle = el('p', 'wizard__sub');
+  titles.append(heading, subtitle);
+  const close = button('', 'btn btn--icon');
+  close.appendChild(icon('close', 16));
   close.title = 'Close (Esc)';
-  head.append(headText, close);
+  close.setAttribute('aria-label', 'Close');
+  close.addEventListener('click', dispose);
+  head.append(back, titles, close);
 
-  const body = el('div', 'modal__body');
-  const foot = el('div', 'modal__foot');
-  const problem = el('p', 'modal__error');
+  const body = el('div', 'wizard__body');
+  const foot = el('div', 'wizard__foot');
+  const problem = el('p', 'wizard__error');
   problem.setAttribute('role', 'alert');
   const buttons = el('div', 'actions');
   foot.append(problem, buttons);
-  box.append(head, body, foot);
+  modal.box.append(head, body, foot);
 
   const say = (text: string): void => {
     problem.textContent = text;
-    problem.classList.toggle('modal__error--on', !!text);
+    problem.hidden = !text;
   };
 
-  /** Where focus goes back to when the card closes. */
-  const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  /** Aborts the draft when the card closes; null once the stream is over. */
-  let draft: AbortController | null = null;
-  let closed = false;
   /** The connected repositories the picker offers; empty until the status says there are any. */
   let repos: GithubRepo[] = [];
+  let source: Source = 'idea';
+  let step: Step = 'choose';
 
-  const dispose = (): void => {
-    if (closed) return;
-    closed = true;
-    draft?.abort();
-    document.removeEventListener('keydown', onKey, true);
-    scrim.remove();
-    returnFocus?.focus();
-  };
+  // ---- the fields, built once so what was typed survives going back and forth ----------------
 
-  // Esc closes; Tab cycles inside the card and nowhere else. Capture, so a control that stops the
-  // event from bubbling can't let focus walk out into the page behind the scrim.
-  const onKey = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') { event.preventDefault(); dispose(); return; }
-    if (event.key !== 'Tab') return;
-    const stops = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((n) => !n.hidden && n.offsetParent !== null);
-    if (!stops.length) return;
-    const first = stops[0];
-    const last = stops[stops.length - 1];
-    const active = document.activeElement;
-    if (!(active instanceof HTMLElement) || !box.contains(active)) {
-      event.preventDefault();
-      first.focus();
-    } else if (event.shiftKey && active === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  };
-
-  close.addEventListener('click', dispose);
-  scrim.addEventListener('mousedown', (event) => { if (event.target === scrim) dispose(); });
-  document.addEventListener('keydown', onKey, true);
-
-  // ---- step 1: what we are building -----------------------------------------------------------
-
-  const name = el('input', 'input');
+  const name = el('input', 'input input--large');
   name.placeholder = 'Acme Portal';
+  name.autocomplete = 'off';
   const slug = el('input', 'input mono');
   slug.placeholder = 'acme-portal';
   slug.spellcheck = false;
-
   const nameField = field('Name', name);
-  const slugField = field('Slug', slug);
+  const slugField = field('Short name', slug, 'Used in the project’s address and folder. Lowercase letters, digits and dashes.');
   /** Until the owner edits the slug themselves, it follows the name. */
   let slugTouched = false;
   name.addEventListener('input', () => {
@@ -145,13 +112,13 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     say('');
   });
 
-  let source: Source = 'idea';
   const idea = el('textarea', 'input wizard__source');
-  idea.rows = 9;
-  const prd = el('textarea', 'input wizard__source');
-  prd.rows = 9;
+  idea.rows = 8;
+  const prd = el('textarea', 'input wizard__source mono');
+  prd.rows = 12;
   prd.placeholder = '# Product requirements\n\nPaste the document you already have.';
-  prd.hidden = true;
+  const ideaField = field('What do you want to build?', idea);
+  const prdField = field('The PRD', prd, 'Markdown is best; the drafter tidies it into the house format and lists what it still needs.');
 
   // Import: the repository, the branch, and one line about how this hub reaches GitHub. Which of
   // the three ways in shows — a picker of connected repositories, the Connect button, or nothing
@@ -165,19 +132,19 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
   branch.spellcheck = false;
   const repoField = field('Repository', repo);
   const branchField = field('Branch', branch);
-  const picker = el('select', 'input');
+  const picker = el('select', 'select');
   const pickerField = field('Repository', picker);
   pickerField.wrap.hidden = true;
-  const connect = button('Connect GitHub', 'btn btn--primary');
+  const connect = button('', 'btn');
+  connect.append(icon('branch', 15), document.createTextNode('Connect GitHub'));
   connect.hidden = true;
-  const githubNote = el('p', 'modal__note', 'Private repos need a GitHub token on the hub.');
-  const repoFields = el('div');
+  const githubNote = el('p', 'wizard__note', 'Private repositories need a GitHub token on the hub.');
   const repoRow = el('div', 'wizard__row');
   repoRow.append(repoField.wrap, branchField.wrap);
+  const repoFields = el('div', 'wizard__group');
   // The way in comes first — the picker, or the button and the line explaining it — and the typed
   // fields sit under it, because in every mode but `typed` they are the second-best way in.
   repoFields.append(pickerField.wrap, connect, githubNote, repoRow);
-  repoFields.hidden = true;
   repo.addEventListener('input', () => {
     repoField.note.textContent = repo.value ? (repoProblem(repo.value) ?? '') : '';
     say('');
@@ -194,56 +161,88 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     say('');
   });
 
-  const choice = el('div', 'seg');
-  choice.setAttribute('role', 'radiogroup');
-  choice.setAttribute('aria-label', 'Where the PRD starts');
-  const pick = (next: Source): void => {
-    source = next;
-    // The paragraph box serves both the idea and the import; only what it asks for changes.
-    idea.hidden = next === 'prd';
-    idea.placeholder = next === 'repo'
-      ? 'What do you want done? A paragraph is enough.'
-      : 'What do you want to build? A paragraph is enough.';
-    prd.hidden = next !== 'prd';
-    repoFields.hidden = next !== 'repo';
-    for (const [id, node] of tabs) node.setAttribute('aria-checked', String(id === next));
-    say('');
-  };
-  const tabs: [Source, HTMLButtonElement][] = ([
-    ['idea', 'Start from an idea'],
-    ['prd', 'Paste a PRD'],
-    // Drafting into a project that already exists has nothing to import into.
-    ...(options.existing ? [] : [['repo', 'Import a repo'] as [Source, string]]),
-  ] as [Source, string][]).map(([id, label]) => {
-    const node = button(label, 'seg__option');
-    node.setAttribute('role', 'radio');
-    node.addEventListener('click', () => pick(id));
-    choice.appendChild(node);
-    return [id, node];
-  });
-
-  const sourceField = el('div', 'field');
-  sourceField.append(el('span', 'field__label', 'Where it starts'), choice, repoFields, idea, prd);
-
-  const form = el('div', 'wizard');
-  if (!options.existing) {
-    const identity = el('div', 'wizard__row');
-    identity.append(nameField.wrap, slugField.wrap);
-    form.appendChild(identity);
-  }
-  form.appendChild(sourceField);
+  // ---- the steps -----------------------------------------------------------------------------
 
   const cancel = button('Cancel');
   cancel.addEventListener('click', dispose);
-  const go = button(options.existing ? 'Draft PRD' : 'Continue', 'btn btn--primary');
+  const go = button('', 'btn btn--primary');
 
-  // ---- step 2: the draft being written --------------------------------------------------------
+  const choices = options.existing ? CHOICES.filter((c) => c.id !== 'repo') : CHOICES;
+
+  const show = (next: Step): void => {
+    step = next;
+    say('');
+    back.hidden = next === 'choose' || next === 'draft' || (next === 'source' && !!options.existing && choices.length < 2);
+    modal.box.dataset.step = next;
+    body.replaceChildren();
+    buttons.replaceChildren();
+
+    if (next === 'choose') {
+      heading.textContent = options.existing ? 'Draft a PRD' : 'New project';
+      subtitle.textContent = options.existing ? `${options.existing.title} — where does it start?` : 'How do you want to start?';
+      const list = el('div', 'choices');
+      list.setAttribute('role', 'list');
+      for (const choice of choices) {
+        const card = button('', 'choice');
+        card.setAttribute('role', 'listitem');
+        const badge = el('span', 'choice__icon');
+        badge.appendChild(icon(choice.icon, 22));
+        const text = el('span', 'choice__text');
+        text.append(el('span', 'choice__title', choice.title), el('span', 'choice__line', choice.line));
+        card.append(badge, text, icon('chevronRight', 16));
+        card.addEventListener('click', () => {
+          source = choice.id;
+          show(options.existing ? 'source' : 'name');
+        });
+        list.appendChild(card);
+      }
+      body.appendChild(list);
+      buttons.append(cancel);
+      queueMicrotask(() => list.querySelector<HTMLElement>('.choice')?.focus());
+      return;
+    }
+
+    if (next === 'name') {
+      heading.textContent = 'Name it';
+      subtitle.textContent = CHOICES.find((c) => c.id === source)?.title ?? '';
+      body.append(nameField.wrap, slugField.wrap);
+      go.textContent = 'Continue';
+      buttons.append(cancel, go);
+      queueMicrotask(() => name.focus());
+      return;
+    }
+
+    if (next === 'source') {
+      heading.textContent = source === 'repo' ? 'Pick the repository' : source === 'prd' ? 'Paste the PRD' : 'Describe it';
+      subtitle.textContent = options.existing ? options.existing.title : name.value.trim();
+      ideaField.label.textContent = source === 'repo' ? 'What do you want done?' : 'What do you want to build?';
+      idea.placeholder = source === 'repo'
+        ? 'Add a dark mode and tidy the settings page. A paragraph is enough.'
+        : 'A terminal timer that logs every session and shows daily focus stats. A paragraph is enough.';
+      if (source === 'repo') body.append(repoFields, ideaField.wrap);
+      else body.append(source === 'prd' ? prdField.wrap : ideaField.wrap);
+      go.textContent = options.existing ? 'Draft the PRD' : 'Create project';
+      buttons.append(cancel, go);
+      queueMicrotask(() => (source === 'repo' ? (pickerField.wrap.hidden ? repo : picker) : source === 'prd' ? prd : idea).focus());
+    }
+  };
+
+  back.addEventListener('click', () => {
+    if (step === 'source' && !options.existing) show('name');
+    else show('choose');
+  });
+
+  // ---- the draft being written ---------------------------------------------------------------
 
   const stream = el('pre', 'stream');
   stream.setAttribute('aria-live', 'polite');
-  const streamNote = el('p', 'modal__note', 'Drafting the PRD…');
+  const streamNote = el('p', 'wizard__note', '');
 
   const showStream = (): void => {
+    step = 'draft';
+    back.hidden = true;
+    heading.textContent = 'Drafting the PRD';
+    modal.box.dataset.step = 'draft';
     body.replaceChildren(streamNote, stream);
     buttons.replaceChildren(cancel);
     cancel.focus();
@@ -257,7 +256,7 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
 
   /**
    * The draft failed but the project is already there — offer the way in rather than stranding the
-   * owner on a dead card, since the PRD view's own empty state can start the draft again.
+   * owner on a dead sheet, since the Overview can start the draft again.
    */
   const draftFailed = (slugValue: string, message: string): void => {
     draft = null;
@@ -290,9 +289,24 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     }
   };
 
-  go.addEventListener('click', () => {
+  const submit = (): void => {
+    if (step === 'name') {
+      const title = name.value.trim();
+      if (!title) { say('A name is required.'); name.focus(); return; }
+      const wanted = slug.value.trim() || deriveSlug(title);
+      const bad = slugProblem(wanted);
+      if (bad) { say(bad); slug.focus(); return; }
+      show('source');
+      return;
+    }
+    if (step !== 'source') return;
+
     const box = source === 'prd' ? prd : idea;
     const text = box.value.trim();
+    if (source === 'repo') {
+      const badRepo = repoProblem(repo.value);
+      if (badRepo) { say(badRepo); repo.focus(); return; }
+    }
     if (!text) {
       say(source === 'prd' ? 'Paste the PRD first.'
         : source === 'repo' ? 'Say what you want done.' : 'Say what you want to build.');
@@ -306,16 +320,9 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
     }
 
     const title = name.value.trim();
-    if (!title) { say('A name is required.'); name.focus(); return; }
     const wanted = slug.value.trim() || deriveSlug(title);
-    const bad = slugProblem(wanted);
-    if (bad) { say(bad); slug.focus(); return; }
-    if (source === 'repo') {
-      const badRepo = repoProblem(repo.value);
-      if (badRepo) { say(badRepo); repo.focus(); return; }
-    }
-
     go.disabled = true;
+    go.textContent = source === 'repo' ? 'Cloning…' : 'Creating…';
     say('');
     // The hub clones before it answers, so this call carries the 400/502 a bad repository earns —
     // shown on the same error line as every other reason creation could fail.
@@ -325,15 +332,23 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
       .then(() => runDraft(wanted, text))
       .catch((error: unknown) => {
         go.disabled = false;
+        go.textContent = 'Create project';
         say(`Could not create the project: ${String(error)}`);
       });
+  };
+
+  go.addEventListener('click', submit);
+  // Return in a one-line field moves on; Cmd/Ctrl-Return does it from a text area.
+  modal.box.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || ((event.metaKey || event.ctrlKey) && target instanceof HTMLTextAreaElement)) {
+      event.preventDefault();
+      submit();
+    }
   });
 
-  buttons.append(cancel, go);
-  body.appendChild(form);
-  pick('idea');
-  host.appendChild(scrim);
-  (options.existing ? idea : name).focus();
+  show('choose');
 
   // How this hub reaches GitHub, and — when an App is connected — what it can reach. The hub
   // answers with accounts and repository names, never a token; a hub too old to know the route
@@ -359,25 +374,27 @@ export function openProjectWizard(host: HTMLElement, options: WizardOptions): ()
           picker.appendChild(option);
         }
         pickerField.wrap.hidden = false;
-        repoField.wrap.querySelector('.field__label')!.textContent = 'or type owner/repo';
+        repoField.label.textContent = 'or type owner/repo';
       })
       .catch(() => { /* leave the note as the plain sentence */ });
   }
 
   // A re-draft for a project that already has an intake: prefill it, so a failed first draft
-  // doesn't mean re-pasting the owner's idea or PRD.
+  // doesn't mean re-pasting the owner's idea or PRD — and skip straight to it.
   if (options.existing) {
     const slugValue = options.existing.slug;
     void getJson<{ manifest: ProjectManifest }>(`/api/projects/${slugValue}`)
       .then(({ manifest }) => {
-        if (closed) return;
+        if (closed || step !== 'choose') return;
         const intake = manifest.intake;
         if (intake?.prd) {
           prd.value = intake.prd;
-          pick('prd');
+          source = 'prd';
+          show('source');
         } else if (intake?.idea) {
           idea.value = intake.idea;
-          pick('idea');
+          source = 'idea';
+          show('source');
         }
       })
       .catch(() => { /* no intake to prefill; the blank form still works */ });

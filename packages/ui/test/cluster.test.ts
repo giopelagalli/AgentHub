@@ -39,8 +39,8 @@ describe('enrollmentExpiry', () => {
   });
 
   it('tells the owner to mint a new one once it has run out', () => {
-    expect(inMinutes(0)).toBe('This command has expired — press Add node for a fresh one.');
-    expect(inMinutes(-10)).toBe('This command has expired — press Add node for a fresh one.');
+    expect(inMinutes(0)).toBe('This command has expired — press Add machine for a fresh one.');
+    expect(inMinutes(-10)).toBe('This command has expired — press Add machine for a fresh one.');
   });
 });
 

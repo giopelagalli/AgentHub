@@ -1,1379 +1,7 @@
-/* AgentHub — the management console.
-
-   A calm workspace, not a control room. Neutral charcoal surfaces stacked
-   three deep, 1px borders doing all the dividing, and one blue carrying every
-   signal a click can follow: active page, primary action, link, focus ring.
-   Status keeps its own muted quartet — green working, amber waiting, red
-   failed, grey done — and nothing else is coloured at all. Interface sans
-   throughout; the monospace is held back for the strings that are literally
-   identifiers. Nothing glows, nothing moves. */
-
-:root {
-  color-scheme: dark;
-
-  --bg0: #0d0f12;
-  --bg1: #14171c;
-  --bg2: #1b1f26;
-  --hover: #22272f;
-  --line: #262b33;
-  --line-lit: #343a44;
-
-  --text: #e6e8eb;
-  --text-dim: #9aa3ad;
-  --text-mute: #8b939e;
-
-  /* One accent, three jobs: a bar or border, a label, a filled button. */
-  --accent: #3b82f6;
-  --accent-hi: #60a5fa;
-  --accent-fill: #2563eb;
-  --accent-soft: rgba(59, 130, 246, 0.13);
-  --ring: rgba(59, 130, 246, 0.55);
-
-  --green: #34d399;
-  --amber: #f59e0b;
-  --red: #f87171;
-
-  --sans: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Helvetica Neue', sans-serif;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --card-w: 216px;
-  --radius: 6px;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-[hidden] {
-  display: none !important;
-}
-
-html,
-body {
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  font-family: var(--sans);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text);
-  background: var(--bg0);
-  -webkit-font-smoothing: antialiased;
-}
-
-h1,
-h2,
-h3,
-h4 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text);
-}
-
-h1 {
-  font-size: 16px;
-}
-
-h4 {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-p {
-  margin: 0;
-}
-
-/* The only place monospace is allowed: ids, slugs, model names, tool output. */
-.mono,
-.row__slug,
-.facts dd,
-.desk__queue,
-.chat__activity-details .chat__said {
-  font-family: var(--mono);
-  font-size: 12px;
-  font-variant-ligatures: none;
-}
-
-/* --- shell ---------------------------------------------------------------- */
-
-#app {
-  display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
-  height: 100%;
-}
-
-/* Collapsed, the rail keeps only what it can say in two letters. */
-#app.app--tight {
-  grid-template-columns: 56px minmax(0, 1fr);
-}
-
-/* One rail: the three whole-app pages, New project, and the project list. */
-.rail {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: 0;
-  padding: 14px 12px;
-  background: var(--bg1);
-  border-right: 1px solid var(--line);
-}
-
-.rail__head {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding-left: 10px;
-}
-
-.rail__brand {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text);
-}
-
-.rail__toggle {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  color: var(--text-mute);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.rail__toggle:hover {
-  color: var(--text);
-  background: var(--hover);
-  border-color: var(--line-lit);
-}
-
-/* A caret drawn from two borders: pointing back at the rail, or out of it. */
-.rail__chevron {
-  width: 6px;
-  height: 6px;
-  margin-left: 2px;
-  border-bottom: 1.5px solid currentcolor;
-  border-left: 1.5px solid currentcolor;
-  transform: rotate(45deg);
-}
-
-.app--tight .rail__chevron {
-  margin-right: 2px;
-  margin-left: 0;
-  transform: rotate(-135deg);
-}
-
-.rail__pages {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.rail__page {
-  display: block;
-  width: 100%;
-  padding: 7px 10px;
-  font: inherit;
-  text-align: left;
-  color: var(--text-dim);
-  background: none;
-  border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  cursor: pointer;
-}
-
-.rail__page:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.rail__page[aria-current='page'] {
-  color: var(--text);
-  background: var(--bg2);
-  border-left-color: var(--accent);
-}
-
-.rail__page[aria-current='page'] .rail__label,
-.rail__page[aria-current='page'] .rail__initial {
-  font-weight: 600;
-}
-
-.rail__initial {
-  display: none;
-}
-
-.rail__label {
-  display: block;
-  letter-spacing: 0;
-}
-
-.rail__hint {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0;
-  color: var(--text-mute);
-}
-
-.rail__new {
-  width: 100%;
-}
-
-.rail__list {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 10px;
-  min-height: 0;
-}
-
-.rail__rows {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.rail__foot {
-  margin-top: auto;
-  padding-left: 10px;
-}
-
-/* The strip: initials for the pages, a + for New project, and nothing else. */
-.app--tight .rail {
-  padding: 14px 8px;
-}
-
-.app--tight .rail__head {
-  justify-content: center;
-  padding-left: 0;
-}
-
-.app--tight .rail__brand,
-.app--tight .rail__label,
-.app--tight .rail__hint {
-  display: none;
-}
-
-.app--tight .rail__page {
-  padding: 9px 4px 9px 2px;
-}
-
-.app--tight .rail__initial {
-  display: block;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  text-align: center;
-}
-
-.app--tight .rail__new {
-  padding: 6px 0;
-  font-size: 16px;
-  line-height: 1.1;
-}
-
-.app--tight .rail__foot {
-  display: flex;
-  justify-content: center;
-  padding-left: 0;
-}
-
-.app--tight .badge {
-  padding: 5px;
-}
-
-.badge {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  padding: 2px 8px;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--text-dim);
-  border: 1px solid var(--line-lit);
-  border-radius: 999px;
-}
-
-.badge::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--green);
-}
-
-.badge[data-status='polling']::before {
-  background: var(--amber);
-}
-
-.badge[data-status='down']::before {
-  background: var(--red);
-}
-
-.page {
-  min-width: 0;
-  height: 100%;
-  overflow: auto;
-}
-
-/* --- shared parts --------------------------------------------------------- */
-
-.btn {
-  padding: 5px 12px;
-  font: inherit;
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--text);
-  background: var(--bg2);
-  border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.btn:hover:not(:disabled) {
-  background: var(--hover);
-  border-color: #414855;
-}
-
-.btn--primary {
-  color: #fff;
-  background: var(--accent-fill);
-  border-color: var(--accent-fill);
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: #1d4ed8;
-  border-color: #1d4ed8;
-}
-
-.btn:disabled {
-  color: var(--text-mute);
-  background: var(--bg1);
-  border-color: var(--line);
-  cursor: default;
-}
-
-.input,
-.select {
-  padding: 5px 8px;
-  font: inherit;
-  color: var(--text);
-  background: var(--bg0);
-  border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
-}
-
-.input::placeholder {
-  color: var(--text-mute);
-}
-
-.input:focus,
-.select:focus,
-.btn:focus-visible,
-.rail__page:focus-visible,
-.rail__toggle:focus-visible,
-.artifact:focus-visible,
-.row:focus-visible,
-.card__open:focus-visible,
-.hire__avatar:focus-visible,
-.chat__form input:focus,
-.drawer__close:focus-visible,
-.chip:focus-visible,
-.docs__row:focus-visible,
-.seg__option:focus-visible,
-.callout__close:focus-visible,
-.turn:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.empty {
-  padding: 12px 0;
-  color: var(--text-mute);
-}
-
-/* A fetch that failed says so where the content would have been, in the failure colour. */
-.empty--error {
-  color: var(--red);
-}
-
-.note {
-  margin: 4px 0 12px;
-  color: var(--text-dim);
-}
-
-.pill {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  padding: 1px 8px;
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text-dim);
-  border: 1px solid var(--line-lit);
-  border-radius: 999px;
-}
-
-.pill::before {
-  content: '';
-  flex: none;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.pill--active {
-  color: var(--green);
-  border-color: color-mix(in srgb, var(--green) 28%, var(--line-lit));
-}
-
-.pill--paused {
-  color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 28%, var(--line-lit));
-}
-
-.pill--blocked {
-  color: var(--red);
-  border-color: color-mix(in srgb, var(--red) 28%, var(--line-lit));
-}
-
-.pill--done {
-  color: var(--text-mute);
-  border-color: var(--line);
-}
-
-.pill--in-progress {
-  color: var(--green);
-  border-color: color-mix(in srgb, var(--green) 28%, var(--line-lit));
-}
-
-.pill--planned {
-  color: var(--text-dim);
-  border-color: var(--line-lit);
-}
-
-/* Which models this project runs on — quieter than the status pill beside it. */
-.pill--models {
-  color: var(--text-mute);
-  border-color: var(--line);
-}
-
-/* The model policy's one or two selects, kept together inside the action row. */
-.models {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-/* Turns left today, beside the auto-run toggle in the action row. */
-.detail__budget {
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-/* What this project has cost in the last 24 hours, beside the turns left. */
-.detail__cost {
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-.dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  margin-left: auto;
-  border-radius: 50%;
-  background: var(--text-mute);
-}
-
-.dot--working {
-  background: var(--green);
-}
-
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  white-space: nowrap;
-}
-
-.table th,
-.table td {
-  padding: 7px 16px 7px 0;
-  text-align: left;
-  vertical-align: middle;
-  border-bottom: 1px solid var(--line);
-}
-
-.table th {
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--text-mute);
-}
-
-.table tbody tr:hover td {
-  background: var(--bg2);
-}
-
-.table tbody tr:last-child td {
-  border-bottom: 0;
-}
-
-.table--empty {
-  display: none;
-}
-
-.status--online,
-.status--running {
-  color: var(--green);
-}
-
-.status--offline,
-.status--failed {
-  color: var(--red);
-}
-
-.status--queued,
-.status--draining {
-  color: var(--amber);
-}
-
-.status--done {
-  color: var(--text-mute);
-}
-
-.panel {
-  min-width: 0;
-  padding: 14px 16px;
-  overflow-x: auto;
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.panel h2 {
-  margin-bottom: 10px;
-}
-
-/* --- project view --------------------------------------------------------- */
-
-/* One row of the rail's project list. */
-.row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 8px;
-  align-items: center;
-  padding: 8px 10px;
-  font: inherit;
-  text-align: left;
-  color: var(--text-dim);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.row:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.row[aria-current='true'] {
-  color: var(--text);
-  background: var(--bg2);
-  border-color: var(--line-lit);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.row__title {
-  overflow: hidden;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.row__priority {
-  grid-column: 1 / -1;
-  font-size: 11px;
-  letter-spacing: 0;
-  color: var(--text-mute);
-}
-
-.row__slug {
-  display: block;
-  color: var(--text-mute);
-}
-
-.detail {
-  min-width: 0;
-  padding: 20px 24px 40px;
-}
-
-.detail__head {
-  margin-bottom: 18px;
-}
-
-.detail__title {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.detail__intent {
-  margin: 6px 0 14px;
-  max-width: 74ch;
-  color: var(--text-dim);
-}
-
-/* Chat, lit while the manager's drawer is the one on screen — the same pressed tint the hire
-   avatars use, so the action row says what is open without a second kind of signal. */
-.detail__chat[aria-pressed='true'] {
-  color: var(--accent-hi);
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
-
-/* Out-specifies `.btn:hover`, which would otherwise wash the tint off under the pointer. */
-.detail__chat[aria-pressed='true']:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  border-color: var(--accent-hi);
-}
-
-/* The imported repository, under the intent: where the code came from and its pull request. */
-.detail__source {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin: -8px 0 14px;
-  font-size: 13px;
-  color: var(--text-dim);
-}
-
-.detail__source-link {
-  color: var(--text-dim);
-  text-decoration: none;
-  border-bottom: 1px solid var(--line-lit);
-}
-
-.detail__source-link:hover {
-  color: var(--text);
-}
-
-.hire {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 14px;
-  padding: 16px;
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.hire__row {
-  display: flex;
-  gap: 8px;
-}
-
-.hire__row .input {
-  flex: 1;
-  min-width: 0;
-}
-
-.hire__avatars {
-  display: flex;
-  gap: 8px;
-}
-
-.hire__avatar {
-  padding: 4px;
-  line-height: 0;
-  background: var(--bg0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.hire__avatar:hover {
-  border-color: var(--line-lit);
-}
-
-.hire__avatar[aria-pressed='true'] {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-}
-
-.hire__instructions {
-  resize: vertical;
-}
-
-/* --- org chart ------------------------------------------------------------ */
-
-.org {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 20px;
-}
-
-/* The trunk between two tiers. */
-.org__link {
-  width: 1px;
-  height: 16px;
-  background: var(--line-lit);
-}
-
-.org__group {
-  position: relative;
-  width: fit-content;
-  max-width: 100%;
-}
-
-/* The rail a multi-card tier hangs from is drawn a segment at a time, one per
-   card, so adjacent segments join into a rail — and a tier that wraps gets one
-   rail per row instead of a single rail the second row hangs off nothing. The
-   two ends stop at the outermost card centres. */
-.org__group--rail .card::after {
-  content: '';
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  right: -8px;
-  height: 1px;
-  background: var(--line-lit);
-}
-
-.org__group--rail .card:first-child::after {
-  left: 50%;
-}
-
-.org__group--rail .card:last-child::after {
-  right: 50%;
-}
-
-.org__tier {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  justify-content: center;
-}
-
-.card {
-  position: relative;
-  width: var(--card-w);
-}
-
-/* The stem from the rail down into the card. */
-.org__group--rail .card::before {
-  content: '';
-  position: absolute;
-  top: -8px;
-  left: 50%;
-  width: 1px;
-  height: 8px;
-  background: var(--line-lit);
-}
-
-.card__open {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  width: 100%;
-  padding: 12px;
-  font: inherit;
-  text-align: left;
-  color: var(--text);
-  background: var(--bg2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-button.card__open {
-  cursor: pointer;
-}
-
-button.card__open:hover {
-  background: var(--hover);
-  border-color: var(--line-lit);
-}
-
-.card--owner .card__open {
-  background: var(--bg1);
-  border-color: var(--line-lit);
-}
-
-.card--master .card__open,
-.card--assistant .card__open {
-  border-color: var(--line);
-}
-
-.card__avatar {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--text-dim);
-  background: var(--bg0);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-}
-
-.avatar {
-  display: block;
-  image-rendering: pixelated;
-}
-
-.card__text {
-  min-width: 0;
-}
-
-.card__name,
-.card__role,
-.card__reports {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card__name {
-  font-weight: 500;
-}
-
-.card__role {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.card__reports {
-  font-size: 11px;
-  color: var(--text-mute);
-}
-
-/* What the member is on right now, from the running turn. */
-.card__doing {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  font-size: 11px;
-  color: var(--text-mute);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.card__remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  font: inherit;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--text-dim);
-  background: var(--bg2);
-  border: 1px solid var(--line-lit);
-  border-radius: 50%;
-  cursor: pointer;
-}
-
-.card__remove:hover {
-  color: var(--text);
-  background: #b91c1c;
-  border-color: #b91c1c;
-}
-
-/* --- the four artifacts --------------------------------------------------- */
-
-/* The cards between the header and the chart: doors to a document, to the turn
-   in progress, and to the running app. They are the tallest thing on the page
-   that isn't the chart itself, and the only place the accent appears until one
-   of them is hovered. The track is auto-filled rather than fixed at four, so
-   the workbench's buttons can land beside the documents' without a reflow. */
-.artifacts {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
-  gap: 10px;
-  max-width: 1240px;
-  margin: 0 0 26px;
-}
-
-.artifact {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  align-items: flex-start;
-  min-height: 94px;
-  padding: 12px 14px;
-  font: inherit;
-  text-align: left;
-  color: var(--text);
-  background: var(--bg1);
-  border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.artifact:hover {
-  background: var(--bg2);
-  border-color: var(--accent);
-}
-
-.artifact__top {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.artifact__name {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-/* The one number the hub grades: the PRD's completeness. */
-.artifact__badge {
-  flex: none;
-  padding: 1px 7px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent-hi);
-  background: var(--accent-soft);
-  border-radius: 999px;
-}
-
-.artifact__caption {
-  font-size: 11px;
-  color: var(--text-mute);
-}
-
-/* One line of state, held to one line. */
-.artifact__hint {
-  max-width: 100%;
-  margin-top: auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-}
-
-/* Nothing in it yet: the card still stands, but it doesn't ask to be read. */
-.artifact--empty .artifact__name {
-  color: var(--text-dim);
-}
-
-.artifact--empty .artifact__hint {
-  color: var(--text-mute);
-}
-
-/* A turn is running: the hint is live, and the card says so with the working green. */
-.artifact--live .artifact__hint {
-  color: var(--text);
-}
-
-.artifact__live {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
-  font-size: 11px;
-  color: var(--green);
-}
-
-.artifact__live::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-/* The thin line under the header while a turn runs. It sits at a whisper of the
-   accent and lights up for a beat on each event — one transition per event, no
-   loop — so the owner can see the team is moving without reading anything. */
-.progress {
-  height: 2px;
-  margin: -8px 0 18px;
-  background: color-mix(in srgb, var(--accent) 38%, var(--line));
-  transition: background-color 320ms ease-out;
-}
-
-.progress--lit {
-  background: var(--accent-hi);
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .progress {
-    transition: none;
-  }
-}
-
-.detail__body {
-  min-width: 0;
-}
-
-/* --- documents ------------------------------------------------------------ */
-
-/* What can be done to the open document; the sheet's header already names it. */
-.doc__bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  justify-content: flex-end;
-  min-height: 28px;
-  margin-bottom: 14px;
-}
-
-/* The completeness strip: one chip per section the hub graded, score hard right.
-   Held to a measure near the document's own, so the view reads as one column
-   rather than a band stretched across the window with the score stranded at the
-   far end — and wide enough that the score stays on the chips' last line. */
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  max-width: 96ch;
-  padding: 10px 12px;
-  margin-bottom: 16px;
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.chip {
-  padding: 2px 9px;
-  font: inherit;
-  font-size: 11px;
-  color: var(--text-mute);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.chip:hover {
-  background: var(--hover);
-}
-
-/* Covered, thin, missing: filled accent, an amber outline, and a whisper. */
-.chip--filled {
-  color: var(--accent-hi);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-}
-
-.chip--thin {
-  color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
-}
-
-.chip--missing {
-  color: var(--text-mute);
-  border-style: dashed;
-}
-
-.chips__score {
-  margin-left: auto;
-  padding-left: 12px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-/* The drafter's open questions, until they are waved away. */
-.callout {
-  max-width: 72ch;
-  padding: 12px 14px;
-  margin-bottom: 18px;
-  background: var(--bg1);
-  border: 1px solid color-mix(in srgb, var(--amber) 32%, var(--line));
-  border-left: 2px solid var(--amber);
-  border-radius: var(--radius);
-}
-
-.callout__head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
-.callout__head h3 {
-  color: var(--amber);
-}
-
-.callout__close {
-  margin-left: auto;
-  padding: 0 6px;
-  font: inherit;
-  font-size: 15px;
-  line-height: 1;
-  color: var(--text-mute);
-  background: none;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.callout__close:hover {
-  color: var(--text);
-}
-
-.callout ul {
-  margin: 8px 0 0;
-  padding-left: 18px;
-  color: var(--text-dim);
-}
-
-.callout li {
-  margin-bottom: 4px;
-}
-
-/* A document with nothing in it yet: what is missing, why, and the one way forward. */
-.blank {
-  max-width: 60ch;
-  padding: 28px 0;
-}
-
-.blank__line {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-}
-
-.blank__hint {
-  margin: 6px 0 16px;
-  color: var(--text-mute);
-}
-
-.editor {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-width: 96ch;
-}
-
-.editor__area {
-  min-height: 60vh;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.6;
-  resize: vertical;
-}
-
-/* --- roadmap -------------------------------------------------------------- */
-
-.roadmap {
-  max-width: 96ch;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.milestone {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) max-content max-content;
-  gap: 4px 14px;
-  align-items: start;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
-  border-left: 2px solid transparent;
-}
-
-.milestone:last-child {
-  border-bottom: 0;
-}
-
-.milestone:hover {
-  background: var(--bg1);
-}
-
-/* The one being worked on wears the accent, the same way the selected row does. */
-.milestone--current {
-  background: var(--bg1);
-  border-left-color: var(--accent);
-}
-
-.milestone__order {
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-mute);
-}
-
-.milestone__text {
-  min-width: 0;
-}
-
-.milestone__title {
-  font-size: 13px;
-}
-
-/* Two lines of the summary; the rest is the milestone's own page to open. */
-.milestone__summary {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--text-dim);
-}
-
-.milestone__meta {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding-top: 1px;
-}
-
-.milestone__estimate {
-  font-size: 11px;
-  color: var(--text-mute);
-  white-space: nowrap;
-}
-
-/* What the last turn found when it checked a milestone: tests, then review. Two
-   small chips beside the status pill, and again on the panel's verify rows. */
-.verify {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 7px;
-  font-size: 11px;
-  line-height: 17px;
-  white-space: nowrap;
-  color: var(--text-mute);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-
-.verify--pass {
-  color: var(--green);
-  border-color: color-mix(in srgb, var(--green) 30%, var(--line));
-}
-
-.verify--fail {
-  color: var(--red);
-  border-color: color-mix(in srgb, var(--red) 34%, var(--line));
-}
-
-.verify--changes {
-  color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
-}
-
-.verify--skipped {
-  border-style: dashed;
-}
-
-.milestone__controls {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.milestone__moves {
-  display: flex;
-  gap: 4px;
-}
-
-.btn--icon {
-  width: 26px;
-  padding: 4px 0;
-  line-height: 1;
-  text-align: center;
-}
-
-/* --- docs ----------------------------------------------------------------- */
-
-.docs {
-  display: grid;
-  grid-template-columns: 210px minmax(0, 1fr);
-  gap: 0 24px;
-  align-items: start;
-}
-
-.docs__list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding-right: 16px;
-  border-right: 1px solid var(--line);
-}
-
-.docs__row {
-  padding: 6px 10px;
-  font: inherit;
-  overflow: hidden;
-  text-align: left;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  background: none;
-  border: 0;
-  border-left: 2px solid transparent;
-  border-radius: 0 var(--radius) var(--radius) 0;
-  cursor: pointer;
-}
-
-.docs__row:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.docs__row[aria-current='true'] {
-  color: var(--text);
-  background: var(--bg2);
-  border-left-color: var(--accent);
-}
-
-/* The decision log is pinned under the pages, and reads as a separate thing. */
-.docs__row--pinned {
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  border-radius: 0;
-}
-
-.docs__page {
-  min-width: 0;
-}
+/* Component styles that predate the redesign — rendered markdown, the drawer's live section, the
+   activity timeline, the docs shell, terminal and preview. They are written against the token
+   aliases in styles/tokens.css, and the files in styles/ (loaded after this one) re-dress them in
+   the new language. */
 
 /* --- rendered markdown ---------------------------------------------------- */
 
@@ -1514,185 +142,6 @@ button.card__open:hover {
 
 .md td {
   color: var(--text-dim);
-}
-
-/* --- computer page -------------------------------------------------------- */
-
-.computer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  gap: 16px;
-  height: 100%;
-  padding: 20px 24px;
-}
-
-.screen {
-  display: grid;
-  place-items: center;
-  min-height: 320px;
-  padding: 12px;
-  background: var(--bg0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.screen__frame {
-  max-width: 100%;
-  max-height: 100%;
-  border-radius: 3px;
-}
-
-.desk {
-  align-self: start;
-  padding: 14px 16px;
-  background: var(--bg1);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 12px;
-  margin: 12px 0;
-}
-
-.facts dt {
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-.facts dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-  color: var(--text);
-}
-
-.desk .actions {
-  margin: 12px 0;
-}
-
-.desk h3 {
-  margin-top: 12px;
-}
-
-.desk__queue {
-  margin-top: 4px;
-  color: var(--text-dim);
-  overflow-wrap: anywhere;
-}
-
-/* --- cluster / allocation ------------------------------------------------- */
-
-.cluster,
-.allocation {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px 24px;
-}
-
-/* The Nodes panel's title row: heading left, Add node right. */
-.cluster__head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.cluster__head h2 {
-  margin-bottom: 0;
-  margin-right: auto;
-}
-
-/* The install command an enrollment token belongs to, shown until the owner navigates away. */
-.addnode {
-  padding: 12px 14px;
-  margin-bottom: 12px;
-  background: var(--bg0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.addnode__row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.addnode__cmd {
-  flex: 1;
-  min-width: 0;
-}
-
-.addnode__note,
-.addnode__expiry {
-  margin-top: 8px;
-  color: var(--text-dim);
-}
-
-.addnode__expiry {
-  color: var(--text-mute);
-}
-
-/* What the cloud half of the cluster has cost, above the nodes table. */
-.cluster__spend {
-  margin: -4px 0 4px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-/* --- help ------------------------------------------------------------------ */
-
-.help {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 24px;
-  align-items: start;
-  padding: 20px 24px;
-}
-
-.help__toc {
-  position: sticky;
-  top: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.help__toc a {
-  padding: 4px 0;
-  color: var(--text-dim);
-  text-decoration: none;
-}
-
-.help__toc a:hover {
-  color: var(--text);
-}
-
-.help__toc a.help__toc--sub {
-  padding-left: 14px;
-  font-size: 12px;
-  color: var(--text-mute);
-}
-
-.help__body {
-  max-width: 760px;
-}
-
-@media (max-width: 900px) {
-  .help {
-    display: block;
-  }
-
-  .help__toc {
-    position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    margin-bottom: 16px;
-  }
 }
 
 /* --- drawer --------------------------------------------------------------- */
@@ -2135,280 +584,6 @@ button.card__open:hover {
   margin: 4px 0 8px;
   padding-left: 18px;
   color: var(--text-dim);
-}
-
-/* --- sheet: an artifact over the org chart --------------------------------- */
-
-/* PRD, Roadmap and Docs open here rather than in place, so the hierarchy is
-   never traded away for a document. Near-full-screen, one scrim, one way out. */
-.sheet {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.62);
-}
-
-.sheet__box {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-columns: minmax(0, 1fr);
-  width: min(1240px, 96vw);
-  height: min(880px, 92vh);
-  background: var(--bg1);
-  border: 1px solid var(--line-lit);
-  border-radius: 8px;
-  box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.85);
-}
-
-/* "Chat to adjust" takes a column of the sheet rather than covering it, so the
-   document and the conversation about it are readable at once. */
-.sheet__box--chat {
-  grid-template-columns: minmax(0, 1fr) min(380px, 34%);
-}
-
-.sheet__head {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.sheet__head h2 {
-  font-size: 15px;
-}
-
-.sheet__sub {
-  margin-top: 3px;
-  color: var(--text-mute);
-}
-
-.sheet__body {
-  min-width: 0;
-  min-height: 0;
-  padding: 18px 22px 28px;
-  overflow: auto;
-}
-
-.sheet__column {
-  max-width: 96ch;
-  margin: 0 auto;
-}
-
-.sheet__chat {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--line);
-}
-
-/* A view that manages its own columns (the Activity panel) takes the whole body,
-   unscrolled and unpadded. */
-.sheet__box--wide .sheet__body {
-  display: flex;
-  padding: 0;
-  overflow: hidden;
-}
-
-.sheet__box--wide .sheet__column {
-  display: flex;
-  flex: 1;
-  max-width: none;
-  min-width: 0;
-  min-height: 0;
-  margin: 0;
-}
-
-/* The same drawer the org chart opens, docked into the sheet's second column. */
-.sheet__chat .drawer {
-  position: static;
-  width: 100%;
-  min-height: 0;
-  padding: 14px 16px;
-  background: none;
-  border-left: 0;
-  box-shadow: none;
-}
-
-/* --- code: the workspace screen -------------------------------------------- */
-
-/* Tabs across the top, then either the two file columns or the map. The guide
-   takes the sheet's own chat column, so the screen reads as three. */
-.code {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-/* `hidden` has to win over the display rules below, or a hidden pane still lays out. */
-.code [hidden] {
-  display: none;
-}
-
-.code__bar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.code__tabs {
-  display: flex;
-  gap: 2px;
-}
-
-.code__tab {
-  padding: 5px 12px;
-  font: inherit;
-  color: var(--text-dim);
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-}
-
-.code__tab:hover {
-  color: var(--text);
-}
-
-.code__tab[aria-current='true'] {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.code__panes {
-  display: grid;
-  flex: 1;
-  grid-template-columns: 240px minmax(0, 1fr);
-  min-width: 0;
-  min-height: 0;
-}
-
-.code__tree {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 8px 0;
-  overflow: auto;
-  border-right: 1px solid var(--line);
-}
-
-.code__row {
-  display: flex;
-  gap: 10px;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 3px 10px 3px 8px;
-  font-family: var(--mono);
-  font-size: 12px;
-  text-align: left;
-  color: var(--text-dim);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.code__row:hover {
-  color: var(--text);
-  background: var(--hover);
-}
-
-.code__row[aria-current='true'] {
-  color: var(--text);
-  background: var(--bg2);
-}
-
-.code__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.code__size {
-  flex: none;
-  font-size: 11px;
-  color: var(--text-mute);
-}
-
-.code__view {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-}
-
-.code__head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.code__path {
-  flex: 1;
-  overflow: hidden;
-  font-family: var(--mono);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-}
-
-.code__dirty {
-  color: var(--amber);
-}
-
-.code__note {
-  padding: 18px 16px;
-  color: var(--text-mute);
-}
-
-/* CodeMirror fills what is left, and scrolls inside it rather than growing the sheet. */
-.code__editor {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.code__editor .cm-editor {
-  height: 100%;
-  font-size: 12px;
-}
-
-.code__editor .cm-editor.cm-focused {
-  outline: none;
-}
-
-.code__map {
-  flex: 1;
-  max-width: 78ch;
-  padding: 20px 22px;
-  margin: 0 auto;
-  overflow: auto;
-}
-
-/* A `path:line` citation. The renderer marks every one, but only the two places that can actually
-   open a file — the Map tab and the guide's replies — look clickable; the same span in the PRD or
-   a docs page is left reading as the code span it is. */
-.code__map .md__ref,
-.sheet__chat .chat__said .md__ref {
-  cursor: pointer;
-  border-bottom: 1px solid var(--line-lit);
-}
-
-.code__map .md__ref:hover code,
-.sheet__chat .chat__said .md__ref:hover code {
-  color: var(--accent-hi);
 }
 
 /* --- activity: the turn panel --------------------------------------------- */
@@ -2895,241 +1070,587 @@ button.card__open:hover {
   color: var(--text-dim);
 }
 
-/* --- modal: the New Project wizard ---------------------------------------- */
+/* --- docs shell ------------------------------------------------------------
+   One documentation layout for the Docs sheet, the PRD sheet and Help: pages on
+   the left, the document in the middle at a reading measure, its own headings on
+   the right. This is the one place in the console where type is allowed to get
+   large — a document is read, not scanned — so the scale here is its own, scoped
+   to .doc-md, and the 13px interface around it is untouched.
 
-.modal {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.62);
+   The breakpoints are container queries: the sheet loses a third of its width the
+   moment the chat docks beside it, and the layout answers to the shell's width,
+   not the window's. */
+
+/* The shell brings its own measure, so a host that centres a reading column
+   (the sheet's body) stands down for it. */
+.docshell-host {
+  max-width: none;
 }
 
-.modal__box {
+/* The queried container. The grid is its child, because a container query styles
+   a container's descendants and never the container itself. */
+.docshell-box {
+  container-type: inline-size;
+}
+
+.docshell {
+  display: grid;
+  grid-template-areas: 'rail main toc';
+  grid-template-columns: 232px minmax(0, 1fr) 210px;
+  gap: 0 34px;
+  align-items: start;
+}
+
+/* --- docs shell: the rail -------------------------------------------------- */
+
+.docshell__rail {
+  position: sticky;
+  top: 0;
+  grid-area: rail;
+  max-height: calc(100vh - 150px);
+  padding-right: 18px;
+  overflow: auto;
+  background: var(--doc-rail-bg);
+  border-right: 1px solid var(--doc-line);
+}
+
+/* Open at full width (the script holds it so), a disclosure when the shell is
+   narrow enough that the rail has to fold away. */
+.docshell__rail-head,
+.docshell__toc-head {
+  display: none;
+  margin-bottom: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+  cursor: pointer;
+}
+
+.docshell__filter {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 5px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--doc-code-bg);
+  border: 1px solid var(--doc-line);
+  border-radius: var(--radius);
+}
+
+.docshell__filter::placeholder {
+  color: var(--doc-mute);
+}
+
+.docshell__filter:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.docshell__groups {
   display: flex;
   flex-direction: column;
-  width: min(680px, 94vw);
-  max-height: min(86vh, 760px);
-  padding: 20px 22px;
-  background: var(--bg1);
-  border: 1px solid var(--line-lit);
-  border-radius: 8px;
-  box-shadow: 0 24px 64px -24px rgba(0, 0, 0, 0.85);
+  gap: 10px;
 }
 
-.modal__head {
+.docshell__group-head {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 3px 0;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--doc-mute);
+  background: none;
+  border: 0;
+  cursor: pointer;
 }
 
-.modal__head h2 {
-  font-size: 15px;
+.docshell__group-head:hover {
+  color: var(--doc-heading);
 }
 
-.modal__sub {
-  margin-top: 3px;
-  color: var(--text-mute);
+.docshell__group-head svg {
+  flex: none;
+  transition: transform 0.12s ease;
 }
 
-.modal__body {
-  flex: 1;
-  min-height: 0;
-  padding: 16px 0;
-  overflow-y: auto;
+.docshell__group-head[aria-expanded='true'] svg {
+  transform: rotate(90deg);
 }
 
-.modal__foot {
+.docshell__group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 4px;
+}
+
+.docshell__link {
+  padding: 5px 10px;
+  font: inherit;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--doc-text);
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  cursor: pointer;
+}
+
+.docshell__link:hover {
+  color: var(--doc-heading);
+  background: var(--hover);
+}
+
+.docshell__link[aria-current='page'] {
+  font-weight: 500;
+  color: var(--doc-current);
+  background: var(--doc-current-bg);
+  border-left-color: var(--doc-current-line);
+}
+
+.docshell__none {
+  padding: 6px 2px;
+  color: var(--doc-mute);
+}
+
+/* --- docs shell: the document ---------------------------------------------- */
+
+.docshell__main {
+  grid-area: main;
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.docshell__crumbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
-  justify-content: flex-end;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--doc-mute);
 }
 
-/* Empty until something goes wrong, and it holds its line either way so the
-   buttons don't jump when a complaint appears. */
-.modal__error {
-  flex: 1;
-  min-width: 0;
-  min-height: 1.5em;
-  overflow-wrap: anywhere;
-  color: transparent;
-}
-
-.modal__error--on {
-  color: var(--red);
-}
-
-.modal__note {
-  margin-bottom: 10px;
-  color: var(--text-dim);
-}
-
-.wizard {
+.docshell__crumb {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
 }
 
-/* Name and slug share a line: they are one decision, and the card stays short. */
-.wizard__row {
+.docshell__crumb--home {
+  cursor: pointer;
+}
+
+.docshell__crumb--home:hover {
+  color: var(--doc-current);
+}
+
+.docshell__crumbs .docshell__crumb:last-child {
+  color: var(--doc-text);
+}
+
+.docshell__sep {
+  color: var(--doc-line-lit);
+}
+
+.docshell__title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: baseline;
+  margin-bottom: 22px;
+}
+
+.docshell__title h1 {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--doc-heading);
+}
+
+.docshell__badge {
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--doc-current);
+  background: var(--doc-current-bg);
+  border: 1px solid color-mix(in srgb, var(--doc-current-line) 45%, transparent);
+  border-radius: 999px;
+}
+
+/* One long document read as sections: the h2 rule already separates them. */
+.docshell__section + .docshell__section {
+  margin-top: 4px;
+}
+
+/* --- docs shell: the reading scale ----------------------------------------- */
+
+.doc-md {
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--doc-text);
+}
+
+.doc-md :is(h1, h2, h3, h4) {
+  scroll-margin-top: 18px;
+  color: var(--doc-heading);
+}
+
+.doc-md h1 {
+  margin: 34px 0 12px;
+  font-size: 1.85rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.doc-md h2 {
+  margin: 44px 0 14px;
+  padding-top: 22px;
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  border-top: 1px solid var(--doc-line);
+  border-bottom: 0;
+}
+
+.doc-md > :first-child:is(h1, h2) {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.docshell__section:first-child > h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.doc-md h3 {
+  margin: 28px 0 8px;
+  font-size: 1.16rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.doc-md h4 {
+  margin: 22px 0 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--doc-text);
+}
+
+.doc-md p {
+  margin: 0 0 16px;
+}
+
+.doc-md ul,
+.doc-md ol {
+  margin: 0 0 16px;
+  padding-left: 24px;
+}
+
+.doc-md li {
+  margin-bottom: 7px;
+}
+
+.doc-md li::marker {
+  color: var(--doc-mute);
+}
+
+.doc-md code {
+  font-size: 0.86em;
+}
+
+.doc-md pre {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--doc-code-bg);
+  border: 1px solid var(--doc-line);
+  border-radius: 8px;
+}
+
+.doc-md blockquote {
+  margin: 0 0 18px;
+  padding: 2px 0 2px 16px;
+  font-style: italic;
+  border-left: 3px solid var(--doc-line-lit);
+}
+
+.doc-md hr {
+  margin: 30px 0;
+}
+
+/* A block box so a wide table scrolls inside the reading column instead of
+   widening it — the guide's troubleshooting table is five columns of prose. */
+.doc-md table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 0 20px;
+  overflow-x: auto;
+  font-size: 13px;
+  border: 1px solid var(--doc-line);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.doc-md th,
+.doc-md td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--doc-line);
+}
+
+.doc-md thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--doc-heading);
+  background: var(--doc-code-bg);
+  white-space: nowrap;
+}
+
+.doc-md tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* --- docs shell: admonitions ----------------------------------------------- */
+
+.adm {
+  --adm: var(--adm-info);
+
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  color: var(--doc-text);
+  background: color-mix(in srgb, var(--adm) 9%, transparent);
+  border-left: 3px solid var(--adm);
+  border-radius: 0 8px 8px 0;
+}
+
+.adm--tip { --adm: var(--adm-tip); }
+.adm--note { --adm: var(--adm-note); }
+.adm--warning { --adm: var(--adm-warning); }
+.adm--danger { --adm: var(--adm-danger); }
+
+.adm__head {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--adm);
+}
+
+.adm--note .adm__head {
+  color: var(--doc-heading);
+}
+
+.adm__icon {
+  flex: none;
+}
+
+.adm__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* --- docs shell: prev / next ------------------------------------------------ */
+
+.docshell__pager {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 12px;
+  max-width: 72ch;
+  margin-top: 44px;
+  padding-top: 22px;
+  border-top: 1px solid var(--doc-line);
 }
 
-.field {
+.docshell__step {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  min-width: 0;
-}
-
-.field__label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-dim);
-}
-
-.field__note {
-  min-height: 1.4em;
-  font-size: 11px;
-  color: var(--amber);
-}
-
-/* Two mutually exclusive ways to start, drawn as one segmented control. */
-.seg {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 2px;
-  background: var(--bg0);
-  border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
-}
-
-.seg__option {
-  padding: 4px 12px;
+  gap: 3px;
+  padding: 10px 14px;
   font: inherit;
-  color: var(--text-dim);
+  text-align: left;
+  color: var(--doc-heading);
   background: none;
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.seg__option:hover {
-  color: var(--text);
-}
-
-.seg__option[aria-checked='true'] {
-  color: #fff;
-  background: var(--accent-fill);
-}
-
-.wizard__source {
-  resize: vertical;
-  line-height: 1.6;
-}
-
-/* The draft as it is written. Monospace, because it is markdown, not prose yet. */
-.stream {
-  max-height: 46vh;
-  padding: 12px 14px;
-  margin: 0;
-  overflow-y: auto;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  color: var(--text-dim);
-  background: var(--bg0);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-/* --- toast ---------------------------------------------------------------- */
-
-.toast {
-  position: fixed;
-  right: 20px;
-  bottom: 20px;
-  /* Over the sheet: a turn ends, or a roadmap lands, while the owner is reading one. */
-  z-index: 50;
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  max-width: min(520px, 60vw);
-  max-height: 40vh;
-  padding: 12px 14px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  color: var(--text);
-  background: var(--bg2);
-  border: 1px solid var(--line-lit);
-  border-radius: var(--radius);
-  box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
-}
-
-.toast--error {
-  border-color: color-mix(in srgb, var(--red) 45%, var(--line-lit));
-}
-
-.toast__close {
-  margin-left: auto;
-  padding: 0 2px;
-  font: inherit;
-  line-height: 1;
-  color: var(--text-mute);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.toast__close:hover {
-  color: var(--text);
-}
-
-/* --- login ---------------------------------------------------------------- */
-
-.login {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: grid;
-  place-items: center;
-  background: var(--bg0);
-}
-
-.login__box {
-  width: min(340px, 86vw);
-  padding: 24px;
-  background: var(--bg1);
-  border: 1px solid var(--line);
+  border: 1px solid var(--doc-line);
   border-radius: 8px;
-  box-shadow: 0 16px 48px -20px rgba(0, 0, 0, 0.8);
+  cursor: pointer;
 }
 
-.login__box h2 {
-  margin-bottom: 4px;
-  font-size: 14px;
+.docshell__step:hover {
+  border-color: var(--doc-current-line);
 }
 
-.login__hint {
-  margin-bottom: 16px;
-  color: var(--text-dim);
+.docshell__step--next {
+  text-align: right;
+  align-items: flex-end;
 }
 
-.login__error {
-  margin-top: 10px;
-  color: var(--red);
+.docshell__step-way {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+}
+
+.docshell__step-title {
+  font-weight: 500;
+  color: var(--doc-current);
+}
+
+/* --- docs shell: on this page ----------------------------------------------- */
+
+.docshell__toc {
+  position: sticky;
+  top: 0;
+  grid-area: toc;
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+}
+
+.docshell__toc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 1px solid var(--doc-line);
+}
+
+.docshell__toc-list::before {
+  content: 'On this page';
+  padding: 0 0 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--doc-mute);
+}
+
+.docshell__toc-link {
+  padding: 3px 0 3px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--doc-text);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  margin-left: -1px;
+}
+
+.docshell__toc-link--sub {
+  padding-left: 24px;
+  color: var(--doc-mute);
+}
+
+.docshell__toc-link:hover {
+  color: var(--doc-heading);
+}
+
+.docshell__toc-link.is-current {
+  color: var(--doc-current);
+  border-left-color: var(--doc-current-line);
+}
+
+/* --- docs shell: narrower than a desk --------------------------------------- */
+
+/* The contents list folds into a disclosure above the document; the rail keeps
+   its column. */
+@container (max-width: 1100px) {
+  .docshell {
+    grid-template-areas: 'rail toc' 'rail main';
+    grid-template-columns: 224px minmax(0, 1fr);
+    gap: 0 28px;
+  }
+
+  .docshell__toc {
+    position: static;
+    max-height: none;
+    margin-bottom: 20px;
+    padding: 10px 14px;
+    border: 1px solid var(--doc-line);
+    border-radius: 8px;
+  }
+
+  .docshell__toc-head {
+    display: list-item;
+    margin-bottom: 0;
+  }
+
+  .docshell__toc[open] .docshell__toc-head {
+    margin-bottom: 8px;
+  }
+
+  .docshell__toc-list {
+    border-left: 0;
+  }
+
+  .docshell__toc-list::before {
+    display: none;
+  }
+}
+
+/* A phone: everything stacks, and the rail is a drawer at the top. */
+@container (max-width: 800px) {
+  .docshell {
+    grid-template-areas: 'rail' 'toc' 'main';
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .docshell__rail {
+    position: static;
+    max-height: none;
+    margin-bottom: 18px;
+    padding: 0 0 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--doc-line);
+  }
+
+  .docshell__rail-head {
+    display: list-item;
+    margin-bottom: 0;
+  }
+
+  .docshell__rail[open] .docshell__rail-head {
+    margin-bottom: 12px;
+  }
+
+  .docshell__title h1 {
+    font-size: 1.9rem;
+  }
+
+  .docshell__pager {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docshell__group-head svg {
+    transition: none;
+  }
 }
 
 /* The Terminal sheet (FR-B2). A bar that stays empty until something is wrong, the screen taking

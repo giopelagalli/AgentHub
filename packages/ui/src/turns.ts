@@ -249,7 +249,8 @@ const VERBS: Array<[RegExp, string]> = [
   [/^(write|create|save|put)$/, 'writing'],
   [/^(read|cat|open|view|get)$/, 'reading'],
   [/^(bash|shell|sh|exec|run|command|cmd|test)$/, 'running'],
-  [/^(search|grep|glob|find|list|ls)$/, 'searching'],
+  [/^(list|ls|dir|tree)$/, 'listing'],
+  [/^(search|grep|glob|find)$/, 'searching'],
   [/^(delegate|subagent|dispatch|task|agent)$/, 'delegating'],
   [/^(fetch|http|browse|navigate|curl)$/, 'fetching'],
   [/^(update|set|mark|move)$/, 'updating'],
@@ -264,16 +265,43 @@ function verbFor(tool: string): string {
   return `using ${tool}`;
 }
 
-/** The one argument worth naming: a path or command if the args carry one, else the args flat. */
+/** A string, or an array of strings read as one command line; anything else is not a subject. */
+function words(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (Array.isArray(value) && value.length && value.every((v) => typeof v === 'string')) return value.join(' ').trim();
+  return '';
+}
+
+/**
+ * The one argument worth naming: a path or command if the args carry one. Arguments often arrive
+ * as the JSON text the model wrote (`{"path":"src/a.mjs"}`), so text that parses as an object is
+ * read as that object — a raw brace never reaches the sentence. Arguments with nothing nameable in
+ * them leave the verb alone.
+ */
 function subjectOf(args: unknown): string {
-  if (args && typeof args === 'object' && !Array.isArray(args)) {
-    const record = args as Record<string, unknown>;
-    for (const key of ['path', 'file', 'file_path', 'filename', 'command', 'cmd', 'query', 'pattern', 'url', 'task']) {
-      const value = record[key];
-      if (typeof value === 'string' && value.trim()) return value;
+  if (typeof args === 'string') {
+    const text = args.trim();
+    if (text.startsWith('{') || text.startsWith('[')) {
+      try {
+        return subjectOf(JSON.parse(text));
+      } catch {
+        return text;
+      }
     }
-    const first = Object.values(record).find((v) => typeof v === 'string' && v.trim());
-    if (typeof first === 'string') return first;
+    return text;
+  }
+  if (Array.isArray(args)) return words(args);
+  if (args && typeof args === 'object') {
+    const record = args as Record<string, unknown>;
+    for (const key of ['path', 'file', 'file_path', 'filename', 'dir', 'directory', 'command', 'cmd', 'query', 'pattern', 'url', 'task']) {
+      const value = words(record[key]);
+      if (value) return value;
+    }
+    for (const value of Object.values(record)) {
+      const text = words(value);
+      if (text) return text;
+    }
+    return '';
   }
   return argsText(args);
 }

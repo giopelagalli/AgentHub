@@ -1,56 +1,42 @@
 import guide from '../../../../docs/guide.md?raw';
 import { el } from '../dom.js';
-import { headingId, renderMarkdown } from '../markdown.js';
+import { mountDocShell, splitSections } from '../panels/docshell.js';
 import type { Store } from '../store.js';
+import { toolbar } from '../toolbar.js';
 
 /**
- * The Help page: the user guide, rendered GitBook-style — a table of contents built from its
- * `##`/`###` headings on the left, the guide itself on the right. The guide ships in the bundle
- * (a raw import), so there is nothing to fetch and nothing that can fail to load.
+ * The Help page: the user guide in the docs shell, so it reads like the documentation site it is.
+ *
+ * The guide is one document, not a bundle of pages, so the shell runs in `scroll` mode: its `##`
+ * chapters become the left rail's entries and clicking one jumps to it, but the whole guide stays
+ * on screen as one continuous read. The guide ships in the bundle (a raw import), so there is
+ * nothing to fetch and nothing that can fail to load.
  */
 
-const FENCE = /^\s*```/;
-const TOC_HEADING = /^(##|###)[ \t]+(.*)$/;
+/** The guide's own contents list, still built the way the rest of the app expects it. */
+export { docToc as guideToc } from '../panels/docshell.js';
 
-/** The `##`/`###` headings in `markdown`, in document order, skipping any fenced code block. */
-export function guideToc(markdown: string): { id: string; level: 2 | 3; text: string }[] {
-  const entries: { id: string; level: 2 | 3; text: string }[] = [];
-  let inFence = false;
-  for (const line of markdown.replace(/\r\n?/g, '\n').split('\n')) {
-    if (FENCE.test(line)) { inFence = !inFence; continue; }
-    if (inFence) continue;
-    const heading = TOC_HEADING.exec(line);
-    if (!heading) continue;
-    const text = heading[2].trim();
-    entries.push({ id: headingId(text), level: heading[1].length as 2 | 3, text });
-  }
-  return entries;
-}
-
-/** Renders the guide into `host`: the table of contents on the left, the document on the right. */
-export function mountHelp(host: HTMLElement, store: Store): () => void {
+export function mountHelp(host: HTMLElement, _store: Store): () => void {
+  const view = el('div', 'view');
+  const bar = toolbar();
+  bar.leading.appendChild(el('h1', 'toolbar__title', 'Help'));
+  const body = el('div', 'view__body');
   const page = el('div', 'help');
+  body.appendChild(page);
+  view.append(bar.root, body);
+  host.appendChild(view);
 
-  const nav = el('nav', 'help__toc');
-  nav.setAttribute('aria-label', 'Guide contents');
-
-  const body = el('article', 'help__body md');
-  body.innerHTML = renderMarkdown(guide);
-
-  for (const heading of guideToc(guide)) {
-    const link = el('a', heading.level === 3 ? 'help__toc--sub' : undefined, heading.text);
-    link.href = `#${heading.id}`;
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-      body.querySelector(`[id="${CSS.escape(heading.id)}"]`)?.scrollIntoView({ block: 'start' });
-    });
-    nav.appendChild(link);
-  }
-
-  page.append(nav, body);
-  host.appendChild(page);
+  const shell = mountDocShell(page, {
+    pages: splitSections(guide).map((section) => ({ ...section, section: 'Guide' })),
+    current: '',
+    title: 'Guide',
+    mode: 'scroll',
+    // Scrolling owns the current section in this mode; the page has nothing to keep.
+    onNavigate: () => {},
+  });
 
   return () => {
+    shell.destroy();
     host.replaceChildren();
   };
 }

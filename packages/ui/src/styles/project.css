@@ -1,0 +1,705 @@
+/* The project page: the toolbar's own parts, the bar under it, the chat pane, and the Overview. */
+
+/* --- toolbar ---------------------------------------------------------------------------------- */
+
+.project .toolbar__leading .dot {
+  margin-left: 2px;
+}
+
+.project__run {
+  min-width: 92px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* While a turn runs the primary is a status, not a button: a quiet fill and a turning ring. */
+.project__run--running,
+.project__run--running:disabled {
+  gap: 8px;
+  color: var(--label);
+  background: var(--fill);
+  box-shadow: none;
+  cursor: default;
+}
+
+.project__spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* The thin line along the toolbar's bottom edge while a turn runs. It sits at a whisper of the
+   accent and lights for a beat on each event, so the team can be seen moving without reading. */
+.progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  transition: background-color 320ms ease-out;
+}
+
+.progress--lit {
+  background: var(--accent);
+  transition: none;
+}
+
+/* --- the bar under the toolbar ---------------------------------------------------------------- */
+
+/* Sticky offsets count from the scroller's padding edge, which already sits under the toolbar. */
+.subbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 0 var(--sp-5);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom: 1px solid var(--sep);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.8);
+}
+
+.subbar__lead,
+.subbar__actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  min-width: 0;
+}
+
+.subbar__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* A view's own bar, handed to the sub-bar: it loses its own frame and sits in a row. */
+.subbar__actions > * {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.subbar .seg__option {
+  min-height: 22px;
+  padding: 2px 12px;
+  font-size: var(--fs-sm);
+}
+
+/* --- fill sections: the ones that manage their own scrolling ---------------------------------- */
+
+.view__body--fill {
+  display: flex;
+  flex-direction: column;
+}
+
+.fill {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* --- the pane: a conversation beside the document --------------------------------------------- */
+
+.project {
+  --pane-w: 380px;
+}
+
+.project__pane {
+  position: absolute;
+  top: var(--toolbar-h);
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  width: var(--pane-w);
+  background: var(--bg);
+  border-left: 1px solid var(--sep);
+  animation: pane-in var(--dur) var(--ease);
+}
+
+@keyframes pane-in {
+  from { opacity: 0; transform: translateX(12px); }
+}
+
+.project--pane > .view__body {
+  right: var(--pane-w);
+}
+
+/* A chat in the pane is the drawer's content, laid flat into the column. */
+.project__pane .drawer {
+  position: static;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
+@media (max-width: 1000px) {
+  .project--pane > .view__body {
+    right: 0;
+  }
+
+  .project__pane {
+    width: min(var(--pane-w), 100%);
+    box-shadow: var(--shadow-sheet);
+  }
+}
+
+/* --- an empty page ---------------------------------------------------------------------------- */
+
+.empty-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: center;
+  min-height: 60%;
+  padding: var(--sp-7) var(--sp-5);
+  text-align: center;
+}
+
+.empty-page__title {
+  font-size: var(--fs-title);
+}
+
+.empty-page__line {
+  max-width: 44ch;
+  font-size: var(--fs-read);
+  color: var(--label-2);
+}
+
+.empty-page .btn {
+  margin-top: var(--sp-2);
+}
+
+/* --- the Overview ----------------------------------------------------------------------------- */
+
+.view__content--narrow {
+  max-width: 880px;
+}
+
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.ov__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ov__intent {
+  max-width: var(--measure);
+  font-size: var(--fs-read);
+  line-height: 1.55;
+  color: var(--label-2);
+}
+
+/* The repository an imported project came from, and its pull request. */
+.detail__source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  align-items: center;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.detail__source-link {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+}
+
+/* The Now block: the one container on the page, because it is the one thing to read first. */
+.ov__now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-5) 22px;
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.ov__eyebrow {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--label-3);
+}
+
+.ov__milestone {
+  margin-top: -6px;
+  font-family: var(--display);
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.ov__live {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  color: var(--label-2);
+}
+
+.ov__livetext {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ov__live .num {
+  color: var(--label-3);
+}
+
+.ov__progress {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.ov__track {
+  flex: 1;
+  height: 6px;
+  overflow: hidden;
+  background: var(--fill);
+  border-radius: 999px;
+}
+
+.ov__fill {
+  height: 100%;
+  min-width: 6px;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 400ms var(--ease);
+}
+
+.ov__count {
+  flex: none;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.ov__briefing {
+  display: -webkit-box;
+  max-width: var(--measure);
+  overflow: hidden;
+  font-size: var(--fs-read);
+  line-height: 1.55;
+  color: var(--label);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ov__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 2px 0 0;
+}
+
+.ov__facts dt {
+  color: var(--label-3);
+}
+
+.ov__facts dd {
+  margin: 0;
+  color: var(--label);
+}
+
+.ov__blocker {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.ov__blocker .dot {
+  transform: translateY(-1px);
+}
+
+.ov__nowaction {
+  align-self: flex-start;
+  margin-top: var(--sp-1);
+}
+
+/* The invitation, while there is nothing yet to show: one sentence, one button. */
+.ov__invite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: 40px var(--sp-5) 36px;
+  text-align: center;
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.ov__inviteicon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 12px;
+}
+
+.ov__inviteline {
+  max-width: 40ch;
+  font-size: var(--fs-h3);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ov__invite .btn {
+  margin-top: var(--sp-1);
+}
+
+.ov__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.ov__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ov__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* The team as a row of faces. */
+.team {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.member {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  width: 104px;
+  padding: var(--sp-2) var(--sp-1) 10px;
+  font: inherit;
+  color: var(--label);
+  text-align: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-lg);
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+
+.member:hover {
+  background: var(--hover);
+}
+
+.member__tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 6px;
+  color: var(--label-2);
+  background: var(--bg-grouped);
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--sep);
+}
+
+.member__tile svg:not(.icon) {
+  image-rendering: pixelated;
+}
+
+.member__dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 12px;
+  height: 12px;
+  border: 2.5px solid var(--bg);
+  box-sizing: content-box;
+}
+
+.member__name {
+  max-width: 100%;
+  overflow: hidden;
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.member__role {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.member__doing {
+  display: -webkit-box;
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  line-height: 1.35;
+  color: var(--green);
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.member--add .member__tile {
+  color: var(--label-3);
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--sep-strong);
+}
+
+.member--add:hover .member__tile {
+  color: var(--accent-text);
+}
+
+.member--add .member__name {
+  color: var(--label-2);
+}
+
+.ov__also {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.ov__also > span {
+  margin-right: 4px;
+}
+
+.ov__alsolink {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 8px 3px 4px;
+  font: inherit;
+  color: var(--label-2);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ov__alsolink:hover {
+  color: var(--label);
+  background: var(--hover);
+}
+
+.ov__alsolink svg {
+  image-rendering: pixelated;
+}
+
+/* Recent activity: lines with hairlines between them. */
+.ov__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.ov__turn {
+  display: grid;
+  grid-template-columns: auto 52px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  font: inherit;
+  color: var(--label);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+
+.ov__turn {
+  position: relative;
+}
+
+.ov__turn + .ov__turn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 10px;
+  left: 10px;
+  height: 1px;
+  background: var(--sep);
+}
+
+.ov__turn:hover {
+  background: var(--hover);
+}
+
+.ov__turn:hover::before,
+.ov__turn:hover + .ov__turn::before {
+  opacity: 0;
+}
+
+.ov__turntime,
+.ov__turnmeta {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.ov__turntext {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* In this project: an inset grouped list. */
+.glance {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.glance__row {
+  display: grid;
+  grid-template-columns: auto 120px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px 0 16px;
+  font: inherit;
+  color: var(--label);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.glance__row {
+  position: relative;
+}
+
+/* The hairline between rows starts where the text does, as an inset grouped list's does. */
+.glance__row + .glance__row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 44px;
+  height: 1px;
+  background: var(--sep);
+}
+
+.glance__row:hover {
+  background: var(--hover);
+}
+
+.glance__row .icon {
+  color: var(--label-2);
+}
+
+.glance__row .icon:last-child {
+  color: var(--label-4);
+}
+
+.glance__label {
+  font-weight: 500;
+}
+
+.glance__value {
+  overflow: hidden;
+  color: var(--label-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.glance__row--empty .glance__value {
+  color: var(--label-3);
+}
+
+.ov__cost {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+@media (max-width: 760px) {
+  .overview {
+    gap: 32px;
+  }
+
+  .ov__now,
+  .ov__invite {
+    padding: var(--sp-4);
+  }
+
+  .member {
+    width: 84px;
+  }
+
+  .ov__turn {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .ov__turntime {
+    display: none;
+  }
+
+  .glance__row {
+    grid-template-columns: auto 96px minmax(0, 1fr) auto;
+  }
+
+  .subbar {
+    flex-wrap: wrap;
+    gap: 6px var(--sp-3);
+    padding: 6px var(--sp-3);
+  }
+
+  .subbar__actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+  }
+
+  .subbar__actions:empty {
+    display: none;
+  }
+
+  .project__pane {
+    top: calc(48px + 36px);
+  }
+}

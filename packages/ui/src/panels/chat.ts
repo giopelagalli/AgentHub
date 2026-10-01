@@ -1,6 +1,8 @@
 import type { ChatMessage, TeamMemberView } from '@agenthub/shared';
 import { getJson } from '../api.js';
 import { latestWorkMessages } from '../activity.js';
+import { avatarSvg } from '../avatars.js';
+import { icon } from '../icons.js';
 import { renderMarkdown } from '../markdown.js';
 import { parseSseFrames } from '../sse.js';
 import { mountNow, type NowDeps, type NowHandle } from './now.js';
@@ -19,6 +21,8 @@ export interface ChatTarget {
   name: string;
   /** Line under the heading — who this agent is. */
   subtitle?: string;
+  /** Their face beside the heading — an `AVATARS` id. */
+  avatar?: string;
   /** SSE route this drawer posts `{ text }` to. */
   endpoint: string;
   /** Route the stored history is read from (`{ messages }`); omitted where there is none to read. */
@@ -60,12 +64,20 @@ interface PendingAction {
   description: string;
 }
 
-/** The header every drawer wears: a title, a subtitle, and the close button. */
-export function drawerHeader(title: string, subtitle: string | undefined, close: () => void): HTMLElement {
+/** The header every drawer wears: their face, a title, a subtitle, and the close button. */
+export function drawerHeader(title: string, subtitle: string | undefined, close: () => void, avatar?: string): HTMLElement {
   const header = document.createElement('header');
   header.className = 'drawer__head';
 
+  if (avatar) {
+    const face = document.createElement('span');
+    face.className = 'drawer__face';
+    face.appendChild(avatarSvg(avatar, 28));
+    header.appendChild(face);
+  }
+
   const text = document.createElement('div');
+  text.className = 'drawer__titles';
   const heading = document.createElement('h2');
   heading.textContent = title;
   text.appendChild(heading);
@@ -78,13 +90,22 @@ export function drawerHeader(title: string, subtitle: string | undefined, close:
 
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'drawer__close';
-  button.textContent = '×';
+  button.className = 'btn btn--icon drawer__close';
+  button.appendChild(icon('close', 16));
   button.title = 'Close (Esc)';
+  button.setAttribute('aria-label', 'Close');
   button.addEventListener('click', close);
 
   header.append(text, button);
   return header;
+}
+
+/** An employee's Model and Harness, as two rows of one grouped box under the header. */
+function fields(...nodes: (HTMLElement | undefined)[]): HTMLElement {
+  const box = document.createElement('div');
+  box.className = 'drawer__fields';
+  for (const node of nodes) if (node) box.appendChild(node);
+  return box;
 }
 
 /**
@@ -119,11 +140,10 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   send.textContent = 'Send';
   form.append(input, send);
 
-  const head = drawerHeader(target.name, target.subtitle, () => dispose());
+  const head = drawerHeader(target.name, target.subtitle, () => dispose(), target.avatar);
   panel.append(
     head,
-    ...(target.modelField ? [target.modelField] : []),
-    ...(target.harnessField ? [target.harnessField] : []),
+    ...(target.modelField || target.harnessField ? [fields(target.modelField, target.harnessField)] : []),
     ...(now ? [now.root, activityBox] : []),
     log, form,
   );

@@ -34,44 +34,54 @@ This guide is the reference for the app as it is today. It is rendered inside th
 
 ## The screen
 
-The **rail** on the left: Computer (the shared browser), Cluster (nodes and jobs), Allocation
-(what runs first), Help, then **New project**, a search box, and the project list. Press `[` to
-collapse or expand it. Arrow keys move between projects.
+The **sidebar** on the left is only navigation: your projects (each with a status dot — green
+working, grey idle, amber needs you, red last turn failed, a ring while paused), a search box, **+**
+for a new project, and at the bottom **Machines** and **Help**. Press `[` (or the sidebar button in
+the toolbar) to hide or show it; on a phone it opens as a drawer. Left and right arrows move
+between projects.
 
-A **project page** has, top to bottom:
+A **project** has a toolbar along the top: its name and status dot, five sections — **Overview ·
+Plan · Docs · Code · Activity** — then a **Chat** button (the Manager, also `c`), the one primary
+button, **Run turn** (it reads `Running · m:ss` while a turn runs, with a thin line under the
+toolbar that lights on every event), and **⋯** (Settings, Add employee, Pause/Resume, and the
+repository links of an imported project).
 
-1. **Header.** Title, the status pill (`active` / `paused`), the model pill. Then the controls:
-   - **Order** — `Runs first` / `Normal` / `When idle`. See *Order* below.
-   - **Models** — which model this project uses. See *Models*.
-   - **Auto-run** — off by default. Click to schedule turns. See *Auto-run*.
-   - *hub N/24 turns left today* — the hub-wide daily budget.
-   - **Chat** — one-on-one with the project's Manager (`c`). The same drawer the Manager card in
-     the org chart opens, and it works while a turn is running.
-   - **Pause / Resume**, **Run turn** (shows `Running · m:ss` while one runs), **Add employee**.
-2. **The big buttons.** PRD, Roadmap, Docs, Activity, Code, Terminal, Preview. Each opens a
-   full-screen sheet (`Esc` closes it). The PRD, Roadmap and Docs sheets have a chat docked on the side: talk to
-   the document's editor ("move milestone 4 before 2", "add a section on backups") and it
-   changes the document in place. Code docks the Guide the same way — see *Code* below.
-3. **The org chart.** You → Assistant / Master → the project's Manager → its employees. Click any
-   card to open that person: what they are doing, their history, and a chat.
+- **Overview** — where the project is: the current milestone, how much of the roadmap is done, the
+  latest briefing in two lines and the next step. Before there is anything to show it leads with
+  one invitation instead — *Draft the PRD*, *Generate the roadmap*, *Run the first turn*. Under it,
+  the **team** as faces (click one to open that person), the last three turns, and *In this
+  project* — a line each for the requirements, roadmap, docs, code and preview.
+- **Plan** — the PRD (*Requirements*) and the **Roadmap**, side by side under a small switch. Each
+  has an **Ask the …** button that opens a chat beside the document with the agent that edits it
+  ("move milestone 4 before 2", "add a section on backups"); it changes the document in place.
+- **Docs**, **Code** (*Files · Terminal · Preview*) and **Activity** — see their sections below.
+
+**Settings** (from **⋯**) is a sheet grouped like macOS Settings: **Models**, **Schedule**,
+**Priority**, **Team** (add or remove employees) and **Pause**. Everything applies as you change it.
 
 ## Starting a project
 
-**New project** asks for a name and a slug, then one of three things:
+**New project** (the **+** in the sidebar) asks how you want to start:
 
-- **Start from an idea** — a paragraph. The PRD drafter (orchestrator tier) writes a full PRD
+- **Describe an idea** — a paragraph. The PRD drafter (orchestrator tier) writes a full PRD
   from it, streaming, in about two minutes on the Spark.
 - **Paste a PRD** — your own document. It is filed as-is and scored.
-- **Import a repo** — a repository you already have. See below.
+- **Import from GitHub** — a repository you already have. See below.
+
+Then it asks one thing at a time: the name (and the short name used for its folder and address),
+then the paragraph, the document or the repository. **Create project** creates it and streams the
+draft into the same sheet; when it is done the PRD opens in **Plan** with the drafter's open
+questions above it.
 
 The PRD has twelve fixed sections (overview, goals and non-goals, users, functional requirements,
 UI, data, security, scalability, operations, acceptance criteria, risks and open questions,
-glossary). The **score** on the PRD button is how many sections are actually filled; the manager
-refuses to build on an empty scaffold, and auto-run skips such projects.
+glossary). The **score** beside the PRD's title is how many sections are actually filled; the manager
+refuses to build on an empty scaffold, and the schedule skips such projects.
 
-Then open **Roadmap → Generate roadmap**. The planner reads the PRD and proposes milestones in
-build order with estimates. Reorder them with the arrows, change a status with its select, or
-tell the roadmap chat what to change. `m1` is the first milestone; ids are positional.
+Then **Generate the roadmap** (on the Overview, or **Plan → Roadmap**). The planner reads the PRD
+and proposes milestones in build order with estimates. It is a checklist — ✓ done, ● in progress,
+○ planned: drag a milestone, use its arrows (or Option-↑/↓), press its circle to change its
+status, or tell the planner what to change. `m1` is the first milestone; ids are positional.
 
 **Docs** starts with two pages — the index and the decision log — and grows as the team writes.
 The decision log is the *why*: every notable choice an agent makes lands there with the PRD
@@ -88,12 +98,12 @@ optionally, a branch; leave the branch blank for the repository's default. The p
 Continue clones the repository into the project's `workspace/` (full history) and *then* drafts the
 PRD, so the document describes the product you actually have with your request layered on top. The
 roadmap starts with what the code already delivers, listed as **done** milestones; the first
-planned milestone is the first new thing. The project header shows `owner/repo @ branch` under the
+planned milestone is the first new thing. The Overview shows `owner/repo @ branch` under the
 intent, linking to GitHub.
 
 **Connect GitHub.** Public repositories clone without anything. For a private one — and for
 pushing anything back — the hub needs to reach GitHub as you. If the hub has the AgentHub GitHub
-App set up (the owner does that once; see *Operating the hub*), the Import a repo tab shows a
+App set up (the owner does that once; see *Operating the hub*), **Import from GitHub** shows a
 **Connect GitHub** button. Press it and you are on GitHub's own screen, signed in as yourself,
 choosing **which repositories AgentHub may use** — all of them, or a list you pick. Approve, and
 you land back on the hub with "GitHub connected".
@@ -104,8 +114,8 @@ you would rather type `owner/repo`. The picker lists up to 500 repositories per 
 that, type the name instead; importing it still works.
 
 **Changing your mind.** The repositories are yours to change at any time: **GitHub → Settings →
-Applications → Installed GitHub Apps → AgentHub → Configure**, or the **Manage on GitHub** link on
-the Cluster page. **Disconnect**, on that same line, makes the hub forget the connection; the app
+Applications → Installed GitHub Apps → AgentHub → Configure**, or the **Manage on GitHub** link in
+**Machines → Access**. **Disconnect**, on that same line, makes the hub forget the connection; the app
 stays installed on GitHub until you remove it there, under the same Configure screen
 (*Uninstall*).
 
@@ -120,7 +130,7 @@ hub reaches GitHub, never with what.
 **Getting work back.** Agents never push to your branch. After each *verified* milestone the hub
 commits what the milestone produced in `workspace/` and pushes it to **`agenthub/<slug>`** — one
 commit per milestone. Once something has been pushed, an **Open pull request** button appears next
-to the repository line: it opens a pull request from `agenthub/<slug>` into the branch you
+to the repository line on the Overview: it opens a pull request from `agenthub/<slug>` into the branch you
 imported, and then links to it. Pressing it again after a later milestone finds the same pull
 request rather than opening a second one. Merging is yours.
 
@@ -149,7 +159,7 @@ the workspace, picks the current milestone, and delegates. Concretely:
    and the list of changed files. The milestone is *done* only with at least one passing signal
    and no failing one. A milestone that fails stays in progress with the findings in the log.
 5. The manager publishes a **briefing** — what happened, what's next, what's blocked. It is
-   committed under `briefings/` and shown on the Activity button.
+   committed under `briefings/` and shown on the Overview.
 
 Limits that shape a turn: the manager has 40 tool calls, an employee 25; a turn is cut off at
 45 minutes (`TURN_TIMEOUT_MINUTES`). Expect one milestone per turn; a big milestone can take two.
@@ -163,27 +173,29 @@ When a turn's summary says it **was cut short**, the hub stopped (a restart) or 
 calls before reporting; the next turn starts from the last briefing and the workspace digest, so
 nothing is lost, but that milestone probably needs a tighter spec or a split.
 
-**Pause** stops new turns (manual and scheduled); running ones finish. **Resume** re-enables.
+**Pause** (in **⋯**, or Settings → Pause) stops new turns (manual and scheduled); running ones
+finish. **Resume** re-enables.
 
-## Auto-run
+## Schedule (turns on their own)
 
-Off by default. Turn it on per project: **Run turns on a schedule — every 15m / 30m / 1h / 2h /
-4h, at most N turns a day** (default 6). The hub also enforces:
+Off by default. Turn it on per project in **Settings → Schedule → Run on its own**: every 15
+minutes, 30 minutes, 1, 2 or 4 hours, at most N turns a day (default 6). The hub also enforces:
 
 - a hub-wide cap of **24 turns a day** across all projects (`MAX_TURNS_PER_DAY` in `hub.env`),
-  shown as *hub N/24 turns left today*; a manual Run turn past the cap is refused with a reason;
-- **no auto-run on a project whose PRD is still a scaffold**;
+  shown under the schedule as *N of 24 left across the hub*; a manual Run turn past the cap is
+  refused with a reason;
+- **no scheduled turns on a project whose PRD is still a scaffold**;
 - **suspension after three consecutive same-class errors** (say the model server is down) with a
-  Telegram alert if the bot is configured; resume by clicking Auto-run again;
+  Telegram alert if the bot is configured; resume by switching *Run on its own* back on;
 - `AUTO_TURNS=0` in `hub.env` disables scheduling on the whole hub.
 
 Why the caps: unattended turns on a paid model are the one way this system can spend money
 while you sleep. The caps make the worst day boring.
 
-## Order (what runs first)
+## Priority (what runs first)
 
-The **Order** select on the project header (and the Allocation page) is the hub's queue class for
-that project's work: `Runs first`, `Normal`, `When idle`. When two projects want the same node —
+**Settings → Priority** (and every row of **Machines → Queue**) is the hub's queue class for that
+project's work: `Runs first`, `Normal`, `When idle`. When two projects want the same node —
 a model slot, the shared browser, a shell job — the higher class goes first; within a class it's
 first come, first served. It is *not* how fast a single turn runs; with one project it changes
 nothing.
@@ -194,21 +206,21 @@ agent traffic on the shared vLLM. That is a node setting (`configs/spark.yaml`),
 
 ## Models
 
-The **Models** select on each project:
+**Settings → Models** on each project:
 
 - **Auto (local first)** — the default. Local nodes serve everything; if the tier's local nodes
   are all busy the request waits for a slot; if none is *available* (offline, erroring) the
   request goes to a configured cloud provider, and comes back to local as soon as it is up.
 - **Local only** — never spend; if local is unavailable the turn fails and says so.
 - **Any cloud** / **Fireworks (default models)** / **Fireworks: <model>** — cloud first, local
-  as the fallback. Picking a concrete model sets it for both tiers; a **Worker model** select
+  as the fallback. Picking a concrete model sets it for both tiers; an **Employees use** select
   appears to change the employees' model separately.
 - **(off)** entries — the expensive tier (`glm-5p3`, `kimi-k3`). Greyed out until
   `FIREWORKS_HARD_MODELS=1` is set in `hub.env` and the hub restarted; a project that had one
   saved falls back to the provider's default while the switch is off.
 
-The Cluster page shows every node's tiers and live stream counts, so you can see where a turn is
-actually running.
+**Machines → Nodes** shows every node's tiers and live stream counts, so you can see where a turn
+is actually running.
 
 ## Harnesses
 
@@ -235,7 +247,7 @@ pi --version
 Then restart nothing: the hub checks for it per request. (The installer will do this step for you
 once harnesses are part of it; for now it is one command.)
 
-**Choosing it.** Open an employee's drawer — click their card in the org chart — and use the
+**Choosing it.** Open an employee's drawer — click their face on the Overview — and use the
 **Harness** select under Model. The field only appears when there is more than one harness to pick
 from, and **Built-in loop (project default)** puts them back on whatever the project uses. Nothing
 else changes: their model override, their standing instructions and their history all stay.
@@ -257,14 +269,15 @@ else changes: their model override, their standing instructions and their histor
 
 ## Nodes
 
-**Cluster** lists nodes with status, the model per tier, active streams, and the job queue.
+**Machines → Nodes** lists nodes with status, the model per tier and active streams, with the cloud
+spend over them; the job queue is under **Machines → Queue**.
 
 The Spark is configured in `configs/spark.yaml` in *attach mode*: the daemon does not start a
 model server, it attaches to the vLLM that `sparkmodel.service` already runs on `:8888`, checks
 it answers, and registers both tiers with `priority: 10` and small stream caps (2 orchestrator,
 3 worker) because the KV cache is shared with JD.
 
-**Adding a node.** Press **Add node** above the table. The hub mints a one-time token — good for
+**Adding a node.** Press **Add machine** above the list. The hub mints a one-time token — good for
 24 hours, usable once — and shows the command it belongs to:
 
 ```
@@ -287,7 +300,7 @@ browser node), set `DAEMON_TOKEN` to the hub's shared token, and run
 `npx tsx packages/node-daemon/src/main.ts <config>` under a service; the per-machine playbooks are
 in `deploy/`. `DAEMON_TOKEN` remains the admin's break-glass and works for every node.
 
-Cluster's **Drain** button stops new jobs, turns and browser leases from landing on a node while
+A node's **⋯ → Drain** stops new jobs, turns and browser leases from landing on a node while
 whatever it's already running finishes, and **Undrain** reverses it. **Remove** forgets the node
 outright — its daemon exits once the hub tells it so — so getting it back means re-running its
 service or install.
@@ -295,7 +308,7 @@ service or install.
 A node is *offline* when its heartbeats stop; the hub requeues its jobs and routes around it.
 
 The one-command installer is `curl -fsSL <hub>/install.sh | sh -s -- --hub <hub> --token <token>`,
-with the token minted by *Add node* on the Cluster page. It detects the machine, installs Node 22
+with the token minted by *Add machine* in Machines → Nodes. It detects the machine, installs Node 22
 if it has to, fetches the daemon from the hub (no clone, no repo access), attaches to an
 OpenAI-compatible server that is already listening or picks the recipe for the hardware class —
 registering compute-only when no recipe is verified for it yet — writes `~/.agenthub/node.yaml`,
@@ -308,10 +321,10 @@ table and everything it writes are in `deploy/README-install.md`.
 
 The hub speaks OpenAI. Anything that can point at an OpenAI-compatible base URL — JD, pi, the
 `openai` SDK, plain `curl` — can use your nodes through it, with the hub's routing, the hub's
-spend cap, and one line per request in the same cost ledger the Cluster page shows.
+spend cap, and one line per request in the same cost ledger Machines shows.
 
-**A token.** Cluster → **API tokens** → a label and a kind → **Create token**. The token
-(`ah_…`) is shown once and never again; the hub keeps only a hash. Revoke it from the same table
+**A token.** **Machines → Access → API tokens** → a label and a kind → **Create token**. The token
+(`ah_…`) is shown once and never again; the hub keeps only a hash. Revoke it from the same list
 and it stops working immediately.
 
 **The two kinds** set the request's priority on a shared server (the Spark runs one model for
@@ -347,13 +360,12 @@ cloud bill when nothing local is serving), `@cloud`, or a provider such as `@fir
 Streaming and non-streaming both work, as do `tools` and `tool_calls`; ask for
 `stream_options: {"include_usage": true}` and the last chunk carries the token counts. Fields the
 hub has no use for (`temperature`, `max_tokens`, …) are accepted and ignored. Spend through the
-door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the Cluster page's
-cloud-spend line.
+door counts against `MAX_CLOUD_USD_PER_DAY` like everything else, and shows on the cloud-spend line
+in Machines → Nodes.
 
 ## Preview (seeing the app)
 
-A **Preview** button sits with the PRD, Roadmap, Docs and Activity buttons on the project page. It
-opens a sheet with the project's own app running inside it, plus **Start**, **Stop**, **Restart**,
+**Code → Preview** shows the project's own app running inside the page, plus **Start**, **Stop**, **Restart**,
 **Open in tab**, a **Settings** form and the dev server's last 50 lines of output.
 
 The hub runs the dev server on its own machine, in the project's `workspace/`. It does **not** serve
@@ -388,33 +400,33 @@ on that port.
 Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
 `deploy/do/README.md` §8b.
 
-## The shared browser (Computer)
+## The shared browser (Machines → Browser)
 
 One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and
-release it; the **Computer** page shows who holds it, the queue, and lets you **Take control**
+release it; **Machines → Browser** shows who holds it, the queue, and lets you **Take control**
 (you drive, agents wait) and **Release**. Recordings of agent sessions are kept under the data
 root. Multiple simultaneous sessions are planned (Phase D).
 
 ## The terminal
 
-The **Terminal** button on a project page opens a real shell in that project's `workspace/`, on the
-machine the hub runs on. `Esc` closes the sheet; the button underneath reads *open* or *closed*.
+**Code → Terminal** opens a real shell in that project's `workspace/`, on the machine the hub runs
+on.
 
 - It is a proper terminal, not a command box: `vim`, `top`, an interactive rebase, tab completion
   and colours all work, because a pseudo-terminal is what is on the other end.
-- **One sheet is one shell.** Close the sheet, or lose the connection, and the shell is killed —
+- **One view is one shell.** Leave it, or lose the connection, and the shell is killed —
   along with anything it started in the background. Reconnecting gives you a *new* shell, which the
   banner says; **New session** does the same on purpose.
 - Four terminals at a time across the whole hub, and one that sits untouched for an hour closes
   itself. A tab that went away without saying so — a closed laptop, a dropped tunnel — is noticed
   within a minute and its shell ended, so it cannot sit on one of the four.
-- When the hub says why a session ended (the hour, the shell exiting, all four in use), the sheet
+- When the hub says why a session ended (the hour, the shell exiting, all four in use), the view
   stops there and waits: **New session** is how you start another. Only an unexplained drop
   reconnects on its own, and a reconnect is always a new shell.
 - The hub logs that a session happened — which project, how long — and never what you typed.
 
 **No password, no terminal.** A hub started without `HUB_PASSWORD` has no terminal route at all —
-the sheet opens and reports that it cannot connect — because owner-only means nothing on a hub
+the view opens and reports that it cannot connect — because owner-only means nothing on a hub
 where there is no owner to be. A browser page on another site cannot open one either, even in a
 browser you are logged in on: the hub checks where the request came from before it upgrades.
 
@@ -427,9 +439,10 @@ are stripped out of its environment, the same way they are for anything an agent
 
 ## Code
 
-The **Code** button opens the project's workspace: the file tree on the left, the file you picked
-in the middle, and the **Guide** docked on the right. The button's line says how many files the
-workspace has and how long ago the map was refreshed.
+**Code → Files** is the project's workspace: the file tree on the left, the file you picked in the
+middle, and the **Guide** docked on the right (on a narrow window, **Ask the guide** opens it). *In
+this project* on the Overview says how many files the workspace has and how long ago the map was
+refreshed.
 
 **Files.** Click a folder to fold it open or shut, a file to read it. Arrow keys walk the tree and
 Enter opens what is selected. Binary files and anything over 2 MB are listed but say *not text* —
@@ -460,14 +473,17 @@ when a milestone lands; **Refresh map** does it on demand, which takes a model c
 
 ## Chatting with the team
 
-Click an employee or the Manager. The drawer shows their status, their sessions, and a chat that
+Click an employee or the Manager on the Overview (or **Chat** in the toolbar for the Manager). The
+drawer shows their status, their sessions, and a chat that
 is just for the two of you — separate from turns. Use it to ask what they did and why, or to
 brief them ("for the next task, keep functions under 40 lines"). Standing instructions per
-employee live in their card (**instructions**, up to 2000 characters) and are appended to their
+employee (**instructions**, up to 2000 characters, set when you add them) are appended to their
 role prompt on every task.
 
-**Add employee** creates one with a name, avatar, role, and instructions. Removing one does not
-delete their history.
+**Add employee** (**⋯**, the **+** in the team, or Settings → Team) creates one with a name, avatar,
+role, and instructions. Removing one (Settings → Team) does not delete their history. Your
+**assistant** and the **Master** (every project's briefings, and *Daily briefing*) are under the
+team on the Overview.
 
 ## Operating the hub (on the Spark)
 
@@ -488,7 +504,7 @@ build tools — Xcode command line tools on a Mac (`xcode-select --install`), `b
 `python3` on Debian or Ubuntu. If `npm ci` fails on node-pty, that is what is missing; the hub does
 not start without it.
 
-**Restarting the hub cuts any running turn short.** Check the project header for
+**Restarting the hub cuts any running turn short.** Check the project toolbar for
 `Running · m:ss` first, or expect a "cut short" briefing.
 
 `hub.env` keys that matter:
@@ -586,7 +602,7 @@ in a temp directory that is removed on exit. Ctrl-C stops everything. In the Bro
 | Run turn refused, "cap … reached" | Daily budget spent | Wait for the window, or raise `MAX_TURNS_PER_DAY` and restart |
 | Briefing: "cut short" | Hub restarted or 45-minute (`TURN_TIMEOUT_MINUTES`) limit | Run the turn again; it resumes from the last briefing |
 | Briefing: "hit its tool-call budget" | The milestone was too big for one turn | Split it in the Roadmap, or run again |
-| Auto-run suspended | Three consecutive errors | Find the error in Activity, fix it, click Auto-run to re-enable |
+| Schedule suspended | Three consecutive errors | Find the error in Activity, fix it, switch *Run on its own* back on |
 
 ## Where things live
 
@@ -611,7 +627,7 @@ DATA_ROOT/
 - **Briefing** — the manager's report at the end of a turn.
 - **Tier** — a model's job: orchestrator or worker.
 - **Attach mode** — a node config entry without a `cmd`: the daemon registers a server it did not start.
-- **Order** — a project's queue class (`Runs first` / `Normal` / `When idle`).
+- **Priority** — a project's queue class (`Runs first` / `Normal` / `When idle`).
 - **Lease** — an agent's temporary hold on the shared browser.
 - **Verification** — tests plus a read-only review before a milestone counts as done.
 
@@ -642,11 +658,11 @@ model the hub has no price for shows as **price unknown** rather than as free.
 **Where it shows.**
 
 - **Model picker** — each model's input and output price, or "price unknown".
-- **Project header** — a chip with what this project has cost in the last 24 hours, beside the
-  turns left; `—` when it has cost nothing.
+- **Overview** — what this project has cost in the last 24 hours, under *In this project*; the
+  settings sheet repeats it under the schedule.
 - **Activity** — each turn row carries what that turn cost, when it cost anything.
 - **Employee drawer** — the Now line says what that employee's own model calls cost in the turn.
-- **Cluster** — `Cloud spend: $1.20 in the last 24 h`, with the cap beside it when one is set.
+- **Machines → Nodes** — `Cloud spend: $1.20 in the last 24 h`, with the cap beside it when one is set.
 
 **The daily cap.** Set `MAX_CLOUD_USD_PER_DAY` (in `hub.env`; decimals allowed, unset means no
 cap). Once the trailing 24 hours of cloud spend reaches it, **cloud endpoints go out of rotation**

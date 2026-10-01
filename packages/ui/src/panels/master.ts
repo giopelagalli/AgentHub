@@ -94,7 +94,7 @@ export function openMasterPanel(host: HTMLElement, options: MasterPanelOptions =
     if (event.key === 'Escape') dispose();
   };
   window.addEventListener('keydown', onKey);
-  panel.append(drawerHeader('Master', 'Master orchestrator — reads every briefing', dispose), actions, body);
+  panel.append(drawerHeader('Master', 'Reads every project’s briefing', dispose, 'robot-magenta'), actions, body);
 
   const say = (text: string): void => {
     body.replaceChildren();

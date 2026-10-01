@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@agenthub/shared": "*",
+    "happy-dom": "^20.14.5",
     "vite": "^6"
   }
 }

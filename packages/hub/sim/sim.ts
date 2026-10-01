@@ -3,7 +3,7 @@
 import '../src/debug-guard.js';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,6 +61,29 @@ function freePort(): Promise<number> {
   });
 }
 
+/**
+ * Written into every data directory the sim creates. A directory holding a `hub.db` without it may
+ * be a real hub's data: the sim would log into it with the fixed password and seed into it, and
+ * `--reset` would delete it. So the sim refuses such a directory, and resets only its own.
+ */
+export const SIM_MARKER = '.agenthub-sim';
+
+async function prepareDataRoot(dataRoot: string, opts: { reset: boolean }): Promise<void> {
+  const entries = await readdir(dataRoot).catch(() => [] as string[]);
+  const ours = entries.includes(SIM_MARKER);
+  if (!ours && entries.includes('hub.db')) {
+    throw new Error(`refusing to use ${dataRoot}: it holds a hub.db the sim did not create (no ${SIM_MARKER}). ` +
+      'It may be a real hub\'s data, which the sim would log into with the password "sim", seed into, and --reset would delete. ' +
+      'Point --data at an empty directory or one the sim made.');
+  }
+  if (opts.reset && entries.length) {
+    if (!ours) throw new Error(`refusing to --reset ${dataRoot}: it has no ${SIM_MARKER}, so the sim did not create it`);
+    await rm(dataRoot, { recursive: true, force: true });
+  }
+  await mkdir(dataRoot, { recursive: true });
+  await writeFile(join(dataRoot, SIM_MARKER), 'Created by `npm run sim`. Safe to delete with the directory.\n', 'utf8');
+}
+
 const UI_DIST = fileURLToPath(new URL('../../ui/dist', import.meta.url));
 
 /**
@@ -74,35 +97,40 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
   const host = opts.host ?? '127.0.0.1';
   const tempRoot = !opts.dataRoot;
   const dataRoot = opts.dataRoot ?? await mkdtemp(join(tmpdir(), 'agenthub-sim-'));
-  if (opts.reset && !tempRoot) await rm(dataRoot, { recursive: true, force: true });
-  await mkdir(dataRoot, { recursive: true });
 
-  const mock = createMockOpenAI({ respond: simRespond });
-  await mock.listen({ port: 0, host: '127.0.0.1' });
-  const mockUrl = `http://127.0.0.1:${(mock.server.address() as { port: number }).port}`;
-
-  const hub = createHub({
-    dbPath: join(dataRoot, 'hub.db'),
-    projectsRoot: join(dataRoot, 'projects'),
-    assistant: { memoryRoot: join(dataRoot, 'memory') },
-    browser: { recordingsRoot: join(dataRoot, 'media', 'browser') },
-    auth: { password: SIM_PASSWORD, sessionSecret: SIM_SESSION_SECRET, daemonToken: SIM_DAEMON_TOKEN },
-    // Turns run when someone presses Run turn, never on a schedule nobody asked for.
-    autoTurns: false,
-    preview: { port: opts.previewPort ?? (port === 0 ? 0 : port + 10), host },
-    ...(existsSync(UI_DIST) ? { uiDist: UI_DIST } : {}),
-  });
+  // Assigned as each piece comes up, so a failure part-way stops exactly what was started.
+  let mock: MockOpenAI | undefined;
+  let hub: Hub | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   const stop = async (): Promise<void> => {
     clearInterval(heartbeat);
-    await hub.stop();
-    await mock.close();
+    await hub?.stop();
+    await mock?.close();
     if (tempRoot) await rm(dataRoot, { recursive: true, force: true });
   };
 
   try {
-    await hub.app.listen({ port, host });
-    const address = hub.app.server.address() as { port: number };
+    await prepareDataRoot(dataRoot, { reset: !tempRoot && !!opts.reset });
+
+    const m = createMockOpenAI({ respond: simRespond });
+    mock = m;
+    await m.listen({ port: 0, host: '127.0.0.1' });
+    const mockUrl = `http://127.0.0.1:${(m.server.address() as { port: number }).port}`;
+
+    const h = createHub({
+      dbPath: join(dataRoot, 'hub.db'),
+      projectsRoot: join(dataRoot, 'projects'),
+      assistant: { memoryRoot: join(dataRoot, 'memory') },
+      browser: { recordingsRoot: join(dataRoot, 'media', 'browser') },
+      auth: { password: SIM_PASSWORD, sessionSecret: SIM_SESSION_SECRET, daemonToken: SIM_DAEMON_TOKEN },
+      // Turns run when someone presses Run turn, never on a schedule nobody asked for.
+      autoTurns: false,
+      preview: { port: opts.previewPort ?? (port === 0 ? 0 : port + 10), host },
+      ...(existsSync(UI_DIST) ? { uiDist: UI_DIST } : {}),
+    });
+    hub = h;
+    await h.app.listen({ port, host });
+    const address = h.app.server.address() as { port: number };
     const url = `http://${host}:${address.port}`;
 
     const login = await fetch(`${url}/api/login`, {
@@ -137,7 +165,7 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
 
     const fresh = (await readdir(join(dataRoot, 'projects')).catch(() => [])).length === 0;
     const previewAppPort = port === 0 ? await freePort() : port + 80;
-    const seeded = fresh ? await seedProjects(call, hub, { previewAppPort }) : [];
+    const seeded = fresh ? await seedProjects(call, h, { previewAppPort }) : [];
 
     // Registered after seeding and never heard from again, so the Cluster page shows a node going
     // stale (offline ~15 s later). Its one endpoint is a tier no turn uses, so nothing routes to it.
@@ -146,8 +174,8 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
       endpoints: [{ tier: 'vision', url: 'http://127.0.0.1:9', model: 'qwen3-vl-8b', maxStreams: 1 }],
     } satisfies NodeRegistration);
 
-    mock.setTokenDelay(opts.tokenDelayMs ?? 30);
-    return { url, password: SIM_PASSWORD, dataRoot, seeded, hub, mock, stop };
+    m.setTokenDelay(opts.tokenDelayMs ?? 30);
+    return { url, password: SIM_PASSWORD, dataRoot, seeded, hub: h, mock: m, stop };
   } catch (err) {
     await stop().catch(() => {});
     throw err;

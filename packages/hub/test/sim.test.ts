@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { ProjectManifest, NodeInfo, TurnRecord } from '@agenthub/shared';
 import { startSim } from '../sim/sim.js';
 
@@ -53,4 +56,16 @@ describe('npm run sim', () => {
     await expect(fetch(`${sim.url}/api/health`)).rejects.toThrow();
     expect(children()).toEqual([]);
   }, 30_000);
+
+  it('refuses a data dir with a hub.db it did not create, and will not --reset it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agenthub-real-'));
+    try {
+      await writeFile(join(dir, 'hub.db'), 'not the sim\'s');
+      await expect(startSim({ port: 0, previewPort: 0, dataRoot: dir })).rejects.toThrow(/refusing to use .*hub\.db/);
+      await expect(startSim({ port: 0, previewPort: 0, dataRoot: dir, reset: true })).rejects.toThrow(/refusing/);
+      expect(await readdir(dir)).toEqual(['hub.db']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

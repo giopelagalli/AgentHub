@@ -48,4 +48,11 @@ The responder is keyed on the opening lines of the hub's prompts; rewording one 
 fall back to a plain reply (visible, not a crash) until `agent-script.ts` is updated. Turns in the
 sim are plausible, not meaningful: the coder writes a small module and a passing test per
 milestone. Pricing the mock as Fireworks makes the sim's cloud-spend figures non-zero, which is the
-point; a reader of the Cluster page sees Fireworks model names on `sim-spark`.
+point; a reader of the Cluster page sees Fireworks model names on `sim-spark`. Those Fireworks-labelled
+endpoints count as cloud for routing and for the daily spend cap (`MAX_CLOUD_USD_PER_DAY` would
+park them), and adding a local `openai` endpoint to the sim would take routing away from them,
+since the gateway prefers local serving.
+
+A data directory the sim creates carries a `.agenthub-sim` marker; the sim refuses a `--data`
+directory that holds a `hub.db` without one (it may be a real hub's data) and `--reset`s only a
+directory that has it.

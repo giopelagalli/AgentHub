@@ -40,6 +40,13 @@ if (values.ui) {
     cwd: repo, stdio: 'inherit', detached: true,
     env: { ...process.env, AGENTHUB_HUB_URL: sim.url },
   });
+  // Detached means it outlives us unless told otherwise — whatever the exit path (a crash, the
+  // force-exit timer), take its whole group down with us. `exit` handlers must be synchronous; kill is.
+  process.on('exit', () => {
+    if (vite?.pid) {
+      try { process.kill(-vite.pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  });
 }
 
 const open = values.ui ? `http://localhost:${uiPort}` : sim.url;

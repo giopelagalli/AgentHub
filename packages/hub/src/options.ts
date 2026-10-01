@@ -235,6 +235,12 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(env.PREVIEW_PUBLIC_BASE ? { publicBase: env.PREVIEW_PUBLIC_BASE } : {}),
   };
 
+  // JD's web door (0069): both halves or neither. The token is only ever read here and handed to
+  // the proxy; nothing logs it, and agents never see it (`HUB_SECRET_ENV`).
+  let jd: HubOptions['jd'];
+  if (env.JD_URL && env.JD_WEB_TOKEN) jd = { url: env.JD_URL, token: env.JD_WEB_TOKEN };
+  else if (env.JD_URL || env.JD_WEB_TOKEN) log(`[hub] ${env.JD_URL ? 'JD_WEB_TOKEN' : 'JD_URL'} is not set; the JD page stays off`);
+
   const options: HubOptions = {
     dbPath: env.HUB_DB ?? (dataRoot ? join(dataRoot, 'hub.db') : 'data/hub.db'),
     projectsRoot: env.PROJECTS_ROOT ?? (dataRoot ? join(dataRoot, 'projects') : 'data/projects'),
@@ -251,6 +257,7 @@ export function optionsFromEnv(env: NodeJS.ProcessEnv, log: (line: string) => vo
     ...(maxTurnsPerDay !== undefined ? { maxTurnsPerDay } : {}),
     ...(maxCloudUsdPerDay !== undefined ? { maxCloudUsdPerDay } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+    ...(jd ? { jd } : {}),
     preview,
   };
 

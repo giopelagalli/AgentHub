@@ -129,6 +129,9 @@ describe('the assistant scope', () => {
       { method: 'GET' as const, url: '/api/projects/demo' },
       { method: 'POST' as const, url: '/api/projects/demo/archive', payload: {} },
       { method: 'POST' as const, url: '/api/projects/demo/harness', payload: { harness: 'builtin' } },
+      // JD's own web door (0069) is the owner's: an assistant token must not talk to JD as the owner.
+      { method: 'GET' as const, url: '/api/jd/status' },
+      { method: 'POST' as const, url: '/api/jd/messages', payload: { text: 'hi' } },
     ];
     for (const r of refused) {
       const res = await h.hub.app.inject({ ...r, headers: bearer(h.jd) });

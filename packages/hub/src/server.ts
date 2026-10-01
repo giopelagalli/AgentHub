@@ -34,6 +34,7 @@ import { Transcript, type SessionRecord } from './agents/transcript.js';
 import { harnessRoutes, harnessStatus } from './agents/harness/index.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
+import { jdRoutes, JD_STREAM_ROUTE, type JdDoorOptions } from './jd.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { previewRoutes } from './projects/preview.js';
@@ -267,6 +268,8 @@ export interface HubOptions {
   };
   /** Video slot knobs: how long a node is passed over after a failed swap, and the clock that times it. */
   video?: { cooldownMs?: number; now?: () => number };
+  /** JD's web API (`JD_URL`, `JD_WEB_TOKEN`; decision 0069). Proxied as `/api/jd/*` on a hub with a password. */
+  jd?: JdDoorOptions;
   /**
    * Present when this hub runs on a control node, which is what enables `/api/controlnode` (PRD
    * §4.2). `dataRoot` is the directory holding everything the hub owns; `name` is the node this hub
@@ -668,8 +671,9 @@ export function createHub(opts: HubOptions = {}): Hub {
       // A refused upgrade also has to close its connection by hand: @fastify/websocket has already
       // taken the socket off the HTTP server's hands, so nobody else ever will — it would linger
       // half-dead and hold `app.close()` open forever. Only the websocket routes, so an ordinary
-      // request carrying an `Upgrade` header is not hung up on.
-      if ((route === '/ws' || route === TERMINAL_ROUTE) && req.headers.upgrade) {
+      // request carrying an `Upgrade` header is not hung up on. (`/api/jd/*` is where JD's stream
+      // lands on a hub where JD is not configured.)
+      if ((route === '/ws' || route === TERMINAL_ROUTE || route === JD_STREAM_ROUTE || route === '/api/jd/*') && req.headers.upgrade) {
         reply.raw.on('finish', () => reply.raw.socket?.end());
       }
       return reply.code(401).send({ error: 'unauthorized' });
@@ -764,6 +768,10 @@ export function createHub(opts: HubOptions = {}): Hub {
   // Only on a hub that has a password: `owner` means nothing where there is no credential to hold,
   // and a shell is not something to offer on an unguarded hub.
   if (auth) app.register(terminalRoutes, { projects });
+  // JD's door, likewise only behind a password: it speaks to JD as the owner. Its status route is
+  // there either way, so the JD page can say what is missing.
+  if (opts.jd && !auth) console.warn('[jd] JD_URL is set but HUB_PASSWORD is not; the JD door stays closed');
+  app.register(jdRoutes, auth && opts.jd ? { jd: opts.jd } : {});
 
   /** The manifests, each with how its latest manager turn ended — one transcript query for all of them. */
   const listProjects = async (): Promise<ProjectManifest[]> => {

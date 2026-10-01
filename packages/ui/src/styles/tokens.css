@@ -277,8 +277,6 @@ a:hover {
 
 /* The only place monospace is allowed: ids, slugs, model names, tool output. */
 .mono,
-.facts dd,
-.desk__queue,
 .chat__activity-details .chat__said {
   font-family: var(--mono);
   font-size: var(--fs-sm);

@@ -1,0 +1,300 @@
+/* Machines: sections of grouped lists — a heading, a line under it, rows separated by hairlines
+   inside one rounded box. Tables only where the data is a table (the job queue). */
+
+.msections {
+  display: flex;
+  flex-direction: column;
+  gap: 44px;
+}
+
+.msection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.msection__head {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.msection__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.msection__title {
+  font-size: var(--fs-h3);
+  font-weight: 600;
+}
+
+.msection__sub {
+  max-width: 72ch;
+  color: var(--label-2);
+}
+
+/* A grouped list. */
+.mlist {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.mrow {
+  position: relative;
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  min-height: 52px;
+  padding: 10px 12px 10px 16px;
+}
+
+.mrow + .mrow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 40px;
+  height: 1px;
+  background: var(--sep);
+}
+
+.mrow__order {
+  flex: none;
+  width: 14px;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+  text-align: right;
+}
+
+.mrow__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--label-2);
+  background: var(--bg-raised);
+  border-radius: 8px;
+  box-shadow: 0 0 0 0.5px var(--sep);
+}
+
+.mrow__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mrow__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.mrow__name {
+  font-weight: 500;
+}
+
+.mrow__state {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.mrow__state--offline {
+  color: var(--red);
+}
+
+.mrow__state--draining {
+  color: var(--amber);
+}
+
+.mrow__tag {
+  padding: 0 7px;
+  font-size: var(--fs-xs);
+  line-height: 18px;
+  color: var(--label-2);
+  background: var(--fill);
+  border-radius: 999px;
+}
+
+.mrow__sub {
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mrow__side {
+  display: flex;
+  flex: none;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.mrow__meta {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.mtable {
+  padding: 12px 16px 4px;
+  overflow-x: auto;
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.mtable .table td {
+  border-bottom-color: var(--sep);
+}
+
+.mform {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.mform .input {
+  flex: 1 1 220px;
+}
+
+/* A value shown once, to copy: an install command, a fresh API token. */
+.reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  background: var(--accent-soft);
+  border-radius: var(--r-lg);
+}
+
+.reveal__row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+}
+
+.reveal__value {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-raised);
+}
+
+.reveal__note {
+  color: var(--label-2);
+}
+
+.reveal__extra {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+/* --- Browser: the screencast and the lease desk beside it ------------------------------------- */
+
+.computer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+.screen {
+  display: grid;
+  place-items: center;
+  min-height: 420px;
+  aspect-ratio: 16 / 10;
+  padding: 12px;
+  background: var(--bg-sunk);
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--sep);
+}
+
+.screen .empty {
+  color: var(--label-3);
+}
+
+.screen__frame {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--r-sm);
+}
+
+.desk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--bg-grouped);
+  border-radius: var(--r-lg);
+}
+
+.desk h2 {
+  font-size: 15px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--label-3);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--label);
+}
+
+.desk .actions .btn {
+  flex: 1;
+}
+
+.desk h3 {
+  margin-top: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.desk__queue {
+  color: var(--label-2);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .computer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .screen {
+    min-height: 220px;
+  }
+}
+
+@media (max-width: 640px) {
+  .msection__head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mrow {
+    flex-wrap: wrap;
+  }
+
+  .mrow__side {
+    margin-left: auto;
+  }
+}

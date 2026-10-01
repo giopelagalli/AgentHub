@@ -110,6 +110,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - JD's side of the assistant scope (plan Phase 1): built and reviewed on `telegramManager`'s
   `agenthub-phase1` branch — project tools, `/projects`, turn reports, a Projects briefing line.
   Waiting on the owner: an *assistant* token labelled `JD`, `.env`, checkout, restart.
+- JD's web door (FR-C4, 0069): built and reviewed on `telegramManager`'s `jd-web-door` branch
+  (cut from `agenthub-phase1`); the hub side is merged. Waiting on the owner: one shared
+  `JD_WEB_TOKEN` in both env files, `pip install -e .` for aiohttp, restarts.
 
 ## Next (in order)
 
@@ -120,7 +123,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
    claude-code on Linux once its egress can be narrowed to HTTPS (a proxy over a socket or a
    filtered namespace, 0064), and the installer putting pi (and `bubblewrap`) on a node.
-3. The web door: JD's side deployed (FR-C4); FR-C5.
+3. FR-C5 (JD's model through the hub's door) when the owner wants it; call mode (plan Phase 3).
 4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
    over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
 5. Accounts, grants, per-member JD, the public site (FR-F1–F6).

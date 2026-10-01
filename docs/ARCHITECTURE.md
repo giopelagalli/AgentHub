@@ -159,7 +159,9 @@ other projects (`hiddenPaths(hostSecrets(), workspace)`), writes to the workspac
 policy is read-only) and the run's temp dir only, network to a loopback door only (on Linux
 through a per-run unix-socket bridge, `serveDoorSocket`, since the sandbox has its own loopback) —
 and `sandboxStatus({ doorBase })` probes it by running it, caching a success. `detect.ts` is "is the CLI on PATH *and* can this host sandbox it", which `routes.ts`
-serves as `GET /api/harnesses` (with the reason when not); pi is never run unconfined. The reviewer
+serves as `GET /api/harnesses` (with the reason when not); pi is never run unconfined. The
+project's default is set by `POST /api/projects/:slug/harness` in `server.ts`, with the member
+route's refusals plus claude-code on a Local-only project (0068). The reviewer
 stays on `builtin` (FR-G4) unless `HARNESS_REVIEWER_PI=1`, which runs it on pi with read-only tools.
 `claude-code.ts` runs the `claude` CLI (`-p --output-format stream-json`) on the hub host's own
 signed-in subscription — no key in the hub, Anthropic/Claude env vars stripped, HOME kept — in the

@@ -74,7 +74,7 @@ describe('auth policy', () => {
       ['GET', '/api/tokens'], ['POST', '/api/tokens'], ['POST', '/api/nodes/enrollment-tokens'],
       ['GET', '/api/projects/:slug/terminal'], ['PUT', '/api/projects/:slug/code/file'], ['POST', '/api/projects/:slug/media'],
       ['POST', '/api/projects/:slug/archive'], ['PUT', '/api/projects/:slug/prd'], ['GET', '/api/projects/:slug'],
-      ['POST', '/api/projects/:slug/autorun'], ['DELETE', '/api/projects'],
+      ['POST', '/api/projects/:slug/autorun'], ['POST', '/api/projects/:slug/harness'], ['DELETE', '/api/projects'],
     ] as const) expect(routeAccess(method, route), `${method} ${route}`).toBe('owner');
   });
 

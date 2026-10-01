@@ -1,4 +1,4 @@
-import { PRIORITY_RANK, type HarnessInfo, type HarnessKind, type ModelCatalog, type ModelPolicy, type Priority, type TeamMemberView } from '@agenthub/shared';
+import { CLAUDE_CODE_LOCAL_ONLY_REASON, HARNESS_KINDS, PRIORITY_RANK, type HarnessInfo, type HarnessKind, type ModelCatalog, type ModelPolicy, type Priority, type ProjectManifest, type TeamMemberView } from '@agenthub/shared';
 import { sendJson } from '../../api.js';
 import { el } from '../../dom.js';
 import { memberModelOptions, modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../../models.js';
@@ -145,14 +145,22 @@ const HARNESS_LABELS: Record<HarnessKind, string> = {
   'claude-code': 'Claude Code',
 };
 
+/** The kind a manifest's `harness` names, read defensively: the manifest is hand-editable YAML. */
+export function projectHarness(manifest: Pick<ProjectManifest, 'harness'> | null | undefined): HarnessKind {
+  const kind = manifest?.harness;
+  return kind && HARNESS_KINDS.includes(kind) ? kind : 'builtin';
+}
+
 /**
  * The employee's Harness select, beside their Model one (FR-G4), filled into `slot` — which the
  * drawer already shows, so a harness list that lands after the drawer opened still appears in it.
- * Only harnesses this hub host can actually run are offered — a kind whose CLI is missing would
- * only fail at turn time — so with nothing installed but the built-in loop there is no choice to
- * make and the slot stays empty.
+ * "Project default (…)" names what the project runs on; after it, only harnesses this hub host can
+ * actually run are offered — a kind whose CLI is missing would only fail at turn time — so with
+ * nothing installed but the built-in loop there is no choice to make and the slot stays empty.
  */
-export function fillHarnessField(slot: HTMLElement, slug: string, member: TeamMemberView, harnesses: HarnessInfo[]): void {
+export function fillHarnessField(
+  slot: HTMLElement, slug: string, member: TeamMemberView, harnesses: HarnessInfo[], projectDefault: HarnessKind,
+): void {
   const offered = harnesses.filter((h) => h.available);
   slot.replaceChildren();
   slot.hidden = offered.length < 2;
@@ -160,31 +168,68 @@ export function fillHarnessField(slot: HTMLElement, slug: string, member: TeamMe
   const field = el('label', 'drawer__field');
   field.append(el('span', 'drawer__fieldlabel', 'Harness'));
   const select = el('select', 'select');
+  const fallback = el('option', undefined, `Project default (${HARNESS_LABELS[projectDefault]})`);
+  fallback.value = '';
+  select.appendChild(fallback);
   for (const harness of offered) {
-    const item = el('option', undefined, harness.kind === 'builtin'
-      ? `${HARNESS_LABELS.builtin} (project default)`
-      : `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`);
-    item.value = harness.kind === 'builtin' ? '' : harness.kind;
+    const item = el('option', undefined, `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`);
+    item.value = harness.kind;
     select.appendChild(item);
   }
-  const current = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
-  select.value = current;
-  const hint = el('p', 'drawer__fieldhint', 'pi is not confined to the workspace.');
-  const showHint = (): void => { hint.hidden = select.value !== 'pi'; };
+  let saved = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
+  select.value = saved;
   select.addEventListener('change', () => {
-    showHint();
     const next = select.value ? (select.value as HarnessKind) : null;
     void sendJson(`/api/projects/${slug}/team/${member.id}`, { harness: next }, 'PATCH')
-      .then(() => toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`))
+      .then(() => { saved = select.value; toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`); })
       .catch((error: unknown) => {
         toast(`Could not set ${member.name}'s harness: ${String(error)}`, 'error');
-        select.value = current;
-        showHint();
+        select.value = saved;
       });
   });
   field.appendChild(select);
-  showHint();
-  slot.append(field, hint);
+  slot.append(field);
+}
+
+/**
+ * The project's Harness select, for the settings sheet: every kind the hub reports, with the ones it
+ * cannot run here — and claude-code on a Local-only project — disabled, and each one's reason
+ * returned for the row to show. `null` under the drawer's rule: nothing but the built-in loop runs
+ * on this host, so there is no choice to make.
+ */
+export function projectHarnessPicker(
+  slug: string, manifest: Pick<ProjectManifest, 'harness' | 'modelPolicy'>, harnesses: HarnessInfo[],
+): { select: HTMLSelectElement; reasons: string[] } | null {
+  if (harnesses.filter((h) => h.available).length < 2) return null;
+  const localOnly = manifest.modelPolicy?.prefer === 'local';
+  const select = el('select', 'select');
+  select.setAttribute('aria-label', 'Harness');
+  const reasons: string[] = [];
+  for (const harness of harnesses) {
+    const item = el('option', undefined, HARNESS_LABELS[harness.kind]);
+    item.value = harness.kind;
+    const reason = !harness.available
+      ? harness.reason ?? `${harness.kind} is not installed on this hub`
+      : harness.kind === 'claude-code' && localOnly ? CLAUDE_CODE_LOCAL_ONLY_REASON : undefined;
+    if (reason) {
+      item.disabled = true;
+      item.title = reason;
+      reasons.push(`${HARNESS_LABELS[harness.kind]}: ${reason}`);
+    }
+    select.appendChild(item);
+  }
+  let saved: string = projectHarness(manifest);
+  select.value = saved;
+  select.addEventListener('change', () => {
+    const next = select.value as HarnessKind;
+    void sendJson(`/api/projects/${slug}/harness`, { harness: next })
+      .then(() => { saved = next; toast(`Employees now run on ${HARNESS_LABELS[next]} unless given their own.`); })
+      .catch((error: unknown) => {
+        toast(`Could not set the harness: ${String(error)}`, 'error');
+        select.value = saved;
+      });
+  });
+  return { select, reasons };
 }
 
 /**

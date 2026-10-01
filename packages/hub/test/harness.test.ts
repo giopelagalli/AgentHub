@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { dump, load } from 'js-yaml';
-import type { HarnessKind, TeamMember, TeamRoster, TurnEvent } from '@agenthub/shared';
+import { CLAUDE_CODE_LOCAL_ONLY_REASON, type HarnessKind, type TeamMember, type TeamRoster, type TurnEvent } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
 import { ApiTokens } from '../src/door.js';
@@ -483,5 +483,45 @@ describe('the harness API', () => {
     // A harness this host cannot run is refused rather than accepted and quietly ignored at turn time.
     const refused = await hub.app.inject({ method: 'PATCH', url: `/api/projects/demo/team/${id}`, payload: { harness: 'claude-code' } });
     expect(refused.statusCode).toBe(400);
+  });
+
+  it("sets the project's default harness, and builtin clears it", async () => {
+    hubRoot = await mkdtemp(join(tmpdir(), 'agenthub-harness-api-'));
+    hub = createHub({ projectsRoot: hubRoot });
+    await hub.app.inject({ method: 'POST', url: '/api/projects', payload: { slug: 'demo', title: 'Demo', intent: 'ship it' } });
+    const setProject = (harness: unknown) =>
+      hub!.app.inject({ method: 'POST', url: '/api/projects/demo/harness', payload: { harness } });
+    const read = async () => ((await hub!.app.inject({ method: 'GET', url: '/api/projects/demo' })).json() as {
+      manifest: { harness?: HarnessKind };
+    }).manifest.harness;
+
+    const set = await setProject('pi');
+    expect(set.statusCode).toBe(200);
+    expect(set.json().harness).toBe('pi');
+    expect(await read()).toBe('pi');
+
+    // The same refusals as an employee's choice: a kind that does not exist, or one this host cannot run.
+    expect((await setProject('bogus')).statusCode).toBe(400);
+    const unavailable = await setProject('claude-code');
+    expect(unavailable.statusCode).toBe(400);
+    expect(unavailable.json().error).toBe('claude-code is not installed on this hub');
+    expect(await read()).toBe('pi');
+
+    const cleared = await setProject('builtin');
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().harness).toBeUndefined();
+    expect(await read()).toBeUndefined();
+
+    expect((await hub.app.inject({ method: 'POST', url: '/api/projects/ghost/harness', payload: { harness: 'pi' } })).statusCode).toBe(404);
+  });
+
+  it('refuses claude-code for a Local-only project, saying why the run would', async () => {
+    hubRoot = await mkdtemp(join(tmpdir(), 'agenthub-harness-api-'));
+    hub = createHub({ projectsRoot: hubRoot });
+    await hub.app.inject({ method: 'POST', url: '/api/projects', payload: { slug: 'demo', title: 'Demo', intent: 'ship it' } });
+    expect((await hub.app.inject({ method: 'POST', url: '/api/projects/demo/model', payload: { prefer: 'local' } })).statusCode).toBe(200);
+    const refused = await hub.app.inject({ method: 'POST', url: '/api/projects/demo/harness', payload: { harness: 'claude-code' } });
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toBe(CLAUDE_CODE_LOCAL_ONLY_REASON);
   });
 });

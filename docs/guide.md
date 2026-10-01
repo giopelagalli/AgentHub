@@ -285,10 +285,14 @@ For now Claude Code runs on a **macOS** hub only. On Linux the sandbox could onl
 host's whole network, your local services included, so the Harness list says "claude-code's
 network sandbox is not yet available on Linux" until that can be narrowed to HTTPS.
 
-**Choosing it.** Open an employee's drawer — click their face on the Overview — and use the
-**Harness** select under Model. The field only appears when there is more than one harness to pick
-from, and **Built-in loop (project default)** puts them back on whatever the project uses. Nothing
-else changes: their model override, their standing instructions and their history all stay.
+**Choosing it.** For the whole project, open **Settings** from the toolbar's **⋯** menu and use
+**Harness** under Models: every employee runs on it unless given their own. Harnesses this hub
+can't run are greyed out with the reason underneath, and so is Claude Code in a **Local-only**
+project. For one employee, open their drawer — click their face on the Overview — and use the
+**Harness** select under Model; **Project default (pi)**, or whatever the project uses, puts them
+back on the project's choice. Either field only appears when there is more than one harness to
+pick from. Nothing else changes: their model override, their standing instructions and their
+history all stay.
 
 **What to know before you switch someone:**
 

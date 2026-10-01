@@ -3,7 +3,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { dump, load } from 'js-yaml';
 import { simpleGit, type SimpleGit } from 'simple-git';
-import type { AutoRun, DocPage, Milestone, ModelPolicy, PreviewConfig, Priority, ProjectIntake, ProjectSource, TeamMember } from '@agenthub/shared';
+import type { AutoRun, DocPage, HarnessKind, Milestone, ModelPolicy, PreviewConfig, Priority, ProjectIntake, ProjectSource, TeamMember } from '@agenthub/shared';
 import { auditPrd, prdScaffold } from './prd.js';
 import { newTeamMember, validateBriefing, validateDocSlug, validateSlug, type Briefing, type Manifest, type NewMemberResult, type ProjectStatus, type TaskItem, type Tasks } from './schema.js';
 
@@ -341,6 +341,15 @@ export class ProjectBundle {
     const m = await this.manifest();
     if (policy) m.modelPolicy = policy;
     else delete m.modelPolicy;
+    m.updatedAt = Date.now();
+    await this.writeManifest(m);
+  }
+
+  /** The harness the project's employees run on by default; `undefined` clears it back to `builtin`. */
+  async setHarness(harness: HarnessKind | undefined): Promise<void> {
+    const m = await this.manifest();
+    if (harness) m.harness = harness;
+    else delete m.harness;
     m.updatedAt = Date.now();
     await this.writeManifest(m);
   }

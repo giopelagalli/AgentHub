@@ -131,12 +131,6 @@
   background-color: var(--bg-raised);
 }
 
-.drawer__fieldhint {
-  padding: 0 12px 8px;
-  font-size: var(--fs-xs);
-  color: var(--amber);
-}
-
 /* "Now": what they are on, live. */
 .now {
   margin: 0;

@@ -10,6 +10,7 @@ import type { Transcript } from '../agents/transcript.js';
 import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
+import type { MediaDesk } from './media.js';
 import { ProjectBundle } from './bundle.js';
 import { assertPushable, pushBranchFor, type Github } from './github.js';
 import { ProjectOrchestrator } from './orchestrator.js';
@@ -40,6 +41,8 @@ export interface ProjectServiceDeps {
   /** Present once the hub wires the shared browser; absent, orchestrators get no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
+  /** Queues media renders; absent, a designer gets no generate_image / generate_video. */
+  media?: MediaDesk;
   /** The configured external tools (grok/gemini/search), minus anything outward. */
   external?: Tool[];
   /** The hub's own door, which an employee on an external harness (pi) calls models through. */
@@ -458,9 +461,9 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent, door } = this.deps;
+    const { loop, gateway, queue, registry, transcript, github, leases, browser, media, external, onBusy, onEvent, door } = this.deps;
     const orchestrator = new ProjectOrchestrator({
-      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, github, leases, browser, external,
+      bundle: await this.get(slug), loop, gateway, queue, registry, transcript, github, leases, browser, media, external,
       ...(door ? { door } : {}),
       ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
       onEvent: (sessionId, e, at) => {

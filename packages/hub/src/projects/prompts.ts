@@ -193,6 +193,8 @@ export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[]
     `  browser_read, browser_click, browser_type and browser_screenshot — but only while you hold`,
     `  the lease, and every use renews it. For a self-contained browsing task, prefer delegating to a`,
     `  browser-operator subagent instead; either way, release the lease when you're done.`,
+    `- An app icon, hero image or demo clip is a designer's task: it renders on the GPU machine and`,
+    `  the file lands in the bundle's media/ — ask only for what the milestone needs; clips are slow.`,
     `- ALWAYS end your turn by calling publish_briefing. It is the master orchestrator's only view`,
     `  of this project, and a turn that ends without one is a turn that never reported.`,
     ``,
@@ -206,6 +208,7 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
   researcher: 'You investigate and report: read the workspace, gather what the task asks about, and answer with findings rather than changes.',
   reviewer: 'You review against the task: read the relevant files, judge whether they meet the stated bar, and report concrete problems.',
   'browser-operator': 'You drive the shared browser to complete the task: acquire the lease, navigate/read/click/type as needed, and report what you found or did.',
+  designer: 'You make the visual assets the task asks for — an app icon, a hero image, a demo clip — and report where each one landed.',
 };
 
 /**
@@ -245,6 +248,14 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
       `  the browser_* tools work only while you hold the lease, and every use renews it. Release the`,
       `  lease when you're done so others aren't blocked. If a tool replies "lease lost — owner took`,
       `  control", the owner preempted you; stop and report rather than retrying.`,
+    );
+  }
+  if (role === 'designer' && extraTools.length) {
+    lines.push(
+      `- You also have ${extraTools.join(' and ')}. Each renders on the owner's GPU machine, waits`,
+      `  until the file lands in the project's media/ folder and returns its path; write a concrete,`,
+      `  visual prompt (subject, style, colours, framing). A still takes a minute, a clip far longer —`,
+      `  render only what the task asks for, and put the returned paths in your report.`,
     );
   }
   lines.push(

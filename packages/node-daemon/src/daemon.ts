@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { dataStamp } from '@agenthub/shared/data-stamp';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { NodeRegistration } from '@agenthub/shared';
-import type { BrowserConfig, DaemonConfig } from './config.js';
+import { workflowPaths, type BrowserConfig, type DaemonConfig, type VideoConfig } from './config.js';
 import type { BrowserDriver } from './browser/driver.js';
 import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
@@ -220,13 +220,12 @@ export class Daemon {
   }
 
   /**
-   * Reads the ComfyUI workflow template once at start-up (a missing or unreadable file should stop
-   * the daemon, not surface one job at a time). Falls back to the repo's documented MiniMax-H3
-   * template when the config names no path.
+   * Reads the ComfyUI workflow templates once at start-up (a missing or unreadable file should stop
+   * the daemon, not surface one job at a time); `workflowPaths` picks which file per job type.
    */
-  private loadWorkflowTemplate(video: { workflow?: string }): string {
-    const path = video.workflow ?? new URL('../../../deploy/spark/minimax-h3-t2v.json', import.meta.url).pathname;
-    return readFileSync(path, 'utf8');
+  private loadWorkflowTemplates(video: VideoConfig): { comfyUrl: string; workflowTemplate: string; imageTemplate: string } {
+    const paths = workflowPaths(video);
+    return { comfyUrl: video.comfyUrl, workflowTemplate: readFileSync(paths.video, 'utf8'), imageTemplate: readFileSync(paths.image, 'utf8') };
   }
 
   /** One registration attempt: ok, or a failure carrying both a short reason (for the retry log) and the error to throw if this was the last try. */
@@ -297,7 +296,7 @@ export class Daemon {
         workspaceRoot: this.cfg.workspaceRoot ?? join(process.cwd(), 'workspace'),
         claimIntervalMs: this.cfg.claimIntervalMs ?? 1000,
         authHeaders: this.authHeaders,
-        ...(this.cfg.video ? { video: { comfyUrl: this.cfg.video.comfyUrl, workflowTemplate: this.loadWorkflowTemplate(this.cfg.video) } } : {}),
+        ...(this.cfg.video ? { video: this.loadWorkflowTemplates(this.cfg.video) } : {}),
         onNodeNotFound: () => { void this.reregister('claim'); },
       });
       this.runner.start();

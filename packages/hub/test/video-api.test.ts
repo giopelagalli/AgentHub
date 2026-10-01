@@ -138,7 +138,8 @@ describe('POST /api/video', () => {
     const stored = await uploadArtifact(h, job.id, CLIP);
     expect(stored.statusCode).toBe(200);
     const bundle = await h.projects.get('reel');
-    const path = join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+    // FR-E2: a project's render lands in the bundle's media/, not the workspace (decision 0060).
+    const path = join(bundle.dir, 'media', `video-${job.id}.mp4`);
     expect(stored.json().path).toBe(path);
     expect(await readFile(path)).toEqual(CLIP);
   });

@@ -33,8 +33,26 @@ export interface ControlNodeConfig {
    */
   env?: Record<string, string>;
 }
-/** Local ComfyUI used by the `video-gen` executor. `workflow` is a path to the JSON template. */
-export interface VideoConfig { comfyUrl: string; workflow?: string; }
+/**
+ * Local ComfyUI used by the `image-gen` / `video-gen` executors. `workflows.image` and
+ * `workflows.video` are paths to the JSON templates per job type; `workflow` is the older single
+ * (video) template and is still read when `workflows.video` is absent.
+ */
+export interface VideoConfig { comfyUrl: string; workflow?: string; workflows?: { image?: string; video?: string } }
+
+const repoFile = (rel: string): string => new URL(`../../../${rel}`, import.meta.url).pathname;
+
+/**
+ * Which template file each media job type runs. Video: `workflows.video`, else the legacy
+ * `workflow`, else the repo's MiniMax-H3 template (what a config naming nothing always got).
+ * Image: `workflows.image`, else the repo's Qwen-Image template.
+ */
+export function workflowPaths(video: VideoConfig): { image: string; video: string } {
+  return {
+    video: video.workflows?.video ?? video.workflow ?? repoFile('deploy/spark/minimax-h3-t2v.json'),
+    image: video.workflows?.image ?? repoFile('deploy/amd/comfy/qwen-image-t2i.json'),
+  };
+}
 export interface DaemonConfig {
   node: { name: string; arch: string };
   hub: string;

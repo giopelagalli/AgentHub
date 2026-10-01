@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { roadmapEmptyState, roadmapRows, type Milestone, type RoadmapDoc } from '../src/roadmap.js';
+import { dropMove, roadmapEmptyState, roadmapRows, type Milestone, type RoadmapDoc } from '../src/roadmap.js';
 
 function milestone(id: string, overrides: Partial<Milestone> = {}): Milestone {
   return { id, title: id, summary: `${id} summary`, status: 'planned', ...overrides };
@@ -53,6 +53,14 @@ describe('roadmapRows', () => {
   it('has no rows for an empty or missing roadmap', () => {
     expect(roadmapRows({ milestones: [] })).toEqual([]);
     expect(roadmapRows(null)).toEqual([]);
+  });
+});
+
+describe('dropMove', () => {
+  it('asks for the 0-based place of the row it was dropped on, in one request', () => {
+    const rows = roadmapRows(doc);
+    expect(dropMove(rows[2], rows[0])).toEqual({ id: 'm3', to: 0 });
+    expect(dropMove(rows[0], rows[2])).toEqual({ id: 'm1', to: 2 });
   });
 });
 

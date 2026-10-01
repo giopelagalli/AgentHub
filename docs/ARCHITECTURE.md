@@ -55,8 +55,8 @@ menus), `panels/modal.ts` (the dialog the settings and New project sheets fill) 
 from DOM code and tested in node; the docs shell is the one DOM-tested part (happy-dom, 0052).
 CodeMirror is the Code tab's and is loaded only when Files opens (0043); its chrome uses the
 tokens and its syntax palette follows the scheme. `@xterm/xterm` and `@xterm/addon-fit` are the
-terminal's and are imported eagerly (0041, and the lazy-load follow-up on ROADMAP). Bundle after
-the redesign: 535 kB JS (157 kB gzip) and 84 kB CSS (17 kB gzip), plus the 565 kB editor chunk.
+terminal's and load only when the Terminal opens, with their CSS (0041). Bundle: 200 kB JS (72 kB
+gzip) and 79 kB CSS (15 kB gzip), plus the 565 kB editor chunk and the 336 kB terminal chunk.
 
 **`packages/ui/src/panels/docshell.ts`** — the docs shell (0047): one three-column documentation
 layout (grouped, filterable page rail; breadcrumb, title and pager; *On this page*), used by the
@@ -93,14 +93,15 @@ line and is the only route family outside `/api/` that is guarded.
 `auto`, provider and model overrides), streams OpenAI-compatible or Anthropic chat, fails over,
 marks unhealthy endpoints, sends per-endpoint `priority` — or a caller's per-request
 `priorityOverride` (0035) — and `requestExtras` (0006, 0008),
-refuses switched-off models and cloud past the spend cap (0002, 0019, 0024). It is the only place
+refuses switched-off models and cloud past the spend cap (0002, 0019, 0024), and skips drained
+and models-paused nodes (0054). It is the only place
 a model is ever called, and it prices each request as it finishes.
 
 **`providers/`** — `anthropic.ts` (SDK streaming) and `fireworks.ts` (base URL, the curated
 model list with `hard` flags and prices, the key env). No I/O beyond what the gateway asks.
 
 **`node-registry.ts`** / **`db.ts`** / **`queue.ts`** — nodes (with owner, token hash,
-draining, hardware), the SQLite schema with `ensureColumn` migrations, and the priority job queue
+draining, models-paused, hardware), the SQLite schema with `ensureColumn` migrations, and the priority job queue
 with fencing and requeue-on-offline. SQLite because one hub, tens of projects, a few users.
 
 **`enrollment.ts`** — one-time enrollment tokens, hashing, the install command; the hub serves
@@ -199,8 +200,9 @@ at shutdown the groups are killed outright, since the hub will not be there to r
 It is registered only when the hub has a password, and refuses an upgrade whose `Origin` names any
 host:port but its own — a WebSocket handshake is not same-origin-policed and carries cookies. The socket is paused until the pty and its
 listeners are wired, because the handshake completes before the handler runs and xterm's first frame
-is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
-addon, reconnect with a banner — a reconnect is a *new* shell and says so).
+is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (the frame helpers and
+a lazy `mountTerminal`) and `terminal-mount.ts` (xterm.js, the fit addon, reconnect with a banner —
+a reconnect is a *new* shell and says so), the only module that imports xterm.
 
 **`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
 per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and

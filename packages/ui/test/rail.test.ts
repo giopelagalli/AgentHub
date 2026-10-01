@@ -98,6 +98,19 @@ describe('projectDot', () => {
     expect(projectDot(project('acme-portal'), state([turn({ outcome: 'completed' })]))).toBe('idle');
     expect(projectDot(project('acme-portal'), state())).toBe('idle');
   });
+
+  it('reads an aborted last turn as amber, not red, from loaded turns and from the hub\'s record alike', () => {
+    expect(projectDot(project('acme-portal'), state([turn({ outcome: 'aborted' })]))).toBe('needs');
+    expect(projectDot(project('acme-portal', { lastTurn: { outcome: 'aborted', endedAt: 5 } }), state())).toBe('needs');
+  });
+
+  it('falls back on the hub\'s record of the last turn when the browser has no turns for the project', () => {
+    const failed = project('acme-portal', { lastTurn: { outcome: 'error', endedAt: 5 } });
+    expect(projectDot(failed, state())).toBe('error');
+    expect(projectDot(project('acme-portal', { lastTurn: { outcome: 'stop', endedAt: 5 } }), state())).toBe('idle');
+    // Turns the browser does have are fresher than the snapshot.
+    expect(projectDot(failed, state([turn({ outcome: 'completed' })]))).toBe('idle');
+  });
 });
 
 describe('rail width memory', () => {

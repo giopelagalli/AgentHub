@@ -59,6 +59,46 @@ describe('drain', () => {
   });
 });
 
+describe('pause models', () => {
+  it('takes the node out of the gateway but it still claims jobs; resume restores it', async () => {
+    await register('spark');
+    expect(hub.gateway.pick('worker')?.node.name).toBe('spark');
+
+    const on = await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/models', payload: { paused: true } });
+    expect(on.statusCode).toBe(200);
+    expect(hub.registry.byName('spark')?.modelsPaused).toBe(true);
+    expect(hub.registry.byName('spark')?.draining).toBe(false);
+    expect(hub.gateway.pick('worker')).toBeNull();
+
+    await hub.app.inject({
+      method: 'POST', url: '/api/jobs',
+      payload: { type: 'shell-task', tier: 'worker', priority: 'batch', payload: { cmd: ['echo', 'hi'] } },
+    });
+    const claim = await hub.app.inject({ method: 'POST', url: '/api/jobs/claim', payload: { node: 'spark', types: ['shell-task'] } });
+    expect(claim.statusCode).toBe(200);
+
+    const off = await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/models', payload: { paused: false } });
+    expect(off.statusCode).toBe(200);
+    expect(hub.gateway.pick('worker')?.node.name).toBe('spark');
+  });
+
+  it('404s for an unknown node, 400 for a malformed body, 409 for a cloud node', async () => {
+    expect((await hub.app.inject({ method: 'POST', url: '/api/nodes/ghost/models', payload: { paused: true } })).statusCode).toBe(404);
+
+    await register('spark');
+    expect((await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/models' })).statusCode).toBe(400);
+    expect((await hub.app.inject({ method: 'POST', url: '/api/nodes/spark/models', payload: { paused: 'yes' } })).statusCode).toBe(400);
+
+    const cloudHub = createHub({ cloud: { anthropic: { client: unusedClient } } });
+    try {
+      const res = await cloudHub.app.inject({ method: 'POST', url: '/api/nodes/cloud-anthropic/models', payload: { paused: true } });
+      expect(res.statusCode).toBe(409);
+    } finally {
+      await cloudHub.stop();
+    }
+  });
+});
+
 describe('remove', () => {
   it('deletes the node, and 410s heartbeat and register for it within the lockout window', async () => {
     await register('gone');

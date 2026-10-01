@@ -432,7 +432,8 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
     // ask for. Refused here instead, before anything is spent.
     if (resolved.local && !opts.gateway.localAvailable(resolved.tier)) {
       return reply.code(503).send(openAiError(
-        `no local endpoint is serving ${body.model}`, 'server_error', 'no_capacity',
+        `no local endpoint is serving ${body.model}${opts.gateway.localModelsPaused(resolved.tier) ? ' (local models paused)' : ''}`,
+        'server_error', 'no_capacity',
       ));
     }
     const includeUsage = (body.stream_options as { include_usage?: unknown } | undefined)?.include_usage === true;

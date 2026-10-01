@@ -524,4 +524,25 @@ describe('the harness API', () => {
     expect(refused.statusCode).toBe(400);
     expect(refused.json().error).toBe(CLAUDE_CODE_LOCAL_ONLY_REASON);
   });
+
+  it("refuses claude-code for an employee on a Local-only project, and accepts it on an Auto one", async () => {
+    process.env.FAKE_CLAUDE_AUTH = 'subscription';
+    hubRoot = await mkdtemp(join(tmpdir(), 'agenthub-harness-api-'));
+    hub = createHub({ projectsRoot: hubRoot });
+    await hub.app.inject({ method: 'POST', url: '/api/projects', payload: { slug: 'demo', title: 'Demo', intent: 'ship it' } });
+    const id = ((await hub.app.inject({ method: 'GET', url: '/api/projects/demo/team' })).json() as TeamRoster).members[0].id;
+    const patch = (harness: unknown) =>
+      hub!.app.inject({ method: 'PATCH', url: `/api/projects/demo/team/${id}`, payload: { harness } });
+    const accepted = await patch('claude-code');
+    expect(accepted.statusCode).toBe(200);
+    expect((accepted.json() as TeamMember).harness).toBe('claude-code');
+
+    expect((await hub.app.inject({ method: 'POST', url: '/api/projects/demo/model', payload: { prefer: 'local' } })).statusCode).toBe(200);
+    const refused = await patch('claude-code');
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error).toBe(CLAUDE_CODE_LOCAL_ONLY_REASON);
+    // Other harnesses, and clearing the choice, are unaffected.
+    expect((await patch('pi')).statusCode).toBe(200);
+    expect((await patch(null)).statusCode).toBe(200);
+  });
 });

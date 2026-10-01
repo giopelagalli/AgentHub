@@ -1882,13 +1882,16 @@ export function createHub(opts: HubOptions = {}): Hub {
     if (body.model === undefined && body.harness === undefined) return reply.code(400).send({ error: 'invalid model' });
     const validated = body.model === undefined || body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
     if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });
+    const bundle = await resolveProject(slug, reply);
+    if (!bundle) return reply;
     if (body.harness !== undefined && body.harness !== null) {
       const offered = (await harnessStatus(selfBase())).find((h) => h.kind === body.harness);
       if (!offered) return reply.code(400).send({ error: 'invalid harness' });
+      if (body.harness === 'claude-code' && (await bundle.manifest()).modelPolicy?.prefer === 'local') {
+        return reply.code(400).send({ error: CLAUDE_CODE_LOCAL_ONLY_REASON });
+      }
       if (!offered.available) return reply.code(400).send({ error: `${body.harness} is not installed on this hub` });
     }
-    const bundle = await resolveProject(slug, reply);
-    if (!bundle) return reply;
     const members = await bundle.team();
     const member = members.find((m) => m.id === id);
     if (!member) return reply.code(404).send({ error: 'unknown member' });

@@ -158,7 +158,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       harnesses = next;
       const open = harnessSlot;
       const member = open ? roster?.members.find((m) => m.id === open.memberId) : undefined;
-      if (open && member) fillHarnessField(open.slot, open.slug, member, harnesses, projectHarness(selected()));
+      if (open && member) fillHarnessField(open.slot, open.slug, member, harnesses, projectHarness(selected()), selected()?.modelPolicy?.prefer === 'local');
       settings?.refresh();
     })
     .catch(() => { /* the drawer simply shows no Harness field */ });
@@ -291,7 +291,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         : undefined;
     const slot = el('div', 'drawer__harness');
     slot.hidden = true;
-    if (member) fillHarnessField(slot, slug, member, harnesses, projectHarness(project));
+    if (member) fillHarnessField(slot, slug, member, harnesses, projectHarness(project), project?.modelPolicy?.prefer === 'local');
     openDrawer(card.id, (into) => openChat(into, {
       name: card.name,
       subtitle: card.kind === 'manager' ? `Manager · ${project.title}` : `${card.role} · ${project.title}`,

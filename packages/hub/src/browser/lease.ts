@@ -1,27 +1,47 @@
 import { randomUUID } from 'node:crypto';
-import type { BrowserLease, BrowserRequester, BrowserRequesterKind, BrowserStatus } from '@agenthub/shared';
+import type { BrowserLease, BrowserRequester, BrowserRequesterKind, BrowserSlotStatus, BrowserStatus } from '@agenthub/shared';
 
 export type Requester = BrowserRequester;
 export type Lease = BrowserLease;
-export type LeaseStatus = Omit<BrowserStatus, 'node'>;
+export type LeaseStatus = Omit<BrowserStatus, 'node'> & { slots: BrowserSlotStatus[] };
 
-export type AcquireResult = { granted: true; leaseId: string } | { queued: true; position: number };
+/** One session in the pool: a browser node and a context on it. */
+export interface SlotRef { node: string; slot: number }
+/** A slot as the pool provider reports it; a draining slot keeps its lease but takes no new one. */
+export interface PoolSlot extends SlotRef { draining?: boolean }
+
+export type AcquireResult = { granted: true; leaseId: string; node: string; slot: number } | { queued: true; position: number };
 
 /** Owner beats orchestrator beats subagent; ties are FIFO. */
 const RANK: Record<BrowserRequesterKind, number> = { owner: 0, orchestrator: 1, subagent: 2 };
 
 export const DEFAULT_TTL_MS = 120_000;
 
+/** The pool when nobody supplies one: a single slot, which is the pre-pool, one-browser behaviour. */
+const SINGLE_SLOT: PoolSlot[] = [{ node: 'browser', slot: 0 }];
+
+export class NoSuchSlotError extends Error {
+  constructor(target: SlotRef) {
+    super(`no browser slot ${target.node}#${target.slot}`);
+    this.name = 'NoSuchSlotError';
+  }
+}
+
 /**
- * One browser, one holder. Everyone else waits in a priority FIFO — an owner never waits at all: an
- * owner acquisition preempts the current holder on the spot, whose next action then fails with
- * `lease lost`. The displaced holder is deliberately *not* pushed back onto the queue: it lost the
- * browser, and re-queueing it ahead of requesters who have been waiting would be the wrong order.
+ * The browser pool's leases (FR-D8). Every slot the provider reports — `(node, slot)` across the
+ * browser nodes — holds at most one lease; a project holds at most one slot, so a second acquire by
+ * anyone in the same project gets the project's existing lease back. When every open slot is held,
+ * requesters wait in a priority FIFO and the next free slot goes to its head. An owner never waits
+ * while there is a slot to take: "Take control" names a slot and preempts its holder on the spot,
+ * whose next action then fails with `lease lost` — the displaced holder is deliberately *not*
+ * re-queued ahead of requesters who have been waiting.
  *
  * A lease is only valid until `expiresAt`; every action renews it, so a crashed or hung holder is
- * swept away and the browser goes to whoever is next instead of wedging forever. Expiry is not the
- * sweep's alone: every read and every renew runs it first, so nobody can observe or use a lease that
- * is already overdue in the gap between sweeps.
+ * swept away and the slot goes to whoever is next instead of wedging forever. A lease on a slot that
+ * left the pool (its node went offline, was removed, or re-registered with fewer slots) is dropped
+ * the same way. A draining slot is still in the pool — its holder finishes — but is never handed out.
+ * Expiry is not the sweep's alone: every read and every renew runs it first, so nobody can observe
+ * or use a lease that is already overdue in the gap between sweeps.
  *
  * State is in memory on purpose: a hub restart means no agent is mid-session, so leases should not
  * survive it.
@@ -29,58 +49,69 @@ export const DEFAULT_TTL_MS = 120_000;
 export class LeaseManager {
   private readonly ttlMs: number;
   private readonly now: () => number;
-  private current: Lease | null = null;
+  private readonly pool: () => PoolSlot[];
+  /** Live leases by slot key. */
+  private held = new Map<string, Lease>();
   private waiting: Requester[] = [];
   private listeners: ((status: LeaseStatus) => void)[] = [];
 
-  constructor(opts: { ttlMs?: number; now?: () => number } = {}) {
+  constructor(opts: { ttlMs?: number; now?: () => number; slots?: () => PoolSlot[] } = {}) {
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.now = opts.now ?? Date.now;
+    this.pool = opts.slots ?? (() => SINGLE_SLOT);
   }
 
   /**
-   * Grants the lease, or returns the caller's 1-based place in the queue. Requests are keyed by
-   * `id` *and* `kind`, so an agent polling for its turn re-reads its own position instead of piling
-   * up duplicate entries, and the current holder asking again just renews. The kind is part of the
-   * key on purpose: the same id coming back as a different kind is a different request at a
-   * different priority — an `orchestrator` re-asking as `owner` preempts rather than renews, and one
-   * re-asking as `subagent` takes a fresh place in the queue instead of inheriting the old one.
+   * Grants a slot, or returns the caller's 1-based place in the queue. A requester already holding a
+   * lease — itself, or anyone in its project — gets that lease back, renewed; one already queued
+   * re-reads its position instead of piling up duplicate entries. Without a project, requests are
+   * keyed by `id` *and* `kind`: the same id coming back as a different kind is a different request at
+   * a different priority.
+   *
+   * An owner names a `target` slot to take it, preempting its holder; without one it renews its own
+   * lease, takes a free slot, or preempts the first open slot. Throws `NoSuchSlotError` for a target
+   * that is not in the pool.
    */
-  acquire(r: Requester): AcquireResult {
+  acquire(r: Requester, target?: SlotRef): AcquireResult {
     this.expireInternal();
-    if (this.current) {
-      if (same(this.current.requester, r)) {
-        this.current.expiresAt = this.now() + this.ttlMs;
-        return { granted: true, leaseId: this.current.leaseId };
-      }
-      if (r.kind !== 'owner') {
-        const waiting = this.waiting.findIndex((w) => same(w, r));
-        if (waiting >= 0) return { queued: true, position: waiting + 1 };
-        let i = this.waiting.length;
-        while (i > 0 && RANK[this.waiting[i - 1].kind] > RANK[r.kind]) i--;
-        this.waiting.splice(i, 0, r);
-        this.emit();
-        return { queued: true, position: i + 1 };
-      }
-      this.current = null; // preempted by the owner
+    const slots = this.pool();
+    if (r.kind === 'owner' && target) {
+      const slot = slots.find((s) => s.node === target.node && s.slot === target.slot);
+      if (!slot) throw new NoSuchSlotError(target);
+      const current = this.held.get(key(slot));
+      if (current && same(current.requester, r)) return this.renewed(current);
+      return this.granted(r, slot);
     }
-    const leaseId = this.grant(r);
+    const own = this.leaseFor(r);
+    if (own) return this.renewed(own);
+    const waiting = this.waiting.findIndex((w) => same(w, r));
+    if (waiting >= 0) return { queued: true, position: waiting + 1 };
+
+    const free = this.freeSlot(slots);
+    if (free) return this.granted(r, free);
+    const open = slots.find((s) => !s.draining);
+    if (r.kind === 'owner' && open) return this.granted(r, open); // preempts the first open slot
+
+    let i = this.waiting.length;
+    while (i > 0 && RANK[this.waiting[i - 1].kind] > RANK[r.kind]) i--;
+    this.waiting.splice(i, 0, r);
     this.emit();
-    return { granted: true, leaseId };
+    return { queued: true, position: i + 1 };
   }
 
-  /** True when `leaseId` was the live holder; the queue's head is granted the browser next. */
+  /** True when `leaseId` was live; the queue's head is granted the freed slot next. */
   release(leaseId: string): boolean {
-    if (this.current?.leaseId !== leaseId) return false;
-    this.current = null;
-    this.grantNext();
+    const lease = this.byId(leaseId);
+    if (!lease) return false;
+    this.held.delete(key(lease));
+    this.pump();
     this.emit();
     return true;
   }
 
   /**
    * Removes a *queued* (not held) request, for a caller that gives up waiting before ever being
-   * granted the lease — an aborted poll, a cancelled turn. False if `id`/`kind` isn't in the queue
+   * granted a slot — an aborted poll, a cancelled turn. False if `id`/`kind` isn't in the queue
    * (already granted, already withdrawn, or never queued).
    */
   withdraw(id: string, kind: BrowserRequesterKind): boolean {
@@ -91,17 +122,33 @@ export class LeaseManager {
     return true;
   }
 
-  /** Pushes the holder's expiry out by a full TTL. False once the lease is gone — preempted, expired or released. */
+  /** Pushes the lease's expiry out by a full TTL. False once it is gone — preempted, expired or released. */
   renew(leaseId: string): boolean {
     this.expireInternal();
-    if (this.current?.leaseId !== leaseId) return false;
-    this.current.expiresAt = this.now() + this.ttlMs;
+    const lease = this.byId(leaseId);
+    if (!lease) return false;
+    lease.expiresAt = this.now() + this.ttlMs;
     return true;
   }
 
+  /** The live lease with this id, or null. */
+  get(leaseId: string): Lease | null {
+    this.expireInternal();
+    const lease = this.byId(leaseId);
+    return lease ? { ...lease } : null;
+  }
+
+  /** The live lease this requester holds — itself or through its project — or null. */
+  holderFor(r: Requester): Lease | null {
+    this.expireInternal();
+    const lease = this.leaseFor(r);
+    return lease ? { ...lease } : null;
+  }
+
   /**
-   * The live holder, or null. Expiry runs here rather than only on the sweep, so a lease that is
-   * past its TTL is never handed back to a caller that is about to act on it.
+   * The first live lease in pool order, or null — the one-browser view clients from before the pool
+   * read. Expiry runs here rather than only on the sweep, so a lease that is past its TTL is never
+   * handed back to a caller that is about to act on it.
    */
   holder(): Lease | null {
     this.expireInternal();
@@ -117,7 +164,10 @@ export class LeaseManager {
     return this.snapshot();
   }
 
-  /** Called by the hub sweep. Returns the ids it released, having already granted the next in line. */
+  /**
+   * Called by the hub sweep. Returns the ids it dropped (expired, or their slot left the pool), having
+   * already granted freed — or newly arrived — slots to the queue.
+   */
   expire(now = this.now()): string[] {
     return this.expireInternal(now);
   }
@@ -127,33 +177,85 @@ export class LeaseManager {
   }
 
   /**
-   * Emits, because every path that drops a lease — the sweep, a renew, an acquire, a plain read —
-   * changes what watchers see. The emit is safe against re-entry: a listener that reads back through
-   * `status()` re-enters here with either no holder and an empty queue, or a freshly granted lease,
-   * so the second pass finds nothing to expire and stops.
+   * Emits only on a change, because every path that drops or grants a lease — the sweep, a renew, an
+   * acquire, a plain read — changes what watchers see. The emit is safe against re-entry: a listener
+   * that reads back through `status()` re-enters here and finds nothing left to drop or grant.
    */
   private expireInternal(now = this.now()): string[] {
-    if (!this.current || this.current.expiresAt > now) return [];
-    const leaseId = this.current.leaseId;
-    this.current = null;
-    this.grantNext();
+    const inPool = new Set(this.pool().map(key));
+    const dropped: string[] = [];
+    for (const [k, lease] of this.held) {
+      if (lease.expiresAt > now && inPool.has(k)) continue;
+      this.held.delete(k);
+      dropped.push(lease.leaseId);
+    }
+    const granted = this.pump();
+    if (dropped.length || granted) this.emit();
+    return dropped;
+  }
+
+  /** Hands free open slots to the head of the queue. True when it granted anything. */
+  private pump(): boolean {
+    let granted = false;
+    const slots = this.pool();
+    while (this.waiting.length) {
+      const free = this.freeSlot(slots);
+      if (!free) break;
+      this.grant(this.waiting.shift()!, free);
+      granted = true;
+    }
+    return granted;
+  }
+
+  /** A free, non-draining slot on the least-loaded node (ties in pool order), or null. */
+  private freeSlot(slots: PoolSlot[]): PoolSlot | null {
+    const load = new Map<string, number>();
+    for (const lease of this.held.values()) load.set(lease.node, (load.get(lease.node) ?? 0) + 1);
+    let best: PoolSlot | null = null;
+    for (const s of slots) {
+      if (s.draining || this.held.has(key(s))) continue;
+      if (!best || (load.get(s.node) ?? 0) < (load.get(best.node) ?? 0)) best = s;
+    }
+    return best;
+  }
+
+  private leaseFor(r: Requester): Lease | null {
+    for (const lease of this.held.values()) if (same(lease.requester, r)) return lease;
+    return null;
+  }
+
+  private byId(leaseId: string): Lease | null {
+    for (const lease of this.held.values()) if (lease.leaseId === leaseId) return lease;
+    return null;
+  }
+
+  private renewed(lease: Lease): AcquireResult {
+    lease.expiresAt = this.now() + this.ttlMs;
+    return { granted: true, leaseId: lease.leaseId, node: lease.node, slot: lease.slot };
+  }
+
+  /** Grants `slot` to `r` — dropping whoever held it — and emits. */
+  private granted(r: Requester, slot: SlotRef): AcquireResult {
+    const lease = this.grant(r, slot);
     this.emit();
-    return [leaseId];
+    return { granted: true, leaseId: lease.leaseId, node: lease.node, slot: lease.slot };
+  }
+
+  private grant(r: Requester, slot: SlotRef): Lease {
+    const now = this.now();
+    const lease: Lease = { leaseId: randomUUID(), requester: r, expiresAt: now + this.ttlMs, node: slot.node, slot: slot.slot, since: now };
+    this.held.set(key(slot), lease);
+    return lease;
   }
 
   /** The state as it stands, without running expiry — what `emit()` hands listeners. */
   private snapshot(): LeaseStatus {
-    return { holder: this.current ? { ...this.current } : null, queue: this.queue() };
-  }
-
-  private grantNext(): void {
-    const next = this.waiting.shift();
-    if (next) this.grant(next);
-  }
-
-  private grant(r: Requester): string {
-    this.current = { leaseId: randomUUID(), requester: r, expiresAt: this.now() + this.ttlMs };
-    return this.current.leaseId;
+    const slots = this.pool().map((s): BrowserSlotStatus => {
+      const lease = this.held.get(key(s));
+      return { node: s.node, slot: s.slot, lease: lease ? { ...lease } : null, ...(s.draining ? { draining: true } : {}) };
+    });
+    const first = slots.find((s) => s.lease)?.lease ?? null;
+    return { holder: first, queue: this.queue(), slots };
   }
 
   private emit(): void {
@@ -162,7 +264,16 @@ export class LeaseManager {
   }
 }
 
-/** Requests are the same request only when both the requester id and its priority match. */
+function key(s: SlotRef): string {
+  return `${s.node}#${s.slot}`;
+}
+
+/**
+ * Whether two requests are the same holder. Within a project they are: the project holds one slot,
+ * whoever in it asks. The owner is never folded into a project, and requests without a project are
+ * the same request only when both the requester id and its priority match.
+ */
 function same(a: Requester, b: Requester): boolean {
+  if (a.kind !== 'owner' && b.kind !== 'owner' && a.project && b.project) return a.project === b.project;
   return a.id === b.id && a.kind === b.kind;
 }

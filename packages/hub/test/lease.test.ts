@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LeaseManager, type LeaseStatus, type Requester } from '../src/browser/lease.js';
+import { LeaseManager, NoSuchSlotError, type LeaseStatus, type PoolSlot, type Requester } from '../src/browser/lease.js';
 
 const owner: Requester = { kind: 'owner', id: 'owner' };
 const orch: Requester = { kind: 'orchestrator', id: 'orch-1', project: 'p' };
@@ -22,8 +22,8 @@ describe('LeaseManager', () => {
   it('grants a free browser and queues everyone else', () => {
     const { leases, at } = fixture();
     const first = leases.acquire(sub);
-    expect(first).toEqual({ granted: true, leaseId: expect.any(String) });
-    expect(leases.holder()).toEqual({ leaseId: granted(first), requester: sub, expiresAt: at() + 1000 });
+    expect(first).toEqual({ granted: true, leaseId: expect.any(String), node: 'browser', slot: 0 });
+    expect(leases.holder()).toEqual({ leaseId: granted(first), requester: sub, expiresAt: at() + 1000, node: 'browser', slot: 0, since: at() });
     expect(leases.acquire(orch)).toEqual({ queued: true, position: 1 });
     expect(leases.queue()).toEqual([orch]);
   });
@@ -44,7 +44,7 @@ describe('LeaseManager', () => {
     const id = granted(leases.acquire(sub));
     leases.acquire(orch);
     advance(400);
-    expect(leases.acquire(sub)).toEqual({ granted: true, leaseId: id });
+    expect(leases.acquire(sub)).toEqual({ granted: true, leaseId: id, node: 'browser', slot: 0 });
     expect(leases.holder()?.expiresAt).toBe(at() + 1000);
     expect(leases.acquire(orch)).toEqual({ queued: true, position: 1 });
     expect(leases.queue()).toHaveLength(1);
@@ -96,7 +96,7 @@ describe('LeaseManager', () => {
     const { leases, advance } = fixture();
     leases.acquire(sub);
     advance(1001);
-    expect(leases.acquire(orch)).toEqual({ granted: true, leaseId: expect.any(String) });
+    expect(leases.acquire(orch)).toEqual({ granted: true, leaseId: expect.any(String), node: 'browser', slot: 0 });
   });
 
   it('a re-acquire at a different priority is a new request, not a renewal', () => {
@@ -161,5 +161,80 @@ describe('LeaseManager', () => {
     expect(leases.withdraw(orch.id, 'orchestrator')).toBe(true);
     expect(leases.queue()).toEqual([]);
     expect(leases.withdraw(orch.id, 'orchestrator')).toBe(false); // already gone
+  });
+});
+
+describe('LeaseManager pool (FR-D8)', () => {
+  /** Two nodes, `a` with two slots and `b` with one; `pool` is mutable so a test can drain or drop a node. */
+  function pooled() {
+    let pool: PoolSlot[] = [{ node: 'a', slot: 0 }, { node: 'a', slot: 1 }, { node: 'b', slot: 0 }];
+    const leases = new LeaseManager({ ttlMs: 1000, now: () => 1_000_000, slots: () => pool });
+    return { leases, setPool: (p: PoolSlot[]) => { pool = p; } };
+  }
+  const proj = (project: string, kind: Requester['kind'] = 'orchestrator', id = `project:${project}`): Requester => ({ kind, id, project });
+  const slotOf = (r: ReturnType<LeaseManager['acquire']>) => ('granted' in r ? `${r.node}#${r.slot}` : null);
+
+  it('gives two projects different slots, spreading across nodes', () => {
+    const { leases } = pooled();
+    expect(slotOf(leases.acquire(proj('x')))).toBe('a#0');
+    expect(slotOf(leases.acquire(proj('y')))).toBe('b#0');
+    expect(slotOf(leases.acquire(proj('z')))).toBe('a#1');
+  });
+
+  it('hands a second acquire from the same project its existing lease', () => {
+    const { leases } = pooled();
+    const first = granted(leases.acquire(proj('x')));
+    expect(granted(leases.acquire(proj('x', 'subagent', 'subagent:x:s1')))).toBe(first);
+    expect(leases.status().slots.filter((s) => s.lease)).toHaveLength(1);
+  });
+
+  it('queues when every slot is held, and a release hands the freed slot to the head', () => {
+    const { leases } = pooled();
+    for (const p of ['x', 'y', 'z']) leases.acquire(proj(p));
+    expect(leases.acquire(proj('w'))).toEqual({ queued: true, position: 1 });
+    const y = leases.holderFor(proj('y'))!;
+    expect(leases.release(y.leaseId)).toBe(true);
+    const w = leases.holderFor(proj('w'));
+    expect(w && `${w.node}#${w.slot}`).toBe(`${y.node}#${y.slot}`);
+    expect(leases.queue()).toEqual([]);
+  });
+
+  it('never hands out a draining slot, but its holder keeps renewing', () => {
+    const { leases, setPool } = pooled();
+    const x = granted(leases.acquire(proj('x'))); // a#0
+    setPool([{ node: 'a', slot: 0, draining: true }, { node: 'a', slot: 1, draining: true }, { node: 'b', slot: 0 }]);
+    expect(leases.renew(x)).toBe(true);
+    expect(slotOf(leases.acquire(proj('y')))).toBe('b#0');
+    expect(leases.acquire(proj('z'))).toEqual({ queued: true, position: 1 });
+    expect(leases.status().slots.find((s) => s.node === 'a' && s.slot === 0)).toMatchObject({ draining: true, lease: { leaseId: x } });
+  });
+
+  it('drops a lease whose node left the pool, and grants the queue when a node arrives', () => {
+    const { leases, setPool } = pooled();
+    setPool([{ node: 'a', slot: 0 }]);
+    const x = granted(leases.acquire(proj('x')));
+    expect(leases.acquire(proj('y'))).toEqual({ queued: true, position: 1 });
+    setPool([{ node: 'b', slot: 0 }]); // a removed, b arrived
+    expect(leases.expire()).toEqual([x]);
+    expect(leases.holderFor(proj('y'))?.node).toBe('b');
+  });
+
+  it("lets the owner take control of a named slot, preempting only that slot's holder", () => {
+    const { leases } = pooled();
+    leases.acquire(proj('x')); // a#0
+    const y = granted(leases.acquire(proj('y'))); // b#0
+    expect(slotOf(leases.acquire(owner, { node: 'b', slot: 0 }))).toBe('b#0');
+    expect(leases.renew(y)).toBe(false);
+    expect(leases.holderFor(proj('x'))?.node).toBe('a');
+    expect(() => leases.acquire(owner, { node: 'nope', slot: 0 })).toThrow(NoSuchSlotError);
+  });
+
+  it('queues everyone, the owner first, while the pool is empty', () => {
+    const { leases, setPool } = pooled();
+    setPool([]);
+    expect(leases.acquire(proj('x'))).toEqual({ queued: true, position: 1 });
+    expect(leases.acquire(owner)).toEqual({ queued: true, position: 1 });
+    setPool([{ node: 'a', slot: 0 }]);
+    expect(leases.holder()?.requester).toEqual(owner);
   });
 });

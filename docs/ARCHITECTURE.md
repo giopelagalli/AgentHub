@@ -47,7 +47,7 @@ it, and the project's levers live in a settings sheet (`pages/project/settings.t
 `pages/project/controls.ts`). **Machines** (`pages/machines.ts`) is Nodes, Browser, Queue and
 Access over the old `cluster`/`computer`/`allocation` mounts, which keep their page ids so the
 store and the browser subscription are unchanged. The socket asks for the `browser` topic while
-the computer page or a project's Browser view (`views/browser.ts`, the project's slot; 0060) is on
+the computer page or a project's Browser view (`views/browser.ts`, the project's slot; 0063) is on
 screen — `wantsCast` in the store — and the frames are dropped when neither is. Styles are a token file (`styles/tokens.css`,
 light and dark, `data-theme` override) and one stylesheet per area in `styles/`, over `app.css`
 — the component styles that predate the redesign, written against token aliases. Icons are an

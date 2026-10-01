@@ -79,7 +79,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
   pi not offered where the sandbox cannot start. The reviewer on pi behind `HARNESS_REVIEWER_PI=1`.
 
-- Each project's live browser (FR-B7, 0060): Code → Browser shows the project's slot of the pool
+- Each project's live browser (FR-B7, 0063): Code → Browser shows the project's slot of the pool
   with Take control / Release, its place in the queue when every slot is busy, and a live dot on
   the switch while it holds one.
 

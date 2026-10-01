@@ -1,4 +1,4 @@
-# 0060 — A project's Browser view: whose slot it is, and no Open a browser
+# 0063 — A project's Browser view: whose slot it is, and no Open a browser
 Date: 2026-10-01
 Decided by: designer
 Status: accepted

@@ -52,7 +52,7 @@ export class LeaseManager {
   private readonly pool: () => PoolSlot[];
   /** Live leases by slot key. */
   private held = new Map<string, Lease>();
-  private waiting: Requester[] = [];
+  private waiting: Waiter[] = [];
   private listeners: ((status: LeaseStatus) => void)[] = [];
 
   constructor(opts: { ttlMs?: number; now?: () => number; slots?: () => PoolSlot[] } = {}) {
@@ -84,19 +84,17 @@ export class LeaseManager {
     }
     const own = this.leaseFor(r);
     if (own) return this.renewed(own);
-    const waiting = this.waiting.findIndex((w) => same(w, r));
-    if (waiting >= 0) return { queued: true, position: waiting + 1 };
+    const waiting = this.waiting.findIndex((w) => same(w.requester, r));
+    if (waiting >= 0) return { queued: true, position: this.fold(waiting, r) };
 
     const free = this.freeSlot(slots);
     if (free) return this.granted(r, free);
     const open = slots.find((s) => !s.draining);
     if (r.kind === 'owner' && open) return this.granted(r, open); // preempts the first open slot
 
-    let i = this.waiting.length;
-    while (i > 0 && RANK[this.waiting[i - 1].kind] > RANK[r.kind]) i--;
-    this.waiting.splice(i, 0, r);
+    const position = this.enqueue({ requester: r, members: [r] });
     this.emit();
-    return { queued: true, position: i + 1 };
+    return { queued: true, position };
   }
 
   /** True when `leaseId` was live; the queue's head is granted the freed slot next. */
@@ -111,13 +109,24 @@ export class LeaseManager {
 
   /**
    * Removes a *queued* (not held) request, for a caller that gives up waiting before ever being
-   * granted a slot — an aborted poll, a cancelled turn. False if `id`/`kind` isn't in the queue
-   * (already granted, already withdrawn, or never queued).
+   * granted a slot — an aborted poll, a cancelled turn. A project's entry stays while anyone else in
+   * the project still waits on it, at the best rank of those left. False if `id`/`kind` isn't in the
+   * queue (already granted, already withdrawn, or never queued).
    */
   withdraw(id: string, kind: BrowserRequesterKind): boolean {
-    const i = this.waiting.findIndex((w) => w.id === id && w.kind === kind);
+    const isIt = (m: Requester): boolean => m.id === id && m.kind === kind;
+    const i = this.waiting.findIndex((w) => w.members.some(isIt));
     if (i < 0) return false;
-    this.waiting.splice(i, 1);
+    const entry = this.waiting[i];
+    entry.members = entry.members.filter((m) => !isIt(m));
+    if (entry.members.length === 0) {
+      this.waiting.splice(i, 1);
+    } else if (isIt(entry.requester)) {
+      // The one it was queued as left: it now waits as the best of the rest, at that rank.
+      this.waiting.splice(i, 1);
+      entry.requester = entry.members.reduce((best, m) => (RANK[m.kind] < RANK[best.kind] ? m : best));
+      this.enqueue(entry);
+    }
     this.emit();
     return true;
   }
@@ -156,7 +165,7 @@ export class LeaseManager {
   }
 
   queue(): Requester[] {
-    return [...this.waiting];
+    return this.waiting.map((w) => w.requester);
   }
 
   status(): LeaseStatus {
@@ -201,10 +210,34 @@ export class LeaseManager {
     while (this.waiting.length) {
       const free = this.freeSlot(slots);
       if (!free) break;
-      this.grant(this.waiting.shift()!, free);
+      this.grant(this.waiting.shift()!.requester, free);
       granted = true;
     }
     return granted;
+  }
+
+  /**
+   * Adds `r` to the queued entry its project already has. A higher-priority member lifts the entry
+   * to its rank — an orchestrator joining its subagent's wait doesn't wait at subagent priority.
+   * Returns the entry's 1-based position.
+   */
+  private fold(i: number, r: Requester): number {
+    const entry = this.waiting[i];
+    if (!entry.members.some((m) => m.id === r.id && m.kind === r.kind)) entry.members.push(r);
+    if (RANK[r.kind] >= RANK[entry.requester.kind]) return i + 1;
+    this.waiting.splice(i, 1);
+    entry.requester = r;
+    const position = this.enqueue(entry);
+    this.emit();
+    return position;
+  }
+
+  /** Inserts behind everyone of the same or better rank; returns the 1-based position. */
+  private enqueue(entry: Waiter): number {
+    let i = this.waiting.length;
+    while (i > 0 && RANK[this.waiting[i - 1].requester.kind] > RANK[entry.requester.kind]) i--;
+    this.waiting.splice(i, 0, entry);
+    return i + 1;
   }
 
   /** A free, non-draining slot on the least-loaded node (ties in pool order), or null. */
@@ -263,6 +296,12 @@ export class LeaseManager {
     for (const cb of this.listeners) cb(status);
   }
 }
+
+/**
+ * One place in the queue. `requester` is who it is queued as — the best-ranked of `members`, and
+ * who is granted the slot; `members` are everyone in its project who asked while it waited.
+ */
+interface Waiter { requester: Requester; members: Requester[] }
 
 function key(s: SlotRef): string {
   return `${s.node}#${s.slot}`;

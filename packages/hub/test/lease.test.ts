@@ -229,6 +229,24 @@ describe('LeaseManager pool (FR-D8)', () => {
     expect(() => leases.acquire(owner, { node: 'nope', slot: 0 })).toThrow(NoSuchSlotError);
   });
 
+  it("lifts a project's queued entry to its best member's rank, and keeps it while one still waits", () => {
+    const { leases, setPool } = pooled();
+    setPool([{ node: 'a', slot: 0 }]);
+    leases.acquire(proj('held'));
+    expect(leases.acquire(proj('other'))).toEqual({ queued: true, position: 1 });
+    expect(leases.acquire(proj('x', 'subagent', 'sub-x'))).toEqual({ queued: true, position: 2 });
+    // x's orchestrator joins the wait: same entry, but at orchestrator rank — still behind `other`.
+    expect(leases.acquire(proj('x'))).toEqual({ queued: true, position: 2 });
+    expect(leases.acquire({ kind: 'subagent', id: 'loner' })).toEqual({ queued: true, position: 3 });
+    expect(leases.queue().map((r) => r.id)).toEqual(['project:other', 'project:x', 'loner']);
+
+    // The orchestrator gives up: the subagent still waits, at subagent rank again.
+    expect(leases.withdraw('project:x', 'orchestrator')).toBe(true);
+    expect(leases.queue().map((r) => r.id)).toEqual(['project:other', 'loner', 'sub-x']);
+    expect(leases.withdraw('sub-x', 'subagent')).toBe(true);
+    expect(leases.queue().map((r) => r.id)).toEqual(['project:other', 'loner']);
+  });
+
   it('queues everyone, the owner first, while the pool is empty', () => {
     const { leases, setPool } = pooled();
     setPool([]);

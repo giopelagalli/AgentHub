@@ -77,6 +77,16 @@ function requesterId(kind: BrowserRequesterKind, ctx: ToolContext): string {
 }
 
 /**
+ * The requester as the lease manager sees it: carrying the project, so everyone working on one
+ * project shares its one slot of the pool (FR-D8) — a subagent asking while its orchestrator holds
+ * the project's browser gets that lease back rather than a second slot.
+ */
+function requesterOf(kind: BrowserRequesterKind, ctx: ToolContext): Requester {
+  const id = requesterId(kind, ctx);
+  return ctx.bundle ? { kind, id, project: basename(ctx.bundle.dir) } : { kind, id };
+}
+
+/**
  * Per-session state, scoped to one `browserTools()` call: which leaseId (if any) this session last
  * acquired. `LeaseManager.holder()` alone can't tell "never acquired" from "acquired, then lost it to
  * a preemption" — both look like "someone else holds it now" — so the tools remember their own grant
@@ -115,15 +125,14 @@ async function act(
 }
 
 /**
- * The requester's current lease, if `leases.holder()` happens to be them right now. Used by every
+ * The requester's current lease — its own, or its project's — if it holds one right now. Used by every
  * path below that has to give up on a lease it can't address directly by leaseId: `withdraw` only
  * ever removes a *queued* entry, so a requester that was granted the lease between the last poll and
  * a giving-up check (abort, timeout) — or a fresh `held` map (a new turn) that never learned its
  * leaseId — needs this instead to find the lease it's about to release.
  */
-function holderMatching(deps: BrowserToolDeps, id: string, kind: BrowserRequesterKind): Lease | null {
-  const holder = deps.leases.holder();
-  return holder && holder.requester.id === id && holder.requester.kind === kind ? holder : null;
+function holderMatching(deps: BrowserToolDeps, requester: Requester): Lease | null {
+  return deps.leases.holderFor(requester);
 }
 
 /**
@@ -132,10 +141,12 @@ function holderMatching(deps: BrowserToolDeps, id: string, kind: BrowserRequeste
  * and this check), releases the lease instead so a caller that never recorded the leaseId — it gave
  * up before reaching the `held.set` — doesn't leave it held forever.
  */
-function giveUp(deps: BrowserToolDeps, id: string, kind: BrowserRequesterKind): void {
-  if (deps.leases.withdraw(id, kind)) return;
-  const holder = holderMatching(deps, id, kind);
-  if (holder) deps.leases.release(holder.leaseId);
+function giveUp(deps: BrowserToolDeps, requester: Requester): void {
+  if (deps.leases.withdraw(requester.id, requester.kind)) return;
+  const holder = holderMatching(deps, requester);
+  // Only a lease this requester was granted itself: one it merely shares through its project is
+  // the project's, and giving up waiting must not pull it out from under whoever is using it.
+  if (holder && holder.requester.id === requester.id && holder.requester.kind === requester.kind) deps.leases.release(holder.leaseId);
 }
 
 /**
@@ -144,8 +155,8 @@ function giveUp(deps: BrowserToolDeps, id: string, kind: BrowserRequesterKind): 
  * subagent doesn't have. Subagents get the queue position back immediately instead.
  */
 async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequesterKind, ctx: ToolContext): Promise<string> {
-  const id = requesterId(kind, ctx);
-  const requester: Requester = { kind, id };
+  const requester = requesterOf(kind, ctx);
+  const id = requester.id;
   let result = deps.leases.acquire(requester);
   if (kind === 'orchestrator') {
     const now = deps.now ?? Date.now;
@@ -160,7 +171,7 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
       // as much as POLL_INTERVAL_MS on every poll.
       await Promise.race([sleep(Math.min(POLL_INTERVAL_MS, deadline - now())), aborted]);
       if (ctx.signal?.aborted) {
-        giveUp(deps, id, kind);
+        giveUp(deps, requester);
         return 'error: aborted';
       }
       result = deps.leases.acquire(requester);
@@ -168,7 +179,7 @@ async function acquire(deps: BrowserToolDeps, held: Held, kind: BrowserRequester
     if ('queued' in result) {
       // Gave up waiting: withdraw (or release, if granted in the gap before this check) rather than
       // report a stale queue position the caller will never poll again to correct.
-      giveUp(deps, id, kind);
+      giveUp(deps, requester);
       return 'error: browser busy — try again later';
     }
   }
@@ -189,7 +200,7 @@ function release(deps: BrowserToolDeps, held: Held, kind: BrowserRequesterKind, 
   // No memory of a leaseId in this tool list's `held` map — a fresh turn (browserTools() rebuilds it
   // every call) that re-acquired its still-valid lease in an earlier turn and never held it here.
   // Fall back to whoever the LeaseManager currently says holds it.
-  const holder = holderMatching(deps, id, kind);
+  const holder = holderMatching(deps, requesterOf(kind, ctx));
   return holder && deps.leases.release(holder.leaseId) ? 'browser lease released' : 'error: no browser lease — call acquire_browser first';
 }
 

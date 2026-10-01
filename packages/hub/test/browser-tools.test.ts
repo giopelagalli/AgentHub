@@ -13,7 +13,7 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { runToolCall, type Tool, type ToolContext } from '../src/agents/tools.js';
 import { LeaseManager } from '../src/browser/lease.js';
-import { BrowserProxy } from '../src/browser/proxy.js';
+import { BrowserProxy, poolSlots } from '../src/browser/proxy.js';
 import { Recorder } from '../src/browser/recorder.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { browserTools, browserOperatorTools, type BrowserToolDeps } from '../src/agents/browser-tools.js';
@@ -44,7 +44,7 @@ beforeEach(async () => {
   registry.register({ name: 'macmini', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: upstreamUrl } });
 
   recordings = mkdtempSync(join(tmpdir(), 'ah-browser-tools-'));
-  leases = new LeaseManager();
+  leases = new LeaseManager({ slots: () => poolSlots(registry) });
   proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: recordings }) });
   deps = { leases, proxy };
 });
@@ -57,6 +57,19 @@ afterEach(async () => {
 const ctxFor = (sessionId: number): ToolContext => ({ sessionId, log: () => {} });
 
 describe('browserTools — direct tool calls', () => {
+  it("acquires per project: a subagent shares its orchestrator's slot, another project waits", async () => {
+    const inProject = (slug: string, sessionId: number): ToolContext =>
+      ({ ...ctxFor(sessionId), bundle: { dir: `/projects/${slug}` } as unknown as ToolContext['bundle'] });
+    const call = (kind: 'orchestrator' | 'subagent', ctx: ToolContext) =>
+      runToolCall(browserTools(deps, kind), { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx);
+
+    expect(await call('orchestrator', inProject('alpha', 1))).toBe('browser lease granted');
+    expect(await call('subagent', inProject('alpha', 2))).toBe('browser lease granted');
+    expect(leases.status().slots.filter((s) => s.lease)).toHaveLength(1);
+    expect(leases.holder()?.requester.project).toBe('alpha');
+    expect(await call('subagent', inProject('beta', 3))).toBe('queued: position 1');
+  });
+
   it('rejects every browser_* tool until acquire_browser has run', async () => {
     const tools = browserTools(deps, 'orchestrator');
     const ctx = ctxFor(1);

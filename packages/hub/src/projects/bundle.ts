@@ -635,7 +635,22 @@ export class ProjectBundle {
     return [...all].map((p) => p.slice(prefix.length)).filter((p) => p && p !== '.gitkeep').sort();
   }
 
-  async commit(message: string): Promise<void> {
+  /**
+   * Commits run one at a time per bundle: a media landing, an owner edit and a turn's own commit
+   * can arrive together, and two `git add`/`commit` pairs racing meet git's index lock. A chain on
+   * the instance rather than the service's per-slug turn chain, so a designer's tool waiting inside
+   * a turn never waits on its own landing.
+   */
+  private committing: Promise<void> = Promise.resolve();
+
+  commit(message: string): Promise<void> {
+    const run = () => this.commitNow(message);
+    const next = this.committing.then(run, run);
+    this.committing = next.catch(() => {});
+    return next;
+  }
+
+  private async commitNow(message: string): Promise<void> {
     await this.excludeNestedRepos();
 
     const index = await walkFiles(this.dir);

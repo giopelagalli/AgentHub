@@ -82,6 +82,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - Each project's live browser (FR-B7, 0063): Code → Browser shows the project's slot of the pool
   with Take control / Release, its place in the queue when every slot is busy, and a live dot on
   the switch while it holds one.
+- Media against the ComfyUI mock (FR-E1–E3, 0060–0062): `image-gen` beside `video-gen`, Qwen-Image
+  and Wan 2.2 templates (placeholders), renders landing in the bundle's `media/` with a sidecar and
+  a commit, the media routes, `generate_image` / `generate_video` for designers, Docs → Media, and
+  a sim media node (pomodoro-cli has an app icon).
 
 ## In progress
 
@@ -98,5 +102,6 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
    pi (and `bubblewrap`) on a node.
 3. JD drives the hub; the web door (FR-C1–C5).
-4. Media on the 7900 XTX (FR-E1–E4).
+4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
+   over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
 5. Accounts, grants, per-member JD, the public site (FR-F1–F6).

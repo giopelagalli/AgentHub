@@ -424,6 +424,44 @@ on that port.
 Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
 `deploy/do/README.md` §8b.
 
+## Media
+
+**Docs → Media** shows the images and clips made for a project, each with the prompt and settings
+that made it, and a box to ask for another: pick **Image** or **Video**, a size (and a length for a
+clip), describe it, **Generate** (⌘↩). The job shows under the box while it waits and renders; the
+file lands in the project bundle as `media/image-<job>.png` / `media/video-<job>.mp4` beside a
+`.json` with the prompt, size, seed, machine and render time, and is committed. An employee with
+the **designer** role can do the same from a turn (`generate_image`, `generate_video`) — the
+manager asks a designer for an app icon, a hero image or a demo clip.
+
+"No machine can render images yet" means no registered node offers `image-gen`. Rendering runs on
+the PC (the 7900 XTX) through ComfyUI (decision 0018: Qwen-Image for stills, Wan 2.2 or LTX-2 for
+clips). What the PC needs:
+
+1. **ComfyUI on ROCm**, running locally (`http://127.0.0.1:8188`), with the models downloaded.
+2. **The by-hand test first**: render one image and one clip in ComfyUI's own web UI from the
+   models' example workflows, and tune them until they look right.
+3. **The templates**: `deploy/amd/comfy/qwen-image-t2i.json` and `wan22-t2v.json` are placeholders
+   (`TODO-verify` marks every guess). Export the tested workflows from ComfyUI (*Export (API)*)
+   over them and put the `{{prompt}}`-style placeholders back — `deploy/amd/comfy/README.md`.
+4. **The node config** — the daemon offers both job types and points at the templates:
+
+   ```yaml
+   jobTypes: [image-gen, video-gen]
+   video:
+     comfyUrl: http://127.0.0.1:8188
+     workflows:
+       image: /opt/agenthub/deploy/amd/comfy/qwen-image-t2i.json
+       video: /opt/agenthub/deploy/amd/comfy/wan22-t2v.json
+   ```
+
+   An older config with a single `video.workflow` keeps working for clips. Without
+   `workflows.image` the node does not offer `image-gen` at all, even if `jobTypes` lists it.
+
+One render at a time per machine: a still or a clip parks the machine's worker model while it runs
+and hands it back after (decision 0061). In the simulation, `sim-media` renders against a mock
+ComfyUI in a few seconds, and `pomodoro-cli` starts with an app icon.
+
 ## The browser pool (Machines → Browser)
 
 A browser node (the Mac mini) runs one browser with several isolated sessions — *slots* — set by
@@ -674,6 +712,7 @@ DATA_ROOT/
     team.yaml               employees
     decisions.log.md        the why
     docs/                   the team's pages (code-map.md is the Code screen's Map tab)
+    media/                  rendered images and clips, each with a .json of how it was made
     briefings/              one per turn
     workspace/              the code — its own git repo when the team inits one
   memory/                   the built-in assistant's notes

@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { AutoRun, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
-import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
+import { isMediaJob, MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
@@ -37,6 +37,8 @@ import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { previewRoutes } from './projects/preview.js';
+import { findMediaByJob, landMedia, MEDIA_DIR, MediaDesk, mediaFileFor } from './projects/media.js';
+import { mediaRoutes } from './projects/media-routes.js';
 import { codeRoutes } from './projects/code.js';
 import { tourRoutes } from './projects/tour.js';
 import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
@@ -87,7 +89,7 @@ export interface Hub {
 }
 
 const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
-const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
+const JOB_TYPES: JobType[] = ['llm-session', 'image-gen', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PREFERENCES: ModelPolicy['prefer'][] = ['local', 'cloud', 'auto'];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
@@ -459,9 +461,11 @@ export function createHub(opts: HubOptions = {}): Hub {
   // No pi run survives a restart, so a live run token now is one a crash left behind.
   const leftover = harnessTokens.revokeHarnessTokens();
   if (leftover) console.warn(`[harness] revoked ${leftover} pi run token(s) left live by an earlier hub`);
+  // FR-E2/E3 — the owner's media route and the designer's tools queue renders through one desk.
+  const media = new MediaDesk({ queue, registry, onChange: () => broadcastState() });
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
-    loop, gateway, queue, registry, transcript, github, leases, browser, external: projectExternal,
+    loop, gateway, queue, registry, transcript, github, leases, browser, media, external: projectExternal,
     door: { base: selfBase, tokens: harnessTokens },
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
@@ -492,7 +496,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // registration or heartbeat.
   resources.restore((jobId) => {
     const job = queue.get(jobId);
-    return job?.type === 'video-gen' && job.status === 'running';
+    return !!job && isMediaJob(job.type) && job.status === 'running';
   });
   // Only a hub told where its data root is can hand it over; without the option the switch routes
   // answer 501 and nothing else in the hub changes.
@@ -535,7 +539,7 @@ export function createHub(opts: HubOptions = {}): Hub {
         ...(opts.controlNode.rsync ? { rsyncCmd: opts.controlNode.rsync } : {}),
         // A clip in flight lives on a node's GPU and lands as an artifact on *this* hub's disk; a
         // switch mid-render would lose it, so the switch waits rather than racing the job.
-        videoRunning: () => queue.list().some((j) => j.type === 'video-gen' && j.status === 'running'),
+        videoRunning: () => queue.list().some((j) => isMediaJob(j.type) && j.status === 'running'),
       })
     : null;
   // `trustProxy` off by default: `X-Forwarded-*` is attacker-controlled unless a proxy this hub
@@ -773,6 +777,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // FR-B1 — the preview: the owner's config and lifecycle routes here, and the separate listener
   // that serves the app itself on its own origin (0040).
   void app.register(previewRoutes, { projects, refresh: refreshProjects, ...(opts.preview ? { listen: opts.preview } : {}) });
+  void app.register(mediaRoutes, { projects, media });
 
   // The sweep is the only place a node is known to have just gone offline, so the alert hookup
   // hangs off it; briefings pass straight through to the service's own listeners, and a settled job
@@ -792,19 +797,26 @@ export function createHub(opts: HubOptions = {}): Hub {
     onCloudCapReached: (cb) => { cloudCapListeners.push(cb); },
   };
 
+  /** The bundle a media job lands in (FR-E2), or null when it names none or one that isn't a bundle (`_telegram`). */
+  const mediaBundle = async (job: Job): Promise<ProjectBundle | null> =>
+    job.project ? projects.get(job.project).catch(() => null) : null;
+
   /**
-   * Where a finished clip is stored (plan Global Constraints): `workspace/media/video/<jobId>.mp4`
-   * in the requesting project's bundle, or `media/` under the memory root when the job names no
-   * project — or names one that isn't a bundle, which is what `/video`'s `_telegram` does.
+   * Where a finished render is stored: the requesting project's `media/<id>.<ext>` (where
+   * `landMedia` put it, or will), or `media/<jobId>.<ext>` under the memory root when the job names
+   * no project bundle — which is what `/video`'s `_telegram` does.
    */
   const videoArtifactPath = async (job: Job): Promise<string> => {
-    if (job.project) {
-      try {
-        const bundle = await projects.get(job.project);
-        return join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
-      } catch { /* not a project bundle; fall through to the memory root */ }
+    const bundle = await mediaBundle(job);
+    if (bundle) {
+      const landed = await findMediaByJob(bundle.dir, job.id);
+      if (landed) return join(bundle.dir, MEDIA_DIR, landed.file);
+      // A clip stored before 0060 sits where the Global Constraints used to put it.
+      const legacy = join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+      if (job.type === 'video-gen' && existsSync(legacy)) return legacy;
+      return join(bundle.dir, MEDIA_DIR, mediaFileFor(job));
     }
-    return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', `${job.id}.mp4`);
+    return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', mediaFileFor(job, String(job.id)));
   };
 
   /** What the Telegram alert needs to decide between sending the clip and just naming its path. */
@@ -833,7 +845,7 @@ export function createHub(opts: HubOptions = {}): Hub {
    * leave `running` by: the two report routes and the offline sweep.
    */
   const releaseVideoSlot = (job: Job | null, nodeName: string): void => {
-    if (!job || job.type !== 'video-gen') return;
+    if (!job || !isMediaJob(job.type)) return;
     void resources.release(nodeName, job.id)
       .catch((err) => app.log.error(`releasing the video slot on ${nodeName} failed: ${(err as Error).message}`));
   };
@@ -1237,13 +1249,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     // Only a node with a local ComfyUI, and only one video job at a time on it: a claim is what
     // triggers the exclusivity swap, so swapping a node that cannot render would park its serving
     // for nothing, and claiming a second clip while the first runs would only cost the job an
-    // attempt before being handed straight back.
+    // attempt before being handed straight back. Stills share the slot: both load a diffusion model
+    // into the same VRAM the worker model is using (decision 0061).
     const takesVideo = info.video && !resources.busy(info.name) && !resources.cooling(info.name);
-    const claimable = takesVideo ? types : types.filter((t) => t !== 'video-gen');
+    const claimable = takesVideo ? types : types.filter((t) => !isMediaJob(t));
     if (!claimable.length) return reply.code(204).send();
     const job = queue.claim(claimable, info.id);
     if (!job) return reply.code(204).send();
-    if (job.type === 'video-gen') {
+    if (isMediaJob(job.type)) {
       // The swap happens before the job is handed over (PRD §4.3): worker serving is parked and
       // drained, then the daemon switches to its video profile. If that fails the job goes back on
       // the queue rather than running against a GPU that is still serving.
@@ -1322,7 +1335,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const id = Number((req.params as { id: string }).id);
     const job = queue.get(id);
     if (!job) return reply.code(404).send({ error: 'unknown job' });
-    if (job.type !== 'video-gen') return reply.code(400).send({ error: 'job type has no artifact' });
+    if (!isMediaJob(job.type)) return reply.code(400).send({ error: 'job type has no artifact' });
     // Only the node the job is running on may write its clip, and only while it is still the runner
     // of record: a late upload from a node whose job was requeued elsewhere would otherwise
     // overwrite the real runner's output.
@@ -1336,6 +1349,14 @@ export function createHub(opts: HubOptions = {}): Hub {
     }
     const body = req.body;
     if (!Buffer.isBuffer(body) || body.length === 0) return reply.code(400).send({ error: 'empty artifact' });
+    // A project's render becomes part of the project: file, sidecar and a commit (FR-E2).
+    const bundle = await mediaBundle(job);
+    if (bundle) {
+      const asset = await landMedia(bundle, job, body, uploader.name);
+      const landed = join(bundle.dir, MEDIA_DIR, asset.file);
+      jobLogs.append(id, `[hub] stored ${body.length} bytes at ${landed}`);
+      return { path: landed, bytes: body.length };
+    }
     const path = await videoArtifactPath(job);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, body);

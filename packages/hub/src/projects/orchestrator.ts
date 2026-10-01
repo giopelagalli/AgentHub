@@ -12,6 +12,7 @@ import { browserTools } from '../agents/browser-tools.js';
 import type { AgentRunResult } from '../agents/loop.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
+import type { MediaDesk } from './media.js';
 import type { ProjectBundle } from './bundle.js';
 import type { Github } from './github.js';
 import { planningContext } from './prd.js';
@@ -43,6 +44,8 @@ export interface ProjectOrchestratorDeps {
   /** Present once the hub wires the shared browser; absent, the orchestrator gets no browser tools. */
   leases?: LeaseManager;
   browser?: BrowserProxy;
+  /** Queues media renders; a designer gets generate_image / generate_video through it. */
+  media?: MediaDesk;
   /** The configured external tools; the orchestrator gets them and can hand them to a researcher. */
   external?: Tool[];
   /** Notified with (memberId, busy) whenever a delegated subagent run starts or ends. */
@@ -65,7 +68,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent, door } = this.deps;
+    const { bundle, loop, queue, registry, transcript, github, leases, browser, media, external, onBusy, onEvent, door } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -106,7 +109,7 @@ export class ProjectOrchestrator {
         ...hubTools(),
         ...(external ?? []),
         ...(browserDeps ? browserTools(browserDeps, 'orchestrator') : []),
-        spawnSubagentTool({ ...delegation, browser: browserDeps, external }),
+        spawnSubagentTool({ ...delegation, browser: browserDeps, external, media }),
         completeMilestoneTool(delegation, github),
       ],
       ctx: { bundle, hub: { queue, nodes: registry } },

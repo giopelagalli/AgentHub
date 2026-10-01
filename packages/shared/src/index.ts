@@ -1,7 +1,10 @@
 export type Tier = 'orchestrator' | 'worker' | 'vision' | 'video-gen';
 export type Priority = 'interactive' | 'project' | 'batch';
 export const PRIORITY_RANK: Record<Priority, number> = { interactive: 0, project: 1, batch: 2 };
-export type JobType = 'llm-session' | 'video-gen' | 'shell-task' | 'browser-lease';
+export type JobType = 'llm-session' | 'image-gen' | 'video-gen' | 'shell-task' | 'browser-lease';
+/** The job types a ComfyUI node renders (FR-E1); both take the node's one media slot. */
+export const MEDIA_JOB_TYPES = ['image-gen', 'video-gen'] as const satisfies readonly JobType[];
+export const isMediaJob = (type: JobType): boolean => (MEDIA_JOB_TYPES as readonly JobType[]).includes(type);
 export type JobStatus = 'queued' | 'running' | 'done' | 'failed';
 
 /** The cloud providers the hub can serve a tier from; each has its own synthetic node. */
@@ -67,7 +70,7 @@ export interface NodeRegistration {
   browser?: { url: string; slots?: number };
   /** Serving profiles this node can switch between (spec §4.3); empty when it has none. */
   profiles?: string[];
-  /** True when the node has a local ComfyUI configured for `video-gen` jobs. */
+  /** True when the node has a local ComfyUI configured for `image-gen` / `video-gen` jobs. */
   video?: boolean;
   /** Present only when the node runs a control server; `url` is its `/control/*` base. */
   control?: { url: string };
@@ -565,7 +568,11 @@ export interface UsageReport extends UsageSummary {
   cap: { maxCloudUsdPerDay: number | null; cloudUsdToday: number };
 }
 
-/** Exactly the video payload of PRD §11 / the plan's Global Constraints. */
+/**
+ * The video payload of PRD §11, plus the FR-E1 media fields. The first five are the original
+ * MiniMax-H3 shape every existing caller sends; the optional rest are what a Wan 2.2 / LTX-2
+ * template reads (`{{width}}`, `{{fps}}`, …) — absent, the daemon fills `VIDEO_MEDIA_DEFAULTS`.
+ */
 export interface VideoPayload {
   prompt: string;
   mode: 't2v' | 'i2v' | 'ref2v';
@@ -573,7 +580,31 @@ export interface VideoPayload {
   aspect: '16:9' | '9:16' | '1:1' | '3:4' | '4:3' | '21:9' | '3:2';
   resolution: '768p' | '1080p';
   imagePath?: string;
+  negativePrompt?: string;
+  width?: number;
+  height?: number;
+  seed?: number;
+  fps?: number;
 }
+
+/** FR-E1 — one still from a text prompt (Qwen-Image on the PC's ComfyUI). */
+export interface ImagePayload {
+  prompt: string;
+  negativePrompt?: string;
+  width: number;
+  height: number;
+  seed?: number;
+}
+
+/** Diffusion models want sides on a 16-pixel grid; these bound what a template is handed. */
+export const MEDIA_SIDE_MIN = 256;
+export const MEDIA_SIDE_MAX = 2048;
+export const MEDIA_FPS_MIN = 8;
+export const MEDIA_FPS_MAX = 30;
+export const MEDIA_PROMPT_MAX = 2000;
+export const IMAGE_DEFAULTS = { width: 1024, height: 1024 } as const;
+/** What a video template gets for the fields a legacy-shaped payload does not carry. */
+export const VIDEO_MEDIA_DEFAULTS = { width: 832, height: 480, fps: 16 } as const;
 
 export const VIDEO_MODES = ['t2v', 'i2v', 'ref2v'] as const;
 export const VIDEO_ASPECTS = ['16:9', '9:16', '1:1', '3:4', '4:3', '21:9', '3:2'] as const;
@@ -597,13 +628,54 @@ export function parseVideoPayload(raw: unknown): VideoPayload | null {
   if (p.imagePath !== undefined && typeof p.imagePath !== 'string') return null;
   // i2v/ref2v animate a source image — without one there's nothing to animate.
   if ((p.mode === 'i2v' || p.mode === 'ref2v') && !p.imagePath) return null;
+  const media = parseMediaFields(p);
+  if (!media) return null;
+  if (p.fps !== undefined && !(Number.isInteger(p.fps) && p.fps >= MEDIA_FPS_MIN && p.fps <= MEDIA_FPS_MAX)) return null;
   // Rebuilt field by field rather than handed back as-is: whatever else the caller put in the
   // object (a stray `project`, a hand-written extra key) must not ride along into the job payload
   // and out to the daemon.
   return {
     prompt: p.prompt, mode: p.mode, durationSec: p.durationSec, aspect: p.aspect, resolution: p.resolution,
     ...(p.imagePath !== undefined ? { imagePath: p.imagePath } : {}),
+    ...media,
+    ...(p.fps !== undefined ? { fps: p.fps } : {}),
   };
+}
+
+const isSide = (n: unknown): n is number =>
+  typeof n === 'number' && Number.isInteger(n) && n >= MEDIA_SIDE_MIN && n <= MEDIA_SIDE_MAX && n % 16 === 0;
+
+/** The optional fields image and video share; null when one is present but malformed. */
+function parseMediaFields(p: { negativePrompt?: unknown; width?: unknown; height?: unknown; seed?: unknown }):
+  Pick<ImagePayload, 'negativePrompt' | 'seed'> & { width?: number; height?: number } | null {
+  if (p.negativePrompt !== undefined && (typeof p.negativePrompt !== 'string' || p.negativePrompt.length > MEDIA_PROMPT_MAX)) return null;
+  if (p.width !== undefined && !isSide(p.width)) return null;
+  if (p.height !== undefined && !isSide(p.height)) return null;
+  if (p.seed !== undefined && !(Number.isSafeInteger(p.seed) && (p.seed as number) >= 0)) return null;
+  return {
+    ...(p.negativePrompt !== undefined ? { negativePrompt: p.negativePrompt as string } : {}),
+    ...(p.width !== undefined ? { width: p.width as number } : {}),
+    ...(p.height !== undefined ? { height: p.height as number } : {}),
+    ...(p.seed !== undefined ? { seed: p.seed as number } : {}),
+  };
+}
+
+/** Returns the image payload, or null when it doesn't match the schema exactly. */
+export function parseImagePayload(raw: unknown): ImagePayload | null {
+  const p = raw as Partial<ImagePayload> | undefined;
+  if (!p || typeof p !== 'object') return null;
+  if (typeof p.prompt !== 'string' || !p.prompt.trim() || p.prompt.length > MEDIA_PROMPT_MAX) return null;
+  if (!isSide(p.width) || !isSide(p.height)) return null;
+  const media = parseMediaFields(p);
+  if (!media) return null;
+  return { ...media, prompt: p.prompt, width: p.width, height: p.height };
+}
+
+/** `IMAGE_DEFAULTS` for the size a caller left out, then `parseImagePayload`. */
+export function imagePayloadFrom(raw: unknown): ImagePayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const given = Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([, v]) => v !== undefined));
+  return parseImagePayload({ ...IMAGE_DEFAULTS, ...given });
 }
 
 /**
@@ -619,10 +691,55 @@ export function videoPayloadFrom(raw: unknown): VideoPayload | null {
   return parseVideoPayload({ ...VIDEO_DEFAULTS, ...given });
 }
 
+// --- project media (FR-E2) ----------------------------------------------------
+
+export type MediaKind = 'image' | 'video';
+
+/** `POST /api/projects/:slug/media` — and what `generate_image` / `generate_video` send. */
+export interface MediaRequest {
+  kind: MediaKind;
+  prompt: string;
+  negativePrompt?: string;
+  width?: number;
+  height?: number;
+  seed?: number;
+  /** Video only. */
+  seconds?: number;
+  /** Video only. */
+  fps?: number;
+}
+
+/** The sidecar `media/<id>.json` beside every asset in a bundle, as `GET …/media` lists it. */
+export interface MediaAsset {
+  /** The file name without its extension: `image-12`. */
+  id: string;
+  /** Bundle-relative under `media/`: `image-12.png`. */
+  file: string;
+  kind: MediaKind;
+  prompt: string;
+  params: { negativePrompt?: string; width?: number; height?: number; seed?: number; seconds?: number; fps?: number };
+  jobId: number;
+  /** The node that rendered it. */
+  node: string;
+  /** From the node claiming the job to the file reaching the hub. */
+  durationMs: number;
+  createdAt: number;
+  bytes: number;
+}
+
+/** `GET /api/projects/:slug/media`: the assets newest first, plus whether any machine can render. */
+export interface MediaList {
+  assets: MediaAsset[];
+  /** This project's media jobs still queued or running, or failed in the last 15 minutes; oldest first. */
+  jobs: { jobId: number; kind: MediaKind; prompt: string; status: JobStatus; createdAt: number; error?: string }[];
+  /** Which media job types some registered node offers. */
+  renderers: { image: boolean; video: boolean };
+}
+
 // --- project team roster ------------------------------------------------------
 
 /** The roles a team member — and so a subagent — can have. The manager is the orchestrator itself. */
-export const TEAM_ROLES = ['coder', 'researcher', 'reviewer', 'browser-operator'] as const;
+export const TEAM_ROLES = ['coder', 'researcher', 'reviewer', 'browser-operator', 'designer'] as const;
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
 /** The fixed avatar set the UI draws from; a member's `avatar` must be one of these. */

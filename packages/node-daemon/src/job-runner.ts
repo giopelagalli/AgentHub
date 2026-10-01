@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Job, JobResult, JobType, ShellTaskPayload } from '@agenthub/shared';
+import { isMediaJob, type Job, type JobResult, type JobType, type ShellTaskPayload } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask, secretsStripped } from './shell-task.js';
-import { ComfyExecutionError, parseVideoPayload, runVideoGen } from './video-gen.js';
+import { ComfyExecutionError, parseImagePayload, parseVideoPayload, runImageGen, runVideoGen } from './video-gen.js';
 
 type Execute = (job: Job, log: (line: string) => void) => Promise<JobResult>;
 
@@ -40,8 +40,12 @@ export interface JobRunnerOptions {
   claimIntervalMs: number;
   /** `Authorization` header for the hub, when it has auth enabled; empty or absent when it doesn't. */
   authHeaders?: Record<string, string>;
-  /** Required to execute `video-gen` jobs; absent on nodes without a local ComfyUI. */
-  video?: { comfyUrl: string; workflowTemplate: string };
+  /**
+   * Required to execute `video-gen` / `image-gen` jobs; absent on nodes without a local ComfyUI.
+   * `workflowTemplate` is the video template; `imageTemplate` the still one — absent, the node
+   * refuses `image-gen` as a capability it does not have.
+   */
+  video?: { comfyUrl: string; workflowTemplate: string; imageTemplate?: string };
   execute?: Execute;
   // Called each time the hub returns 404 from /api/jobs/claim (it doesn't know this node) — lets the
   // daemon re-register itself after e.g. a hub restart.
@@ -99,6 +103,20 @@ export class JobRunner {
         workflowTemplate: video.workflowTemplate,
         // Global Constraints: workspace/media/video/<jobId>.mp4 in the requesting project.
         outDir: resolveWorkspace(this.opts.workspaceRoot, job.project, join('media', 'video')),
+        jobId: job.id,
+        onLine: log,
+        ...(this.currentAbort ? { signal: this.currentAbort.signal } : {}),
+      });
+    }
+    if (job.type === 'image-gen') {
+      const video = this.opts.video;
+      if (!video?.imageTemplate) return Promise.reject(new MissingCapabilityError('image capability not configured on this node'));
+      const payload = parseImagePayload(job.payload);
+      if (!payload) return Promise.reject(new InvalidPayloadError(job.type));
+      return runImageGen(payload, {
+        comfyUrl: video.comfyUrl,
+        workflowTemplate: video.imageTemplate,
+        outDir: resolveWorkspace(this.opts.workspaceRoot, job.project, join('media', 'image')),
         jobId: job.id,
         onLine: log,
         ...(this.currentAbort ? { signal: this.currentAbort.signal } : {}),
@@ -211,7 +229,7 @@ export class JobRunner {
     // has to be uploaded before the job is reported done. A clip that won't upload is a job that
     // delivered nothing, so it fails — without requeue, since re-rendering it would cost another
     // GPU hour for the same broken hop.
-    if (outcome.ok && job.type === 'video-gen') {
+    if (outcome.ok && isMediaJob(job.type)) {
       const artifact = (outcome.result.data as { path?: string } | undefined)?.path;
       const uploaded = artifact ? await this.uploadArtifact(job.id, artifact) : false;
       if (!uploaded) outcome = { ok: false, error: 'artifact upload failed', requeue: false };

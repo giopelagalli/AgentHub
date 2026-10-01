@@ -14,6 +14,7 @@ import { FakeDriver } from '../../node-daemon/src/browser/driver.js';
 import { createBrowserServer } from '../../node-daemon/src/browser/server.js';
 import { createHub, type Hub } from '../src/server.js';
 import { simRespond } from './agent-script.js';
+import { startMediaNode, type MediaNode } from './media-node.js';
 import { seedProjects, type HubCall } from './seed.js';
 
 /** The owner password every simulated hub uses. Not a secret: the sim only binds to this machine. */
@@ -110,8 +111,10 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
   let hub: Hub | undefined;
   let browser: FastifyInstance | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
+  let mediaNode: MediaNode | undefined;
   const stop = async (): Promise<void> => {
     clearInterval(heartbeat);
+    await mediaNode?.stop();
     await hub?.stop();
     await browser?.close();
     await mock?.close();
@@ -168,6 +171,9 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
       ],
     };
     await daemon('POST', '/api/nodes/register', spark);
+    // The PC's ComfyUI, faked: a real daemon job runner against the ComfyUI mock (FR-E1).
+    mediaNode = await startMediaNode({ hub: url, daemonToken: SIM_DAEMON_TOKEN, dataRoot });
+    await daemon('POST', '/api/nodes/register', mediaNode.registration);
 
     // A browser node on FakeDrivers — the daemon's own browser server, nothing launched — with a
     // couple of projects holding slots, so the pool's tiles have something to show.
@@ -183,11 +189,12 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
     await browse();
 
     heartbeat = setInterval(() => {
-      for (const name of ['sim-spark', 'sim-mini']) {
+      for (const name of ['sim-spark', 'sim-mini', mediaNode!.registration.name]) {
         daemon('POST', `/api/nodes/${name}/heartbeat`, {}).catch((err: unknown) => log(`[sim] heartbeat failed: ${String(err)}`));
       }
       browse().catch((err: unknown) => log(`[sim] browser lease renew failed: ${String(err)}`));
     }, HEARTBEAT_MS);
+    mediaNode.start();
 
     const fresh = (await readdir(join(dataRoot, 'projects')).catch(() => [])).length === 0;
     const previewAppPort = port === 0 ? await freePort() : port + 80;

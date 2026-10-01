@@ -808,7 +808,14 @@ export function createHub(opts: HubOptions = {}): Hub {
    */
   const videoArtifactPath = async (job: Job): Promise<string> => {
     const bundle = await mediaBundle(job);
-    if (bundle) return join(bundle.dir, MEDIA_DIR, (await findMediaByJob(bundle.dir, job.id))?.file ?? mediaFileFor(job));
+    if (bundle) {
+      const landed = await findMediaByJob(bundle.dir, job.id);
+      if (landed) return join(bundle.dir, MEDIA_DIR, landed.file);
+      // A clip stored before 0060 sits where the Global Constraints used to put it.
+      const legacy = join(bundle.workspace, 'media', 'video', `${job.id}.mp4`);
+      if (job.type === 'video-gen' && existsSync(legacy)) return legacy;
+      return join(bundle.dir, MEDIA_DIR, mediaFileFor(job));
+    }
     return join(opts.assistant?.memoryRoot ?? DEFAULT_MEMORY_ROOT, 'media', mediaFileFor(job, String(job.id)));
   };
 

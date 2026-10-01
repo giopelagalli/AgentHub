@@ -1,4 +1,4 @@
-import { AVATARS, TEAM_ROLES, type ModelCatalog, type ModelPolicy, type ProjectManifest, type TeamRoster, type TurnBudget } from '@agenthub/shared';
+import { AVATARS, TEAM_ROLES, type HarnessInfo, type ModelCatalog, type ModelPolicy, type ProjectManifest, type TeamRoster, type TurnBudget } from '@agenthub/shared';
 import { sendJson } from '../../api.js';
 import { AUTO_RUN_INTERVALS, autoRunFromForm, budgetSentence, intervalWords, scheduleSentence } from '../../autorun.js';
 import { avatarSvg } from '../../avatars.js';
@@ -6,7 +6,7 @@ import { button, el } from '../../dom.js';
 import { icon } from '../../icons.js';
 import { openModal } from '../../panels/modal.js';
 import { toast } from '../../toast.js';
-import { modelPickers, prioritySegments } from './controls.js';
+import { modelPickers, prioritySegments, projectHarnessPicker } from './controls.js';
 
 /**
  * The project's settings, as a sheet grouped the way macOS Settings groups things: Models,
@@ -20,6 +20,8 @@ export interface SettingsOptions {
   /** The manifest as the hub last pushed it, read fresh whenever a section is drawn. */
   project: () => ProjectManifest | null;
   catalog: () => ModelCatalog | null;
+  /** What `GET /api/harnesses` said this host can run; empty until it answers. */
+  harnesses: () => HarnessInfo[];
   roster: () => TeamRoster | null;
   budget: () => TurnBudget | undefined;
   /** "$0.42 today", or empty while unknown. */
@@ -88,13 +90,19 @@ export function openProjectSettings(host: HTMLElement, options: SettingsOptions)
   const drawModels = (): void => {
     const project = options.project();
     if (!project) return;
-    const key = JSON.stringify(project.modelPolicy ?? null);
-    // Redrawn only when the policy itself moved — never under a select the owner has open.
+    const key = JSON.stringify([project.modelPolicy ?? null, project.harness ?? null, options.harnesses()]);
+    // Redrawn only when the policy, the harness or what this host can run moved — never under a select the owner has open.
     if (key === shownPolicy || models.box.contains(document.activeElement)) return;
     shownPolicy = key;
     const pickers = modelPickers(slug, project.modelPolicy, options.catalog(), (): ModelPolicy | undefined => options.project()?.modelPolicy);
     models.box.replaceChildren(row('Model', pickers.main, 'Runs the manager and, unless set below, everyone else'));
     if (pickers.worker) models.box.appendChild(row('Employees use', pickers.worker, 'A cheaper model for the work the manager hands out'));
+    const harness = projectHarnessPicker(slug, project, options.harnesses());
+    if (harness) {
+      const harnessRow = row('Harness', harness.select, 'What employees work in, unless given their own');
+      for (const reason of harness.reasons) harnessRow.querySelector('.srow__text')?.appendChild(el('span', 'srow__hint', reason));
+      models.box.appendChild(harnessRow);
+    }
   };
 
   // --- Schedule -------------------------------------------------------------------------------

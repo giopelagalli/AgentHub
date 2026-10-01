@@ -30,7 +30,7 @@ import { mountPreview } from '../views/preview.js';
 import { mountProjectBrowser, projectBrowserView } from '../views/browser.js';
 import { mountRoadmap } from '../views/roadmap.js';
 import { mountTerminal } from '../views/terminal.js';
-import { fillHarnessField, memberModelField } from './project/controls.js';
+import { fillHarnessField, memberModelField, projectHarness } from './project/controls.js';
 import { renderOverview, tickOverview, type Held, type OverviewData } from './project/overview.js';
 import { openProjectSettings, type SettingsHandle, type SettingsSection } from './project/settings.js';
 
@@ -158,7 +158,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       harnesses = next;
       const open = harnessSlot;
       const member = open ? roster?.members.find((m) => m.id === open.memberId) : undefined;
-      if (open && member) fillHarnessField(open.slot, open.slug, member, harnesses);
+      if (open && member) fillHarnessField(open.slot, open.slug, member, harnesses, projectHarness(selected()));
+      settings?.refresh();
     })
     .catch(() => { /* the drawer simply shows no Harness field */ });
 
@@ -290,7 +291,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         : undefined;
     const slot = el('div', 'drawer__harness');
     slot.hidden = true;
-    if (member) fillHarnessField(slot, slug, member, harnesses);
+    if (member) fillHarnessField(slot, slug, member, harnesses, projectHarness(project));
     openDrawer(card.id, (into) => openChat(into, {
       name: card.name,
       subtitle: card.kind === 'manager' ? `Manager · ${project.title}` : `${card.role} · ${project.title}`,
@@ -382,6 +383,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     const handle = openProjectSettings(document.body, {
       project: () => projectsOf(store.getState()).find((p) => p.slug === slug) ?? null,
       catalog: () => catalog,
+      harnesses: () => harnesses,
       roster: () => roster,
       budget: () => turnsOf(store.getState(), slug).budget,
       cost: () => costText(slug),

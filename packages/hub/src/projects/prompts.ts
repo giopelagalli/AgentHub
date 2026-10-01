@@ -417,3 +417,32 @@ export function codeMapPrompt(context: string): string {
     context,
   ].join('\n');
 }
+
+/**
+ * The one-off that explains a tour step (FR-B6). It runs on the guide's own system prompt — same
+ * read-only belt, same rule about where a "why" may come from — and this is the question it is
+ * asked. The snippet travels numbered, so the answer can cite the lines it is talking about.
+ */
+export function tourInstruction(
+  step: { path: string; title: string },
+  snippet: { from: number; to: number; text: string },
+  position: { index: number; total: number },
+): string {
+  const numbered = snippet.text.split('\n').map((line, i) => `${snippet.from + i} | ${line}`).join('\n');
+  return [
+    `Explain this snippet for the project's code tour: step ${position.index + 1} of ${position.total},`,
+    `"${step.title}". It is \`${step.path}:${snippet.from}\` through line ${snippet.to}:`,
+    ``,
+    '```',
+    numbered,
+    '```',
+    ``,
+    `Write for someone reading this codebase for the first time, in markdown, with no preamble:`,
+    `## What it does — walk through it a line or a few lines at a time, in plain words, citing each`,
+    `piece as \`${step.path}:<line>\`.`,
+    `## Why it is like this — for each real choice in it, cite the decisions.log.md entry by its title`,
+    `or the PRD requirement by its number when one explains it, and write "no recorded reason" when`,
+    `nothing does. Do not invent a rationale.`,
+    `Read the file around it, or what it calls, only if you need to. Do not change anything.`,
+  ].join('\n');
+}

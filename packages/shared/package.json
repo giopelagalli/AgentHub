@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./shell": "./src/shell-task.ts",
-    "./data-stamp": "./src/data-stamp.ts"
+    "./data-stamp": "./src/data-stamp.ts",
+    "./tour": "./src/tour.ts"
   }
 }

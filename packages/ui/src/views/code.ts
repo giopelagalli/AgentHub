@@ -1,3 +1,4 @@
+import { tourSteps, type TourSnippet, type TourStep } from '@agenthub/shared/tour';
 import { getJson, sendJson } from '../api.js';
 import type { EditorHandle } from '../code/editor.js';
 import { ancestors, formatSize, step, visibleRows, type CodeEntry, type CodeFileDoc, type CodeTreeDoc } from '../code/model.js';
@@ -6,15 +7,16 @@ import { icon } from '../icons.js';
 import { renderMarkdown } from '../markdown.js';
 import { toast } from '../toast.js';
 import { note, type ViewContext } from './parts.js';
+import { mountTour } from './tour.js';
 
 /**
  * The Code screen (FR-B3–B5): the workspace's file tree, the file open in an editor, and — in the
  * sheet's own right-hand slot — the guide, which is the same chat drawer every other view docks.
  *
- * Two tabs over one viewer. *Files* is the tree; *Map* is `docs/code-map.md`, the page the manager
- * writes at milestone completion, whose `path:line` links open a file here at that line. The link
- * format is the seam the tour (FR-B6) will step through, which is why it lives in the markdown
- * renderer rather than in this view.
+ * Three tabs. *Files* is the tree; *Map* is `docs/code-map.md`, the page the manager writes at
+ * milestone completion, whose `path:line` links open a file here at that line; *Tour* (FR-B6, in
+ * `tour.ts`) steps through those same links with the guide's explanation of each. *Start tour* on
+ * the Map is the way in the PRD names; the tab is how a reader gets back to where they were.
  *
  * Unlike the document views this one does not redraw itself wholesale: the editor holds the owner's
  * unsaved text and its own undo history, so the frame is built once and the parts that move — the
@@ -33,7 +35,7 @@ interface SaveResult {
   committed: 'workspace' | 'bundle' | 'none';
 }
 
-type Pane = 'files' | 'map';
+type Pane = 'files' | 'map' | 'tour';
 type Fetch = 'loading' | 'ready' | 'failed';
 
 export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
@@ -65,14 +67,16 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
   const tabs = el('div', 'code__tabs');
   const filesTab = button('Files', 'code__tab');
   const mapTab = button('Map', 'code__tab');
-  tabs.append(filesTab, mapTab);
+  const tourTab = button('Tour', 'code__tab');
+  tabs.append(filesTab, mapTab, tourTab);
 
   const actions = el('div', 'actions');
   const refreshButton = button('Refresh map', 'btn btn--small');
+  const tourButton = button('Start tour', 'btn btn--primary btn--small');
   const guideButton = button('', 'btn btn--plain btn--small');
   guideButton.append(icon('chat', 15), document.createTextNode('Ask the guide'));
   guideButton.title = 'Ask the guide about this code — its answers link to the lines they mean';
-  actions.append(refreshButton, guideButton);
+  actions.append(refreshButton, tourButton, guideButton);
 
   const bar = el('div', 'code__bar');
   bar.append(tabs, actions);
@@ -99,11 +103,19 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
 
   const mapBox = el('article', 'md code__map');
 
+  const steps = (): TourStep[] => (mapState === 'ready' ? tourSteps(mapMarkdown) : []);
+  const tour = mountTour({
+    slug: ctx.slug,
+    steps,
+    openInEditor: (target, line) => reveal(target, line),
+    askAbout: (step, snippet, index) => openGuide(askDraft(step, snippet, index)),
+  });
+
   // The page's bar under the toolbar takes this view's bar when it offers one.
   if (ctx.actions) {
     ctx.actions.replaceChildren(bar);
-    root.append(panes, mapBox);
-  } else root.append(bar, panes, mapBox);
+    root.append(panes, mapBox, tour.root);
+  } else root.append(bar, panes, mapBox, tour.root);
   host.replaceChildren(root);
 
   /**
@@ -129,9 +141,19 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
   const renderTabs = (): void => {
     filesTab.setAttribute('aria-current', String(pane === 'files'));
     mapTab.setAttribute('aria-current', String(pane === 'map'));
+    tourTab.setAttribute('aria-current', String(pane === 'tour'));
     panes.hidden = pane !== 'files';
     mapBox.hidden = pane !== 'map';
+    tour.root.hidden = pane !== 'tour';
     refreshButton.hidden = pane !== 'map';
+    tourButton.hidden = pane !== 'map' || !steps().length;
+  };
+
+  /** The tour from its first step, or from where the reader left it when they come back by the tab. */
+  const startTour = (from?: number): void => {
+    pane = 'tour';
+    renderTabs();
+    tour.show(from ?? tour.current() ?? 0);
   };
 
   const renderHead = (): void => {
@@ -177,6 +199,12 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       return;
     }
     mapBox.innerHTML = renderMarkdown(mapMarkdown);
+  };
+
+  /** The map changed: redraw it, and the Start tour button that depends on it having links. */
+  const mapChanged = (): void => {
+    renderMap();
+    renderTabs();
   };
 
   // --- what the owner does -------------------------------------------------------
@@ -287,13 +315,13 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
         if (!alive) return;
         mapMarkdown = doc.markdown ?? '';
         mapState = 'ready';
-        renderMap();
+        mapChanged();
       })
       .catch(() => {
         if (!alive) return;
         // There is no map page until something writes one, and that 404 is the ordinary case.
         mapState = 'missing';
-        renderMap();
+        mapChanged();
       });
   };
 
@@ -307,7 +335,7 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
         if (!alive) return;
         mapMarkdown = doc?.markdown ?? '';
         mapState = mapMarkdown.trim() ? 'ready' : 'missing';
-        renderMap();
+        mapChanged();
         // `written` is the hub saying write_code_map actually ran: a run that spent its budget
         // reading and never wrote leaves the old page on screen, and saying "refreshed" would lie.
         toast(doc?.written ? 'Code map refreshed.' : 'The map was not rewritten — try again.', doc?.written ? 'info' : 'error');
@@ -321,7 +349,11 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       });
   };
 
-  const openGuide = (): void => {
+  /** What *Ask about this* starts the guide's message box with: the lines, and room for the question. */
+  const askDraft = (step: TourStep, snippet: TourSnippet | null, index: number): string =>
+    `About \`${step.path}:${snippet?.from ?? step.line}\`${snippet ? `–${snippet.to}` : ''} (tour step ${index + 1}): `;
+
+  const openGuide = (draft?: string): void => {
     ctx.openChat({
       name: 'Guide',
       subtitle: `${ctx.title} · the code`,
@@ -329,6 +361,7 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
       historyEndpoint: `/api/projects/${ctx.slug}/chat/guide`,
       // The guide is told to cite files as `path:line`; this is what makes those citations open.
       onCodeRef: (target, line) => reveal(target, line),
+      ...(draft ? { draft } : {}),
     });
   };
 
@@ -336,8 +369,10 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
 
   filesTab.addEventListener('click', () => { pane = 'files'; renderTabs(); });
   mapTab.addEventListener('click', () => { pane = 'map'; renderTabs(); });
+  tourTab.addEventListener('click', () => startTour());
+  tourButton.addEventListener('click', () => startTour(0));
   refreshButton.addEventListener('click', refreshMap);
-  guideButton.addEventListener('click', openGuide);
+  guideButton.addEventListener('click', () => openGuide());
   saveButton.addEventListener('click', save);
 
   // Up and down walk the rows on screen and take focus with them, which is what makes Enter work:
@@ -381,6 +416,7 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
     fileToken++;
     window.removeEventListener('keydown', onKey);
     editor?.destroy();
+    tour.destroy();
     host.replaceChildren();
   };
 }

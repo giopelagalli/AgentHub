@@ -24,3 +24,8 @@ export const DOC_PERSONA_TOOL_CALLS = 8;
  * room than a chat and still less than a turn, which also has work to delegate.
  */
 export const CODE_MAP_TOOL_CALLS = 20;
+/**
+ * Explaining one tour step: the snippet arrives in the question, so the room is for a look at its
+ * caller or the decision log — a chat's worth, not a map's.
+ */
+export const TOUR_TOOL_CALLS = 6;

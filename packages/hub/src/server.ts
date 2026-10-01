@@ -38,6 +38,7 @@ import { MasterOrchestrator } from './projects/master.js';
 import { ProjectChat, resolveWho } from './projects/chat.js';
 import { previewRoutes } from './projects/preview.js';
 import { codeRoutes } from './projects/code.js';
+import { tourRoutes } from './projects/tour.js';
 import { ChainedCredentials, Github, GithubError, PatCredentials, validBranch, type GithubCredentials, type GithubOptions } from './projects/github.js';
 import {
   AppCredentials, ConnectState, GithubAppClient, GithubAppError, type GithubAppConfig,
@@ -1712,7 +1713,7 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   // Which runtimes this host can run an employee's task in (FR-G1); its own file because detection
   // is a property of the host, not of any project.
-  app.register(harnessRoutes);
+  app.register(harnessRoutes, { doorBase: selfBase });
 
   // --- project team roster ------------------------------------------------------
 
@@ -1794,7 +1795,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const validated = body.model === undefined || body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
     if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });
     if (body.harness !== undefined && body.harness !== null) {
-      const offered = (await harnessStatus()).find((h) => h.kind === body.harness);
+      const offered = (await harnessStatus(selfBase())).find((h) => h.kind === body.harness);
       if (!offered) return reply.code(400).send({ error: 'invalid harness' });
       if (!offered.available) return reply.code(400).send({ error: `${body.harness} is not installed on this hub` });
     }
@@ -2042,6 +2043,7 @@ export function createHub(opts: HubOptions = {}): Hub {
   // --- the Code screen ------------------------------------------------------------
 
   codeRoutes(app, { resolveProject, loop });
+  tourRoutes(app, { resolveProject, loop });
 
   app.get('/api/briefings', async () => projects.briefings());
 

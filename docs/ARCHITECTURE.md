@@ -138,9 +138,15 @@ run start and revoked in `finally`, asking for a model that carries the run's ro
 (`doorModel`), so failover, the ledger, the cloud cap and `maxStreams` apply (0050). `select.ts` picks the harness — the member's, else the project's, else `builtin` — given a
 `HarnessDoor` (the hub's listen base and its `ApiTokens`) plumbed from `createHub` through
 `ProjectService` and the orchestrator; every reason a choice cannot be honoured falls back to
-`builtin` with the reason in the run's session events. `detect.ts` is
-"is the CLI on PATH", which `routes.ts` serves as `GET /api/harnesses`. The reviewer stays on
-`builtin` (FR-G4).
+`builtin` with the reason in the run's session events. `sandbox.ts` is the containment pi runs in
+(0055): `sandboxedCommand(platform, opts)` wraps an argv in `sandbox-exec` with a deny-default
+Seatbelt profile on macOS or in `bwrap` on Linux — reads everywhere but the hub's secrets and
+other projects (`hiddenPaths(hostSecrets(), workspace)`), writes to the workspace (unless the
+policy is read-only) and the run's temp dir only, network to a loopback door only (on Linux
+through a per-run unix-socket bridge, `serveDoorSocket`, since the sandbox has its own loopback) —
+and `sandboxStatus({ doorBase })` probes it by running it, caching a success. `detect.ts` is "is the CLI on PATH *and* can this host sandbox it", which `routes.ts`
+serves as `GET /api/harnesses` (with the reason when not); pi is never run unconfined. The reviewer
+stays on `builtin` (FR-G4) unless `HARNESS_REVIEWER_PI=1`, which runs it on pi with read-only tools.
 
 **`projects/`** — `bundle.ts` (a git repo per project: manifest, PRD, roadmap, docs, decisions,
 team, briefings, workspace), `prd.ts` (twelve fixed sections, the audit score, the drafter and
@@ -233,6 +239,17 @@ out of history on purpose — credentials by convention, and whatever the reposi
 `docs/code-map.md` and nothing more exotic (0046); it is one run per project at a time, aborts with
 the request, and reports whether the page was actually rewritten. The guide it sits beside is a
 persona in `chat.ts`, read-only by construction (0045).
+
+**`projects/tour.ts`** — the tour over the code map (FR-B6), registered beside `codeRoutes`. One
+owner-only route, `GET /api/projects/:slug/tour/:index` → `{ index, total, step, snippet,
+explanation, cached }`. Steps and snippets come from `@agenthub/shared/tour` — `tourSteps(map)` (the
+map's `path:line` spans in order) and `tourSnippet(text, line)` (the line to the end of its block by
+indentation, at most 60 lines; 0056) — the same functions the UI draws the step with, so what is
+tinted is what was explained. An explanation is the guide's prompt and read-only belt on the worker
+tier, six tool calls, serialised per project and aborted with the request; it is kept as a committed
+page `docs/tour/NN-<title>.md` whose key line (path, line, range, snippet hash) must match for the
+page to be served again (0057). The UI half is `views/tour.ts`, a third tab beside Files and Map
+(0058).
 
 **`browser/`** — the browser pool (FR-D8, 0059). `lease.ts` is the `LeaseManager`: it reads the pool
 (every slot of every registered browser node; a draining or offline node's slots marked) through a

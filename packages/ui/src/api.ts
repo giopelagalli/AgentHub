@@ -30,8 +30,9 @@ async function request(url: string, init?: RequestInit): Promise<Response> {
   return response;
 }
 
-export async function getJson<T>(url: string): Promise<T> {
-  return (await request(url)).json() as Promise<T>;
+/** `signal` lets a caller that has moved on drop the request — and the hub the work behind it. */
+export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  return (await request(url, signal ? { signal } : undefined)).json() as Promise<T>;
 }
 
 /** POST with an optional JSON body; 204s and empty bodies come back as `null`. */

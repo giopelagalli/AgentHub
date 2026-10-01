@@ -103,6 +103,16 @@
   opacity: 0.6;
 }
 
+/* JD, above the search: a row like a project's, full strength, its icon lit while it is open. */
+.sidebar__top {
+  flex: none;
+  padding: 0 10px 8px;
+}
+
+.sidebar__top .sidebar__row[aria-current='page'] .icon {
+  color: var(--accent-text);
+}
+
 .sidebar__list {
   flex: 1;
   min-height: 0;

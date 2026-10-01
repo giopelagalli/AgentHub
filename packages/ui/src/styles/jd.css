@@ -1,0 +1,634 @@
+/* The JD page: one conversation, the way Messages draws one. A centred column on the plain
+   surface; JD's bubbles grey on the left, the owner's in the accent on the right; JD's buttons
+   as outlined pills under its bubble; quick keys as filled chips over a round composer. The
+   conversation scrolls up under the translucent toolbar. */
+
+.jd__body {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+}
+
+/* --- the toolbar: a face, the name, and how the line to JD is ------------------------------- */
+
+.jd__who {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.jd__avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--on-accent);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 78%, #fff), var(--accent));
+  border-radius: 50%;
+}
+
+.jd__names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.jd__sub {
+  font-size: var(--fs-xs);
+  color: var(--label-3);
+}
+
+.jd__sub:empty {
+  display: none;
+}
+
+/* --- the conversation ----------------------------------------------------------------------- */
+
+.jd__scroll {
+  flex: 1;
+  min-height: 0;
+  padding: calc(var(--toolbar-h) + var(--sp-3)) var(--sp-4) var(--sp-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.jd__log {
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+/* The first message sits at the bottom of a short conversation, as in any messenger. */
+.jd__log > :first-child {
+  margin-top: auto;
+}
+
+.jd__stamp {
+  align-self: center;
+  margin: var(--sp-4) 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  color: var(--label-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.jd__msg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: min(560px, 80%);
+  margin-top: 10px;
+}
+
+.jd__msg--joinprev {
+  margin-top: 2px;
+}
+
+.jd__msg--owner {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.jd__bubble {
+  max-width: 100%;
+  padding: 8px 13px;
+  font-size: var(--fs-read);
+  line-height: 1.38;
+  color: var(--label);
+  overflow-wrap: anywhere;
+  background: var(--fill);
+  border-radius: 18px;
+}
+
+.jd__msg--owner .jd__bubble {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+/* A run of bubbles from one side: the corners between them tighten. */
+.jd__msg--jd.jd__msg--joinprev .jd__bubble { border-top-left-radius: 6px; }
+.jd__msg--jd.jd__msg--joinnext .jd__bubble { border-bottom-left-radius: 6px; }
+.jd__msg--owner.jd__msg--joinprev .jd__bubble { border-top-right-radius: 6px; }
+.jd__msg--owner.jd__msg--joinnext .jd__bubble { border-bottom-right-radius: 6px; }
+
+.jd__text {
+  white-space: pre-wrap;
+}
+
+.jd__text code {
+  padding: 1px 4px;
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: color-mix(in srgb, var(--label) 8%, transparent);
+  border-radius: 4px;
+}
+
+.jd__text pre {
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 0.82em;
+  line-height: 1.45;
+  white-space: pre;
+  background: color-mix(in srgb, var(--label) 7%, transparent);
+  border-radius: 8px;
+}
+
+.jd__text pre code {
+  padding: 0;
+  font-size: inherit;
+  background: none;
+}
+
+.jd__text a {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.jd__msg--owner .jd__text a {
+  color: inherit;
+}
+
+.jd__msg--owner .jd__text :is(code, pre) {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.jd__msg--pending .jd__bubble {
+  opacity: 0.55;
+}
+
+.jd__msg--failed .jd__bubble {
+  background: color-mix(in srgb, var(--accent) 45%, var(--bg));
+}
+
+.jd__failed {
+  margin-top: 4px;
+  font-size: var(--fs-sm);
+  color: var(--red);
+}
+
+.jd__retry {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.jd__hello {
+  align-self: center;
+  margin: auto 0 var(--sp-4);
+  font-size: var(--fs-ui);
+  color: var(--label-3);
+  text-align: center;
+}
+
+/* --- JD's buttons: outlined pills, a row to a line ------------------------------------------ */
+
+.jd__buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: min(280px, 72vw);
+  margin-top: 6px;
+}
+
+.jd__btnrow {
+  display: flex;
+  gap: 6px;
+}
+
+.jd__btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 14px;
+  overflow: hidden;
+  font: inherit;
+  font-weight: 500;
+  color: var(--accent-text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--bg);
+  border: 0;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--sep-strong);
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+.jd__btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+.jd__btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg));
+}
+
+.jd__btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.jd__btn[aria-busy='true'] {
+  opacity: 1;
+  background: var(--accent-soft);
+}
+
+/* --- voice notes ---------------------------------------------------------------------------- */
+
+.jd__voice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 200px;
+  padding: 2px 0;
+}
+
+.jd__voice + .jd__text {
+  margin-top: 6px;
+}
+
+.jd__play {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--on-accent);
+  background: var(--accent);
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.jd__play .icon {
+  fill: currentColor;
+}
+
+.jd__track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--label) 16%, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+/* A bigger target than the line itself, for a finger. */
+.jd__track::before {
+  content: '';
+  position: absolute;
+  inset: -12px 0;
+}
+
+.jd__trackfill {
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+.jd__voicetime {
+  flex: none;
+  min-width: 34px;
+  font-size: var(--fs-sm);
+  color: var(--label-2);
+  text-align: right;
+}
+
+.jd__voice--own {
+  min-width: 0;
+  gap: 8px;
+  font-size: var(--fs-ui);
+}
+
+/* --- typing ------------------------------------------------------------------------------- */
+
+.jd__typing .jd__bubble {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+}
+
+.jd__dot {
+  width: 7px;
+  height: 7px;
+  background: var(--label-3);
+  border-radius: 50%;
+  animation: jd-typing 1.2s infinite ease-in-out;
+}
+
+.jd__dot:nth-child(2) { animation-delay: 0.15s; }
+.jd__dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes jd-typing {
+  0%, 60%, 100% { opacity: 0.35; transform: none; }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+/* --- jump to the newest ------------------------------------------------------------------ */
+
+.jd__jump {
+  position: absolute;
+  right: max(var(--sp-4), calc(50% - 360px));
+  bottom: calc(100% + var(--sp-2));
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  color: var(--label-2);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: var(--shadow-pop);
+  cursor: pointer;
+}
+
+/* --- the dock: quick keys over the composer ---------------------------------------------- */
+
+.jd__dock {
+  position: relative;
+  flex: none;
+  padding: var(--sp-2) var(--sp-4) max(var(--sp-3), env(safe-area-inset-bottom));
+}
+
+.jd__dockin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.jd__keys {
+  display: flex;
+  gap: 6px;
+  margin: 0 calc(-1 * var(--sp-4));
+  padding: 2px var(--sp-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.jd__keys::-webkit-scrollbar {
+  display: none;
+}
+
+.jd__key {
+  flex: none;
+  min-height: 30px;
+  padding: 5px 13px;
+  font: inherit;
+  font-weight: 500;
+  color: var(--label);
+  white-space: nowrap;
+  background: var(--fill);
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease);
+}
+
+.jd__key:hover {
+  background: var(--fill-strong);
+}
+
+.jd__composer {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  min-height: 40px;
+  padding: 4px 4px 4px 14px;
+  background: var(--bg-raised);
+  border-radius: 20px;
+  box-shadow: inset 0 0 0 1px var(--sep-strong);
+}
+
+.jd__composer:focus-within {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--ring);
+}
+
+.jd__input {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  margin: 0;
+  padding: 6px 0;
+  font: inherit;
+  font-size: var(--fs-read);
+  line-height: 20px;
+  color: var(--label);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+}
+
+.jd__input::placeholder {
+  color: var(--label-4);
+}
+
+.jd__action {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--label-2);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+.jd__action:hover {
+  color: var(--label);
+  background: var(--hover);
+}
+
+.jd__action--send,
+.jd__action--send:hover {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.jd__action--send:hover {
+  background: var(--accent-hover);
+}
+
+/* Recording: the field and its button give way to the recording's own row. */
+.jd__composer--rec > .jd__input,
+.jd__composer--rec > .jd__action {
+  display: none;
+}
+
+.jd__rec {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  align-items: center;
+  margin-left: -10px;
+}
+
+.jd__reccancel {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--label-2);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.jd__reccancel:hover {
+  color: var(--label);
+  background: var(--hover);
+}
+
+.jd__recdot {
+  width: 9px;
+  height: 9px;
+  background: var(--red-dot);
+  border-radius: 50%;
+  animation: jd-rec 1.4s infinite ease-in-out;
+}
+
+@keyframes jd-rec {
+  50% { opacity: 0.35; }
+}
+
+.jd__recclock {
+  font-size: var(--fs-read);
+  font-weight: 500;
+}
+
+.jd__reclabel {
+  flex: 1;
+  color: var(--label-3);
+}
+
+/* --- not configured / not answering ------------------------------------------------------ */
+
+.jd__notice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: center;
+  max-width: 460px;
+  margin: calc(var(--toolbar-h) + 12vh) auto 0;
+  padding: 0 var(--sp-5);
+  text-align: center;
+}
+
+.jd__noticeicon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 14px;
+}
+
+.jd__noticehead {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.jd__noticeline {
+  font-size: var(--fs-read);
+  line-height: 1.45;
+  color: var(--label-2);
+}
+
+.jd__noticeline--small {
+  font-size: var(--fs-ui);
+  color: var(--label-3);
+}
+
+.jd__noticeline code {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  color: var(--label-2);
+}
+
+.jd__envlines {
+  align-self: stretch;
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
+  color: var(--label);
+  text-align: left;
+  background: var(--bg-sunk);
+  border-radius: var(--r-lg);
+  user-select: all;
+}
+
+.jd__notice .btn {
+  margin-top: var(--sp-1);
+}
+
+/* --- a phone ----------------------------------------------------------------------------- */
+
+@media (max-width: 760px) {
+  .jd__scroll {
+    padding: calc(48px + var(--sp-2)) var(--sp-3) var(--sp-2);
+  }
+
+  .jd__msg {
+    max-width: 82%;
+  }
+
+  .jd__dock {
+    padding: 6px var(--sp-3) max(10px, env(safe-area-inset-bottom));
+  }
+
+  .jd__keys {
+    margin: 0 calc(-1 * var(--sp-3));
+    padding: 2px var(--sp-3);
+  }
+
+  .jd__btn,
+  .jd__key {
+    min-height: 36px;
+  }
+
+  /* 16px or Safari zooms the page when the field takes focus. */
+  .jd__input {
+    font-size: 16px;
+  }
+
+  .jd__notice {
+    margin-top: calc(48px + 8vh);
+  }
+}

@@ -9,9 +9,13 @@ import './styles/workspace.css';
 import './styles/machines.css';
 import './styles/drawer.css';
 import './styles/media.css';
+import './styles/jd.css';
+import type { JdStatus } from '@agenthub/shared';
+import { getJson } from './api.js';
 import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';
 import { mountHelp } from './pages/help.js';
+import { mountJd } from './pages/jd.js';
 import { mountMachines } from './pages/machines.js';
 import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
@@ -23,13 +27,14 @@ import { toast } from './toast.js';
  * The three places the main area can hold. Machines' four sections are one place: moving between
  * them is the page's own business, so the shell only remounts when the place itself changes.
  */
-type Place = 'projects' | 'machines' | 'help';
+type Place = 'projects' | 'jd' | 'machines' | 'help';
 
-const placeFor = (page: PageId): Place => (page === 'projects' ? 'projects' : placeOf(page) ?? 'projects');
+const placeFor = (page: PageId): Place => (page === 'projects' || page === 'jd' ? page : placeOf(page) ?? 'projects');
 
 /** Every place mounts into the same host and hands back its own teardown. */
 const MOUNTS: Record<Place, (host: HTMLElement, store: Store) => () => void> = {
   projects: mountProjects,
+  jd: mountJd,
   machines: mountMachines,
   help: mountHelp,
 };
@@ -90,6 +95,10 @@ async function boot(): Promise<void> {
     teardown = MOUNTS[showing](page, store);
   }
   connect(store);
+  // JD's name for the sidebar; a hub without JD (or an older one) leaves it "JD".
+  void getJson<JdStatus>('/api/jd/status')
+    .then((status) => { if (status.name) store.dispatch({ type: 'jd-name', name: status.name }); })
+    .catch(() => {});
   // Back from GitHub's install screen. Say so once and take the parameter off the address bar, so
   // a reload doesn't toast again.
   if (githubReturn(window.location.search)) {

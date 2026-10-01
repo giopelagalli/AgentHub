@@ -25,3 +25,29 @@ conventions are the orchestrator's.
 ## Consequences
 Every agent-written page lands in the layout with no formatting work. A light theme is a token
 swap, not a rewrite. Pages without front matter fall under a default section.
+
+## Implementation choices (added 2026-10-01, after review)
+Made by the orchestrator and senior-coder while building the shell; recorded here rather than
+under new numbers because they all follow from C.
+
+- **Front matter, bare or fenced.** Agents write `section: Architecture` as a bare first line as
+  often as inside `---` fences, so both are read. Bare lines are only taken as front matter when
+  every one holds a known key (`section`, `title`). Otherwise a page that opens with
+  "Status: draft" would lose that line, so any other key leaves the document untouched. Inside
+  `---` fences any key is accepted, because the fences say it is metadata. Rejected: fences only,
+  which drops the form agents actually write.
+- **The Docs view fetches every page when the index lands**, not one page as it is opened. A page's
+  rail group comes from its own front matter, so the rail cannot be drawn until every page is
+  read; fetching lazily would reshuffle the sidebar under the reader. Docs bundles are a few short
+  local files, so the cost is small. A reload keeps the previous text and overwrites it as fetches
+  land, and a page not yet fetched shows a loading line rather than a blank.
+- **The PRD is read section by section.** Its `##` headings are the shell's pages (`page` mode),
+  which is also what the audit grades, and the completeness chips navigate to them. Editing still
+  hands over the whole markdown: sections are a way to read the file, not to slice it.
+- **The decision log and the code map are pinned under "Reference"**, last in the rail, whatever
+  their own front matter says. They are looked up rather than read in order.
+- **Callouts are split before rendering** (`splitCallouts` in `markdown.ts`), not parsed inside
+  `renderMarkdown`. Each callout body goes through the unchanged escape-first renderer, so
+  `renderMarkdown` and its guarantees stay untouched, and the only new markup is the wrapper.
+  Rejected: teaching the line parser a nested block, which would put the escape rule at risk for
+  one feature.

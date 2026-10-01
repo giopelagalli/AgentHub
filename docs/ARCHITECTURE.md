@@ -38,6 +38,16 @@ no runtime dependencies: CodeMirror is the Code sheet's and is loaded only when 
 which is what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on
 ROADMAP).
 
+**`packages/ui/src/panels/docshell.ts`** — the docs shell (0047): one three-column documentation
+layout (grouped, filterable page rail; breadcrumb, title and pager; *On this page*), used by the
+Docs sheet, the PRD sheet and the Help page. `mountDocShell(host, options)` returns a
+`DocShellHandle` (`root`, `update`, `navigate`, `destroy`). In `page` mode the pages are separate
+documents and the rail swaps between them (Docs, the PRD read section by section); in `scroll`
+mode they are the `##` sections of one document on screen at once, and the rail scrolls to them
+(Help). Its parsing helpers (`parseFrontMatter`, `groupPages`, `splitSections`, `docToc`) are pure;
+the shell itself is tested in happy-dom (0049). `renderDocMarkdown` (callouts:
+`:::info|tip|note|warning|danger`) sits beside `renderMarkdown` in `markdown.ts`.
+
 ## Hub modules (`packages/hub/src`)
 
 **`auth.ts`** — session cookies (HMAC), the daemon bearer(s), and `routeAccess`: every route is

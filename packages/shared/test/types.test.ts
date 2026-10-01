@@ -47,7 +47,10 @@ describe('video payload parsing', () => {
   const base = { prompt: 'a heron', mode: 't2v', durationSec: 6, aspect: '16:9', resolution: '768p' } as const;
 
   it('strips everything outside the schema', () => {
+    // `seed` joined the schema with media (0060), so a valid one is kept; `project` is not a payload field.
     expect(parseVideoPayload({ ...base, project: 'reel', seed: 7, imagePath: undefined }))
+      .toEqual({ ...base, seed: 7 });
+    expect(parseVideoPayload({ ...base, project: 'reel', imagePath: undefined }))
       .toEqual(base);
     expect(parseVideoPayload({ ...base, mode: 'i2v', imagePath: 'ref.png', extra: 'x' }))
       .toEqual({ ...base, mode: 'i2v', imagePath: 'ref.png' });

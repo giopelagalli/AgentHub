@@ -13,8 +13,13 @@ export interface ServingConfig {
   priority?: number;
   requestExtras?: Record<string, unknown>;
 }
-/** Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one. */
-export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; }
+/**
+ * Optional browser capability — only the Mac mini enables it. `port: 0` picks an ephemeral one.
+ * `slots` is how many isolated contexts the one browser process runs (default 1, at most
+ * `MAX_BROWSER_SLOTS`) — each is a separate session the hub can lease to a project (decision 0059).
+ */
+export interface BrowserConfig { enabled: boolean; port?: number; display?: string; headless?: boolean; slots?: number }
+export const MAX_BROWSER_SLOTS = 8;
 /**
  * Marks this node as a hub candidate (spec §4.2). `hubCmd` is the argv that starts the hub itself
  * (e.g. `["node", "packages/hub/dist/main.js"]`); it is given the data-root variables derived from
@@ -84,6 +89,9 @@ export function loadConfig(path: string): DaemonConfig {
   }
   if (raw.browser !== undefined && typeof raw.browser.enabled !== 'boolean')
     throw new Error('daemon config: browser.enabled must be a boolean');
+  const slots = raw.browser?.slots;
+  if (slots !== undefined && (!Number.isInteger(slots) || slots < 1 || slots > MAX_BROWSER_SLOTS))
+    throw new Error(`daemon config: browser.slots must be an integer from 1 to ${MAX_BROWSER_SLOTS}`);
   if (raw.profiles !== undefined) {
     const names = new Set(serving.map((s) => s.name ?? `${s.tier}:${s.port}`));
     for (const [profile, entries] of Object.entries(raw.profiles)) {

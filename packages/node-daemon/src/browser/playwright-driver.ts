@@ -18,7 +18,7 @@ interface PwPage {
   screenshot(opts: { type: 'jpeg'; quality?: number }): Promise<Buffer>;
   waitForLoadState(state?: string): Promise<void>;
 }
-interface PwContext { newPage(): Promise<PwPage> }
+interface PwContext { newPage(): Promise<PwPage>; close(): Promise<void> }
 /** The sliver of the DOM `read()` touches, typed here because this package compiles without lib.dom. */
 interface PageDocument { querySelectorAll(selector: string): Iterable<{ textContent: string | null; href: string }> }
 interface PwBrowser {
@@ -41,8 +41,9 @@ const SCALE = 0.5;
 const JPEG_QUALITY = 60;
 const ACTION_TIMEOUT_MS = 15_000;
 
+/** One slot: a page in its own context (cookies, storage, cache), so slots never see each other. */
 class PlaywrightDriver implements BrowserDriver {
-  constructor(private browser: PwBrowser, private page: PwPage) {}
+  constructor(private context: PwContext, private page: PwPage, private onClosed: () => Promise<void>) {}
 
   private async state(): Promise<PageState> {
     return { url: this.page.url(), title: await this.page.title() };
@@ -86,19 +87,40 @@ class PlaywrightDriver implements BrowserDriver {
     return this.page.screenshot({ type: 'jpeg', quality: JPEG_QUALITY });
   }
 
+  /** Closes this slot's context; the browser process goes once the last slot has closed. */
   async close(): Promise<void> {
-    await this.browser.close();
+    try {
+      await this.context.close();
+    } finally {
+      await this.onClosed();
+    }
   }
 }
 
-/** Launches Chromium and returns a driver for its single page. Throws if playwright isn't installed. */
-export async function createPlaywrightDriver(opts: PlaywrightDriverOptions = {}): Promise<BrowserDriver> {
+/**
+ * Launches one Chromium and returns `slots` drivers, each on its own isolated context (decision
+ * 0059: contexts in one browser rather than a browser per slot). Throws if playwright isn't installed.
+ */
+export async function createPlaywrightDrivers(opts: PlaywrightDriverOptions = {}, slots = 1): Promise<BrowserDriver[]> {
   const specifier = 'playwright';
   const { chromium } = (await import(specifier)) as PwModule;
   const browser = await chromium.launch({
     headless: opts.headless ?? true,
     ...(opts.display ? { env: { ...process.env, DISPLAY: opts.display } } : {}),
   });
-  const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
-  return new PlaywrightDriver(browser, await context.newPage());
+  let open = slots;
+  const onClosed = async (): Promise<void> => {
+    if (--open === 0) await browser.close();
+  };
+  const drivers: BrowserDriver[] = [];
+  try {
+    for (let i = 0; i < slots; i++) {
+      const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
+      drivers.push(new PlaywrightDriver(context, await context.newPage(), onClosed));
+    }
+  } catch (err) {
+    await browser.close().catch(() => {});
+    throw err;
+  }
+  return drivers;
 }

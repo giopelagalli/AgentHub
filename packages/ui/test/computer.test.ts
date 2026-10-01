@@ -37,6 +37,8 @@ describe('browserTiles', () => {
   it('names the holder, its project, how long it has held the slot and the seconds left', () => {
     const [tile] = browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: lease() }] }), {}, NOW);
     expect(tile).toMatchObject({ holder: 'subagent 7 — acme', since: '2m05s', expires: '42s', leaseId: 'l1', own: false });
+    const orch = lease({ requester: { kind: 'orchestrator', id: 'project:acme', project: 'acme' } });
+    expect(browserTiles(status({ slots: [{ node: 'mini', slot: 0, lease: orch }] }), {}, NOW)[0].holder).toBe('orchestrator — acme');
   });
 
   it('never shows a negative countdown, and marks the owner without stuttering its name', () => {

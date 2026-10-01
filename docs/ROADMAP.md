@@ -69,6 +69,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - The two API pieces the redesign wanted (0053): each project's `lastTurn` outcome in
   `/api/state` (so the sidebar dot is red after a failure without the browser holding the turns),
   and `POST /roadmap/move` accepting `{ id, to }` so a drag is one request.
+- Browser pool (FR-D8, 0059): `browser.slots` contexts in one browser per node, leases for
+  `(node, slot)` with one slot per project, Take control per slot, and Machines → Browser as a
+  tile per slot.
 
 ## In progress
 
@@ -85,5 +88,5 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    and the installer putting pi on a node.
 4. JD drives the hub; the web door (FR-C1–C5).
 5. Media on the 7900 XTX (FR-E1–E4).
-6. Browser pool (FR-D8).
+6. Per-project live browser on the Code tab (FR-B7), on the pool's slots.
 7. Accounts, grants, per-member JD, the public site (FR-F1–F6).

@@ -408,12 +408,20 @@ on that port.
 Publishing previews through the public site is a second Caddy site and a `preview.` DNS record —
 `deploy/do/README.md` §8b.
 
-## The shared browser (Machines → Browser)
+## The browser pool (Machines → Browser)
 
-One browser session lives on the browser node (the Mac mini). Agents *lease* it for a task and
-release it; **Machines → Browser** shows who holds it, the queue, and lets you **Take control**
-(you drive, agents wait) and **Release**. Recordings of agent sessions are kept under the data
-root. Multiple simultaneous sessions are planned (Phase D).
+A browser node (the Mac mini) runs one browser with several isolated sessions — *slots* — set by
+`browser.slots` in its daemon config (default 1, at most 8). Agents *lease* a slot for a task and
+release it. A project holds one slot at a time: its manager and employees share it, so several
+projects browse at once and nobody in a project waits for a colleague. When every slot is taken,
+requests wait in line (manager before employee) and get the next slot that frees up.
+
+**Machines → Browser** has a tile per slot: the node and slot number, who holds it and for how
+long, and a live thumbnail. A free slot stays quiet. **Watch** shows a slot large at the top;
+**Take control** takes that slot for you (its holder's next action fails, other slots carry on);
+**Release** gives a slot back. **Drain** on a browser node stops it handing out slots — current
+holders finish — and **Remove** takes its slots away. Pausing models doesn't affect the browser.
+Recordings of each session are kept under the data root, one per lease.
 
 ## The terminal
 
@@ -636,7 +644,7 @@ DATA_ROOT/
 - **Tier** — a model's job: orchestrator or worker.
 - **Attach mode** — a node config entry without a `cmd`: the daemon registers a server it did not start.
 - **Priority** — a project's queue class (`Runs first` / `Normal` / `When idle`).
-- **Lease** — an agent's temporary hold on the shared browser.
+- **Lease** — an agent's temporary hold on one slot of the browser pool.
 - **Verification** — tests plus a read-only review before a milestone counts as done.
 
 ## Costs

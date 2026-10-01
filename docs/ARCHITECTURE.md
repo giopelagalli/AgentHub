@@ -234,7 +234,14 @@ out of history on purpose — credentials by convention, and whatever the reposi
 the request, and reports whether the page was actually rewritten. The guide it sits beside is a
 persona in `chat.ts`, read-only by construction (0045).
 
-**`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
+**`browser/`** — the browser pool (FR-D8, 0059). `lease.ts` is the `LeaseManager`: it reads the pool
+(every slot of every online browser node; a draining node's slots marked) through a provider, grants
+`(node, slot)` with a priority FIFO when full, one slot per project, and lets the owner preempt a
+named slot. `proxy.ts` forwards a live lease's actions to its node's browser server with
+`?slot=N`, records a frame per action under the lease, and casts a frame per held slot to the
+`browser` WS topic. `routes.ts` is the `/api/browser/*` plugin; `recorder.ts` the timelines. On the
+daemon, `node-daemon/src/browser/` is one Playwright browser with a context per slot behind a small
+HTTP server.
 
 **`assistant/`, `telegram/`, `external/`, `resources.ts`, `control-switch.ts`** — the built-in
 assistant with its markdown memory, the grammY bot with a confirmation gate, external tools

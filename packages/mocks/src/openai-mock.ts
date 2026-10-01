@@ -7,6 +7,13 @@ export interface MockOptions {
   tokenDelayMs?: number;
   replyFor?: (lastUser: string) => string;
   script?: ScriptStep[];
+  /**
+   * Decides the reply for a request the `script` doesn't cover (it is consulted once the script is
+   * exhausted, so a test can still front-load fixed steps). Returning undefined falls back to the
+   * echo/`replyFor` reply. This is how the simulation scripts whole agents: it reads the request's
+   * own system prompt and history, so concurrent conversations never share a step counter.
+   */
+  respond?: (body: ChatBody) => ScriptStep | undefined;
   /** Validate requests like a strict OpenAI-compatible provider (see `validationError`). Default true. */
   strict?: boolean;
 }
@@ -14,12 +21,14 @@ export interface MockOptions {
 export interface MockOpenAI extends FastifyInstance {
   lastRequest(): any;
   requests: any[];
+  /** Changes the per-token delay for requests from now on (the sim seeds at 0, then slows down). */
+  setTokenDelay(ms: number): void;
 }
 
-interface WireToolCall { id?: unknown; type?: unknown; function?: { name?: unknown; arguments?: unknown } }
-interface WireMessage { role: string; content?: string | null; tool_calls?: WireToolCall[]; tool_call_id?: unknown; }
-interface WireTool { type?: unknown; function?: { name?: unknown; parameters?: unknown } }
-interface ChatBody { model: string; stream?: boolean; messages: WireMessage[]; tools?: WireTool[]; stream_options?: { include_usage?: unknown }; }
+export interface WireToolCall { id?: unknown; type?: unknown; function?: { name?: unknown; arguments?: unknown } }
+export interface WireMessage { role: string; content?: string | null; tool_calls?: WireToolCall[]; tool_call_id?: unknown; }
+export interface WireTool { type?: unknown; function?: { name?: unknown; parameters?: unknown } }
+export interface ChatBody { model: string; stream?: boolean; messages: WireMessage[]; tools?: WireTool[]; stream_options?: { include_usage?: unknown }; }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -82,11 +91,13 @@ function splitArguments(json: string): string[] {
 }
 
 export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
-  const { tokenDelayMs = 0, replyFor = (u) => `echo: ${u}`, script = [], strict = true } = opts;
+  const { replyFor = (u) => `echo: ${u}`, script = [], strict = true, respond } = opts;
+  let tokenDelayMs = opts.tokenDelayMs ?? 0;
   const app = Fastify() as unknown as MockOpenAI;
   const requests: any[] = [];
   app.requests = requests;
   app.lastRequest = () => requests[requests.length - 1];
+  app.setTokenDelay = (ms) => { tokenDelayMs = ms; };
   let stepIndex = 0;
 
   app.get('/v1/models', async () => ({ object: 'list', data: [{ id: 'mock-model', object: 'model' }] }));
@@ -98,7 +109,7 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
       const error = validationError(body);
       if (error) return reply.code(400).send({ error: { message: error } });
     }
-    const step = stepIndex < script.length ? script[stepIndex++] : undefined;
+    const step = stepIndex < script.length ? script[stepIndex++] : respond?.(body);
 
     if (step && 'toolCalls' in step) {
       const toolCalls = step.toolCalls.map((tc, i) => ({ id: `call_${i}`, name: tc.name, arguments: JSON.stringify(tc.arguments) }));
@@ -113,8 +124,11 @@ export function createMockOpenAI(opts: MockOptions = {}): MockOpenAI {
         };
       }
       reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-      if (step.content) {
-        const contentChunk = { id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: { content: step.content }, finish_reason: null }] };
+      // Streamed token by token like a plain reply, so the text before a tool call arrives the way a
+      // real model's does (and is visibly paced when there is a delay).
+      for (const tok of step.content?.match(/\S+\s*/g) ?? []) {
+        if (tokenDelayMs) await sleep(tokenDelayMs);
+        const contentChunk = { id: 'mock-1', object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: { content: tok }, finish_reason: null }] };
         reply.raw.write(`data: ${JSON.stringify(contentChunk)}\n\n`);
       }
       for (let i = 0; i < toolCalls.length; i++) {

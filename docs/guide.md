@@ -496,6 +496,36 @@ The droplet also runs its own watchdog, independent of JD (which lives on the Sp
 silent for exactly the outage you'd want to hear about): every minute it checks the hub and sends
 a Telegram message on the down/up transition only. Setup is `deploy/do/README.md` §8.
 
+## Developing (the simulation)
+
+To see or change the UI without the Spark, a login or any keys, run a whole AgentHub locally from
+any checkout or worktree:
+
+```sh
+npm run sim       # hub on http://127.0.0.1:4100 (serves packages/ui/dist if it is built)
+npm run sim:ui    # the same, plus the Vite dev server on http://localhost:5180 — open this one
+```
+
+The password is **`sim`**. The hub runs with auth on, scheduled turns off and no cloud tier; every
+model is a scripted mock that answers as the manager, the employees, the PRD and roadmap leads and
+the chats, with a small delay per token so a turn visibly streams. *Run turn* on `pomodoro-cli`
+delegates the next milestone to Ada, runs the real tests, has Vex review it, and publishes a
+briefing — and the mock is priced like Fireworks GLM, so costs show in dollars.
+
+What is seeded, so every empty, partial and full state is on screen:
+
+- **pomodoro-cli** — full PRD, 9 milestones with m1–m3 done and verified, two past turns with
+  briefings and costs, five docs pages and a code map, a workspace (Code and Terminal have files),
+  and a preview (a tiny static dashboard; press Start in Preview).
+- **habit-tracker** — PRD drafted and roadmap generated, nothing built.
+- **scratch** — just created; the PRD is the scaffold.
+- **Nodes** — `sim-spark` online, serving the mock; `sim-pc` goes offline about 15 s after start.
+
+Flags: `--port` (4100), `--ui-port` (5180), `--data <dir>` to keep the data between runs (seeded
+only when empty), `--reset` to wipe it, `--token-delay <ms>` (30). Without `--data` the data lives
+in a temp directory that is removed on exit. Ctrl-C stops everything. In the Browser pane, the
+`sim` and `sim-ui` entries in `.claude/launch.json` start the same two commands.
+
 ## Troubleshooting
 
 | You see | It means | Do |

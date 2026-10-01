@@ -51,6 +51,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - The **Code** screen (FR-B3–B5): the workspace as a tree, a CodeMirror viewer/editor whose saves
   commit as `Owner edit: <path>`, the read-only **Guide** docked beside it, and `docs/code-map.md`
   with `path:line` links that open a file at that line (0043–0046).
+- The **simulation** (`npm run sim` / `sim:ui`, password `sim`): a local hub with scripted mock
+  models, two nodes and three seeded projects, so the UI can be seen and driven with no Spark,
+  login or keys (0047).
 
 ## In progress
 

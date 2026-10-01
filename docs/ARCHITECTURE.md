@@ -13,7 +13,8 @@ workspace containment). Types live here so the wire format is checked at compile
 ends; nothing here does I/O except the shell helper.
 
 **`packages/mocks`** — a strict OpenAI-compatible mock server (validates tool and `tool_calls`
-wire shapes, scripts replies, records requests), a ComfyUI mock, and a daemon-config writer for
+wire shapes, scripts replies — a fixed `script`, or a per-request `respond` hook — records
+requests), a ComfyUI mock, and a daemon-config writer for
 tests. Strictness is the point: a lenient mock once hid a broken wire format behind 650 green
 tests.
 
@@ -21,6 +22,14 @@ tests.
 bundle, the WebSocket, the queue, the gateway, the projects, the assistant, Telegram, and now
 enrollment and usage. Everything else talks to it; it talks to nodes only through what they
 register (0003).
+
+**`packages/hub/sim`** — the simulation behind `npm run sim` / `sim:ui` (0047): `startSim()` runs
+the hub in-process with auth on, the strict OpenAI mock answering through `agent-script.ts` (a
+stateless responder that reads each request's system prompt and history to play the manager,
+coder, reviewer, PRD and roadmap leads and the chats), a mock node plus one left to go stale, and
+seeds three projects through the hub's own routes (`seed.ts`, data in `content.ts`). Dev tooling,
+not product: nothing in `src/` imports it. It lives in the hub package because it needs `createHub`
+and the mocks, and the hub already depends on both.
 
 **`packages/node-daemon`** — one process per machine. Registers what the machine can do
 (serving entries spawned or attached, 0005; shell jobs; a browser; a profile set; the hub itself

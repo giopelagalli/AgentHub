@@ -191,8 +191,19 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
       else scroller.scrollTop = scroller.scrollHeight;
       jump.hidden = true;
     };
-    scroller.addEventListener('scroll', () => { if (distance() < PINNED_PX) jump.hidden = true; });
+    // Pinned is remembered from the last scroll, so a window that changes size under the reader —
+    // a phone's keyboard opening, a rotation — keeps the newest message in view if it was.
+    let pinnedAtRest = true;
+    scroller.addEventListener('scroll', () => {
+      pinnedAtRest = distance() < PINNED_PX;
+      if (pinnedAtRest) jump.hidden = true;
+    });
     jump.addEventListener('click', () => toBottom(true));
+    if (typeof ResizeObserver === 'function') {
+      const resized = new ResizeObserver(() => { if (pinnedAtRest) toBottom(); });
+      resized.observe(scroller);
+      cleanups.push(() => resized.disconnect());
+    }
 
     // -- rendering
 

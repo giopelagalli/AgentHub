@@ -29,8 +29,10 @@ export interface BrowserTile {
 }
 
 function who(requester: BrowserRequester): string {
-  // The owner's id is just 'owner'; printing kind and id both would stutter.
-  const name = requester.id === requester.kind ? requester.kind : `${requester.kind} ${requester.id}`;
+  // The owner's id is just 'owner', and an orchestrator's is `project:<slug>`; printing those beside
+  // the kind and the project would stutter.
+  const bare = requester.id === requester.kind || requester.id === `project:${requester.project}`;
+  const name = bare ? requester.kind : `${requester.kind} ${requester.id}`;
   return requester.project ? `${name} — ${requester.project}` : name;
 }
 

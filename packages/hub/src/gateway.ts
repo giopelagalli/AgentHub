@@ -265,6 +265,7 @@ export class ModelGateway {
     const out: { node: NodeInfo; endpoint: ServingEndpoint; key: string }[] = [];
     for (const node of this.registry.online()) {
       if (node.draining) continue; // no new work; a stream already in flight on it just runs its course
+      if (node.modelsPaused) continue; // the owner took this node's models out of rotation; jobs still land
       for (const endpoint of node.endpoints) {
         if (endpoint.tier !== tier) continue;
         if (!cloudOpen && isCloudEndpoint(endpoint)) continue;

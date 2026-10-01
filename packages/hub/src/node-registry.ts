@@ -1,7 +1,7 @@
 import type { Db } from './db.js';
 import type { JobType, NodeInfo, NodeRegistration, ServingEndpoint } from '@agenthub/shared';
 
-interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; control_node: number; draining: number; owner: string; token_hash: string | null; enrolled_at: number | null; hardware_json: string | null; }
+interface Row { id: number; name: string; arch: string; endpoints_json: string; status: 'online' | 'offline'; last_heartbeat: number; job_types_json: string; browser_json: string | null; profiles_json: string; video: number; control_json: string | null; control_node: number; draining: number; models_paused: number; owner: string; token_hash: string | null; enrolled_at: number | null; hardware_json: string | null; }
 
 /**
  * The row as the API shows it. `token_hash` is deliberately not mapped: a node's credential never
@@ -17,6 +17,7 @@ const toInfo = (r: Row): NodeInfo => ({
   ...(r.control_json ? { control: JSON.parse(r.control_json) as { url: string } } : {}),
   controlNode: r.control_node === 1,
   draining: r.draining === 1,
+  modelsPaused: r.models_paused === 1,
   owner: r.owner,
   ...(r.enrolled_at === null ? {} : { enrolledAt: r.enrolled_at }),
   ...(r.hardware_json ? { hardware: JSON.parse(r.hardware_json) as Record<string, unknown> } : {}),
@@ -88,6 +89,12 @@ export class NodeRegistry {
   /** Toggles whether `name` gets new work; running work is untouched. False if the node is unknown. */
   setDraining(name: string, on: boolean): boolean {
     const res = this.db.prepare(`UPDATE nodes SET draining=? WHERE name=?`).run(on ? 1 : 0, name);
+    return res.changes > 0;
+  }
+
+  /** Toggles whether the gateway may pick `name`'s serving endpoints; jobs are untouched. False if the node is unknown. */
+  setModelsPaused(name: string, on: boolean): boolean {
+    const res = this.db.prepare(`UPDATE nodes SET models_paused=? WHERE name=?`).run(on ? 1 : 0, name);
     return res.changes > 0;
   }
 

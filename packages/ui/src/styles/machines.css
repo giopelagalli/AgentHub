@@ -114,7 +114,8 @@
   color: var(--red);
 }
 
-.mrow__state--draining {
+.mrow__state--draining,
+.mrow__state--models-paused {
   color: var(--amber);
 }
 

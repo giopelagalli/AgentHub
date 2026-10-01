@@ -19,6 +19,13 @@ describe('nodeActions', () => {
     expect(nodeActions(node({ draining: true }))).toEqual(['undrain', 'remove']);
   });
 
+  it('offers pause models for a node that serves models, resume when paused', () => {
+    const serving = [{ tier: 'worker' as const, url: 'http://x', model: 'm', maxStreams: 1 }];
+    expect(nodeActions(node({ endpoints: serving }))).toEqual(['drain', 'pause-models', 'remove']);
+    expect(nodeActions(node({ endpoints: serving, modelsPaused: true }))).toEqual(['drain', 'resume-models', 'remove']);
+    expect(nodeActions(node({ endpoints: serving, draining: true, modelsPaused: true }))).toEqual(['undrain', 'resume-models', 'remove']);
+  });
+
   it('offers nothing for a synthetic cloud node', () => {
     expect(nodeActions(node({ name: 'cloud-anthropic', arch: 'cloud' }))).toEqual([]);
   });

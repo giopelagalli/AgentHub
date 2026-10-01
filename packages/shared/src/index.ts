@@ -79,6 +79,8 @@ export interface NodeInfo extends NodeRegistration {
   jobTypes: JobType[];
   /** Set by the owner from the Cluster page: finishes work already in flight, gets nothing new. */
   draining?: boolean;
+  /** Set by the owner from the Machines page: the gateway stops picking this node's serving endpoints; it still heartbeats and claims jobs. */
+  modelsPaused?: boolean;
   /**
    * Who the node belongs to (PRD FR-D5). The enrolling user, or `admin` for a node that registered
    * with the shared `DAEMON_TOKEN` and was never enrolled. Single-user today, but every row has one.

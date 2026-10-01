@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { HARNESS_KINDS, type HarnessInfo, type HarnessKind } from '@agenthub/shared';
+import { sandboxStatus } from './sandbox.js';
 
 const run = promisify(execFile);
 
@@ -31,14 +32,21 @@ export async function piBinary(): Promise<{ path: string; version: string } | nu
 }
 
 /**
- * What `GET /api/harnesses` reports. `builtin` is the hub itself and is always available;
+ * What `GET /api/harnesses` reports. `builtin` is the hub itself and is always available; pi only
+ * when it is installed *and* this host can sandbox it (decision 0055) — it never runs unconfined.
  * `claude-code` is declared but not implemented yet (FR-G3), so it is never offered.
  */
 export async function harnessStatus(): Promise<HarnessInfo[]> {
   const pi = await piBinary();
+  const sandbox = pi ? await sandboxStatus() : undefined;
+  const refused = sandbox && !sandbox.available ? `pi cannot be sandboxed on this host: ${sandbox.reason}` : undefined;
   const info: Record<HarnessKind, HarnessInfo> = {
     builtin: { kind: 'builtin', available: true },
-    pi: { kind: 'pi', available: !!pi, ...(pi ? { version: pi.version } : {}) },
+    pi: {
+      kind: 'pi', available: !!pi && !refused,
+      ...(pi ? { version: pi.version } : {}),
+      ...(refused ? { reason: refused } : {}),
+    },
     'claude-code': { kind: 'claude-code', available: false },
   };
   return HARNESS_KINDS.map((kind) => info[kind]);

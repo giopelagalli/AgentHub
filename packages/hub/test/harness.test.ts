@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,25 @@ import { SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 import { runSubagent, type Tool, type ToolContext } from '../src/agents/tools.js';
 import { harnessStatus, type HarnessDoor } from '../src/agents/harness/index.js';
 import { createHub, type Hub } from '../src/server.js';
+import type { SandboxOptions, SandboxStatus } from '../src/agents/harness/sandbox.js';
+
+/**
+ * The OS sandbox, stood in for: these tests are about the adapter, and the fake pi writes its log
+ * outside the workspace, which the real sandbox (sandbox.test.ts) would rightly refuse. The stand-in
+ * records what it was asked to wrap and runs it as is; `status` is what detection reports.
+ */
+const sandbox = vi.hoisted(() => ({
+  status: { available: true } as SandboxStatus,
+  wrapped: [] as SandboxOptions[],
+}));
+vi.mock('../src/agents/harness/sandbox.js', async (original) => ({
+  ...(await original<typeof import('../src/agents/harness/sandbox.js')>()),
+  sandboxStatus: async () => sandbox.status,
+  sandboxedCommand: (_platform: NodeJS.Platform, o: SandboxOptions) => {
+    sandbox.wrapped.push(o);
+    return { cmd: o.argv[0], args: o.argv.slice(1) };
+  },
+}));
 
 /**
  * A stand-in for the pi CLI on PATH. It answers `--version` like the real one and otherwise emits
@@ -111,6 +130,8 @@ beforeEach(async () => {
   process.env.PATH = `${binDir}${delimiter}${savedPath ?? ''}`;
   process.env.FAKE_PI_LOG = logPath;
   process.env.FAKE_PI_MODE = 'report';
+  sandbox.status = { available: true };
+  sandbox.wrapped = [];
 
   mock = createMockOpenAI();
   await mock.listen({ port: 0, host: '127.0.0.1' });
@@ -132,6 +153,7 @@ afterEach(async () => {
   else process.env.PATH = savedPath;
   delete process.env.FAKE_PI_LOG;
   delete process.env.FAKE_PI_MODE;
+  delete process.env.HARNESS_REVIEWER_PI;
 });
 
 const member = (over: Partial<TeamMember> = {}): TeamMember => ({
@@ -174,6 +196,11 @@ describe('the pi harness', () => {
     // Once, in first-written order, and only for the tool call that names a file.
     expect(res.filesWritten).toEqual(['src/app.js']);
     expect(existsSync(join(bundle.workspace, 'src', 'app.js'))).toBe(true);
+    // Through the sandbox, confined to the workspace and its own config dir, with only the door reachable.
+    expect(sandbox.wrapped).toEqual([expect.objectContaining({
+      workspace: await realpath(bundle.workspace), doorPort: 4555, allowNetwork: false,
+      tmpDir: expect.stringContaining('agenthub-pi-'), argv: expect.arrayContaining(['pi', '-p', '--mode', 'json']),
+    })]);
     expect(events).toEqual([
       expect.objectContaining({ kind: 'subagent-start', who: 'coder-1', name: 'Ada', role: 'coder' }),
       { kind: 'tool-call', who: 'coder-1', tool: 'write', args: expect.stringContaining('src/app.js') },
@@ -339,6 +366,24 @@ describe('choosing a harness', () => {
     expect(existsSync(logPath)).toBe(false);
   });
 
+  it('runs the reviewer on pi, read-only and sandboxed, when HARNESS_REVIEWER_PI=1', async () => {
+    process.env.HARNESS_REVIEWER_PI = '1';
+    await runFor(member({ id: 'reviewer-1', role: 'reviewer', harness: 'pi' }), { role: 'reviewer', tools: [] });
+    const { argv } = await invocation();
+    expect(argv[argv.indexOf('--tools') + 1]).toBe('read,grep,find,ls');
+    expect(sandbox.wrapped).toHaveLength(1);
+  });
+
+  it('refuses pi, saying why, when this host cannot sandbox it — pi never runs unconfined', async () => {
+    sandbox.status = { available: false, reason: 'bubblewrap is not installed (sudo apt install bubblewrap)' };
+    const { logs } = await runFor(member());
+    expect(existsSync(logPath)).toBe(false);
+    expect(sandbox.wrapped).toEqual([]);
+    const why = 'pi cannot be sandboxed on this host: bubblewrap is not installed (sudo apt install bubblewrap)';
+    expect(logs.join('\n')).toContain(why);
+    expect(sessionEvents()).toContain(`${why}; running on the built-in loop`);
+  });
+
   it('falls back to the built-in loop, saying why, when pi is not installed', async () => {
     // An empty PATH rather than one with `binDir` filtered out: the machine running the suite may
     // have a real pi of its own installed, and this test is about the hub host that does not.
@@ -385,6 +430,14 @@ describe('the harness API', () => {
     await hub?.stop();
     if (hubRoot) await rm(hubRoot, { recursive: true, force: true });
     hub = undefined; hubRoot = undefined;
+  });
+
+  it('does not offer an installed pi on a host that cannot sandbox it, and says why', async () => {
+    sandbox.status = { available: false, reason: 'bwrap: setting up uid map: Permission denied' };
+    expect(await harnessStatus()).toContainEqual({
+      kind: 'pi', available: false, version: '0.73.1-fake',
+      reason: 'pi cannot be sandboxed on this host: bwrap: setting up uid map: Permission denied',
+    });
   });
 
   it("offers pi while its CLI is on PATH, and the drawer's choice persists", async () => {

@@ -6,6 +6,7 @@ import type { Tool } from '../tools.js';
 import { builtinHarness } from './builtin.js';
 import { piBinary } from './detect.js';
 import { piHarness } from './pi.js';
+import { sandboxStatus } from './sandbox.js';
 import type { Harness, HarnessDoor } from './index.js';
 
 export interface HarnessSelection {
@@ -18,7 +19,7 @@ export interface HarnessSelectOptions {
   member?: TeamMember;
   /** Tools beyond the workspace ones; an external harness cannot offer them, so it is not used. */
   extras: Tool[];
-  /** True when the caller pinned the belt itself — the milestone reviewer, which stays built-in. */
+  /** True when the caller pinned the belt itself — the milestone reviewer, built-in unless `HARNESS_REVIEWER_PI=1`. */
   pinnedTools: boolean;
   /** Builds the built-in belt; see `BuiltinHarnessDeps.tools`. */
   tools: (onWrite: (path: string) => void) => Tool[];
@@ -58,13 +59,16 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
   const wanted: HarnessKind = HARNESS_KINDS.includes(asked as HarnessKind) ? (asked as HarnessKind) : 'builtin';
   if (wanted === 'claude-code') return fallback('claude-code is not implemented yet');
   if (wanted !== 'pi') return builtin();
-  // FR-G4: the reviewer judges a milestone with read-only tools, and until a harness is verified to
-  // be restrictable *and* contained it keeps running on the loop that already guarantees both.
-  if (opts.pinnedTools) return builtin();
+  // FR-G4: the reviewer judges a milestone with read-only tools. pi can now be both restricted
+  // (`--tools read,grep,find,ls`) and contained (decision 0055), but the review task is written for
+  // the built-in belt and the Linux sandbox is unverified on the Spark, so it is opt-in for now.
+  if (opts.pinnedTools && process.env.HARNESS_REVIEWER_PI !== '1') return builtin();
   if (opts.extras.length) return fallback(`pi has no ${opts.extras.map((t) => t.def.name).join('/')}`);
   if (!opts.bundle) return builtin();
   const bin = await piBinary();
   if (!bin) return fallback('pi is not installed on this host');
+  const sandbox = await sandboxStatus();
+  if (!sandbox.available) return fallback(`pi cannot be sandboxed on this host: ${sandbox.reason}`);
   // pi reaches models only through the hub's own door (decision 0050): a provider key never enters
   // the subprocess, so without the door there is nothing pi may be pointed at.
   const base = opts.door?.base();

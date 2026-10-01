@@ -10,6 +10,7 @@ import { routeFor } from '../gateway.js';
 import type { ProjectBundle } from './bundle.js';
 import { guideContext, readBundleTool } from './chat.js';
 import { isProtectedPath, readCodeFile, type CodeRouteDeps } from './code.js';
+import { isCommitExcluded } from './github.js';
 import { CODE_MAP_PAGE, guidePrompt, tourInstruction } from './prompts.js';
 
 /**
@@ -68,7 +69,10 @@ async function cachedExplanation(bundle: ProjectBundle, index: number, step: Tou
   const names = await readdir(dir).catch(() => [] as string[]);
   const name = names.find((n) => n.startsWith(prefixOf(index)) && n.endsWith('.md'));
   if (!name) return null;
-  const lines = (await readFile(join(dir, name), 'utf8')).split('\n');
+  // Removed between the listing and the read (another step's write clears its position): no page.
+  const page = await readFile(join(dir, name), 'utf8').catch(() => null);
+  if (page === null) return null;
+  const lines = page.split('\n');
   if (lines[2] !== keyLine(step, snippet)) return null;
   return lines.slice(4).join('\n').trim();
 }
@@ -132,6 +136,9 @@ async function locate(bundle: ProjectBundle, index: number): Promise<{ total: nu
   const step = steps[index];
   const where = `${step.path}:${step.line}`;
   if (isProtectedPath(step.path)) throw new TourError(404, `${where} is not the project's own code`);
+  // A credential file by convention is never sent to a model to be explained, nor quoted into a
+  // committed page — the same files a milestone push holds back.
+  if (isCommitExcluded(step.path)) throw new TourError(404, `${where} is a credentials file the tour does not show`);
   let file;
   try {
     file = await readCodeFile(bundle.workspace, step.path);

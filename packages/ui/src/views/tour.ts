@@ -143,13 +143,18 @@ export function mountTour(deps: TourDeps): TourHandle {
       });
   };
 
-  const loadText = (at: number, mine: number, signal: AbortSignal): void => {
+  const loadText = (at: number, step: TourStep, mine: number, signal: AbortSignal): void => {
     textMessage('The guide is reading this step… The first reader of a step waits for it; everyone after gets it instantly.');
     text.setAttribute('aria-busy', 'true');
     void getJson<TourStepDoc>(`/api/projects/${deps.slug}/tour/${at}`, signal)
       .then((doc) => {
         if (mine !== token || !alive) return;
         text.removeAttribute('aria-busy');
+        // The map was rewritten between our read of it and the hub's: this explains another step.
+        if (doc.step.path !== step.path || doc.step.line !== step.line) {
+          textMessage('The map changed since this tab read it — refresh the map, then start the tour again.');
+          return;
+        }
         text.innerHTML = renderDocMarkdown(doc.explanation);
       })
       .catch((error: unknown) => {
@@ -184,7 +189,7 @@ export function mountTour(deps: TourDeps): TourHandle {
     const ac = new AbortController();
     inflight = ac;
     loadCode(step, mine, ac.signal);
-    loadText(index, mine, ac.signal);
+    loadText(index, step, mine, ac.signal);
   }
 
   backButton.addEventListener('click', () => { if (index !== null) show(index - 1); });

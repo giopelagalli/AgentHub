@@ -109,6 +109,25 @@ describe('the tour route', () => {
     expect((await hub.app.inject({ method: 'GET', url: '/api/projects/demo/tour/one' })).statusCode).toBe(400);
   });
 
+  it('explains a step once when two readers ask for it at the same time', async () => {
+    const [a, b] = await Promise.all([step(0), step(0)]);
+    expect([a.statusCode, b.statusCode]).toEqual([200, 200]);
+    expect([a.json().cached, b.json().cached].sort()).toEqual([false, true]);
+    expect(mock.requests).toHaveLength(1);
+  });
+
+  it('404s a step outside the workspace or on a credentials file, without asking the model', async () => {
+    await writeFile(join(bundle.workspace, '.env.local'), 'TOKEN=secret\n', 'utf8');
+    await bundle.writeDoc('code-map', '# Code map\n\n- `../outside.txt:1` — escapes.\n- `.env.local:1` — secrets.\n');
+    const outside = await step(0);
+    expect(outside.statusCode).toBe(404);
+    expect(outside.json().error).toMatch(/escapes workspace/);
+    const secrets = await step(1);
+    expect(secrets.statusCode).toBe(404);
+    expect(secrets.json().error).toMatch(/credentials/);
+    expect(mock.requests).toHaveLength(0);
+  });
+
   it('is the owner\'s alone', () => {
     expect(routeAccess('GET', '/api/projects/:slug/tour/:index')).toBe('owner');
   });

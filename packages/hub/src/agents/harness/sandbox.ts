@@ -10,15 +10,22 @@ import { fileURLToPath } from 'node:url';
  * The OS sandbox an external harness runs in (decision 0055): Seatbelt (`sandbox-exec`) on macOS,
  * bubblewrap (`bwrap`) on Linux. Either way the process may read the disk except the hub's own
  * secrets and other projects, write only the workspace and its own temp dir, and reach the network
- * only at the hub's door.
+ * only at the hub's door — or, for `claude`, which talks to Anthropic itself, at any host on port
+ * 443 (decision 0064).
  */
-export interface SandboxOptions {
+export type SandboxOptions = SandboxBase & SandboxNetwork;
+
+/**
+ * What the process may reach. `door`: the hub's door and nothing else (pi). `https`: outbound TCP
+ * to port 443 anywhere, plus name resolution (claude-code, decision 0064).
+ */
+export type SandboxNetwork = { door: Door } | { https: true };
+
+export interface SandboxBase {
   /** Absolute and already resolved (`realpath`): Seatbelt matches real paths, not symlinks. */
   workspace: string;
   /** The run's own scratch dir, writable; resolved like `workspace`. */
   tmpDir: string;
-  /** The hub's door as pi is pointed at it — a loopback host and its port, the only address reachable. */
-  door: Door;
   /** False for the read-only tool policy (the reviewer): then the workspace is read-only too. */
   writableWorkspace: boolean;
   /** Existing, resolved paths whose contents are hidden; see `hiddenPaths`. */
@@ -27,6 +34,11 @@ export interface SandboxOptions {
   readable?: string;
   /** The command to run inside, `argv[0]` resolved through PATH as usual. */
   argv: string[];
+  /**
+   * macOS only: lets the process reach the login keychain through securityd, which is where the
+   * `claude` CLI keeps its subscription login (decision 0064). Linux keeps it in a file instead.
+   */
+  keychain?: boolean;
 }
 
 export interface Door { host: string; port: number }
@@ -122,8 +134,16 @@ export function seatbeltProfile(o: SandboxOptions): { profile: string; params: s
     '(allow file-write* (literal "/dev/null") (literal "/dev/zero")',
     '  (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/fd/[0-9]+$"))',
     '(allow file-ioctl (literal "/dev/null") (literal "/dev/zero") (literal "/dev/random") (literal "/dev/urandom"))',
-    // Verified per port (decision 0055): another loopback port, an IP and DNS all fail.
-    `(allow network-outbound (remote ip "localhost:${o.door.port}"))`,
+    ...('door' in o
+      // Verified per port (decision 0055): another loopback port, an IP and DNS all fail.
+      ? [`(allow network-outbound (remote ip "localhost:${o.door.port}"))`]
+      // Verified with claude 2.1 (decision 0064): any host on 443, and DNS through mDNSResponder.
+      : [
+        '(allow network-outbound (remote tcp "*:443"))',
+        '(allow network-outbound (literal "/private/var/run/mDNSResponder"))',
+        '(allow mach-lookup (global-name "com.apple.dnssd.service"))',
+      ]),
+    ...(o.keychain ? ['(allow mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc"))'] : []),
   ].join('\n');
   return { profile, params };
 }
@@ -153,6 +173,8 @@ server.listen(Number(port), host, () => {
 });
 `;
 
+const RESOLVED_DIR = '/run/systemd/resolve';
+
 /** The bubblewrap line, without the command. */
 function bwrapArgs(o: SandboxOptions): string[] {
   const mounts = layers(o).flatMap((l) => {
@@ -168,9 +190,13 @@ function bwrapArgs(o: SandboxOptions): string[] {
     // A read-only bind still lets a process connect() to a socket on it: docker.sock, D-Bus and
     // ssh-agent live here, so it is replaced rather than bound read-only.
     '--tmpfs', '/run',
+    // systemd-resolved's stub, which /etc/resolv.conf points into on Ubuntu, is the one part of /run
+    // a process with the network shared needs back (unverified on the Spark, decision 0064).
+    ...('https' in o && existsSync(RESOLVED_DIR) ? ['--ro-bind', RESOLVED_DIR, RESOLVED_DIR] : []),
     ...mounts,
     '--chdir', o.workspace,
     '--unshare-all',
+    ...('https' in o ? ['--share-net'] : []),
     '--die-with-parent',
     '--new-session',
   ];
@@ -181,13 +207,15 @@ function bwrapArgs(o: SandboxOptions): string[] {
  * what is detected is exactly what runs.
  */
 export function sandboxedCommand(platform: NodeJS.Platform, o: SandboxOptions): SandboxedCommand {
-  const problem = doorProblem(o.door);
+  const problem = 'door' in o ? doorProblem(o.door) : null;
   if (problem) return { unavailable: problem };
   if (platform === 'darwin') {
     const { profile, params } = seatbeltProfile(o);
     return { cmd: SANDBOX_EXEC, args: ['-p', profile, ...params, ...o.argv] };
   }
   if (platform === 'linux') {
+    // With the network shared there is no namespace loopback to bridge, and no door to reach.
+    if ('https' in o) return { cmd: BWRAP, args: [...bwrapArgs(o), '--', ...o.argv] };
     const doorSocket = join(o.tmpDir, 'door.sock');
     return {
       cmd: BWRAP,
@@ -198,7 +226,7 @@ export function sandboxedCommand(platform: NodeJS.Platform, o: SandboxOptions): 
       doorSocket,
     };
   }
-  return { unavailable: `pi is only sandboxed on macOS and Linux, not ${platform}` };
+  return { unavailable: `an external harness is only sandboxed on macOS and Linux, not ${platform}` };
 }
 
 /**
@@ -294,35 +322,39 @@ const hostRunner: ProbeRunner = (cmd, args) => new Promise((settle) => {
 });
 
 /** A host probe that succeeded once holds for the process; a failure is probed again next time. */
-const probedOk = new Set<NodeJS.Platform>();
+const probedOk = new Set<string>();
 
 /**
  * Whether this host can sandbox a harness that calls the door at `doorBase`, found out by running
  * one: the binary being on PATH is not enough on Linux, where user namespaces may be disabled or
  * refused by AppArmor (decision 0055). The probe is the real wrapped command around `true`, the
  * host's hidden paths and the door bridge included. Without a `doorBase` only the host is judged.
+ * `https` probes the claude-code sandbox instead: the network shared, the keychain reachable.
  */
 export async function sandboxStatus(
-  { doorBase, platform = process.platform, run = hostRunner }: { doorBase?: string; platform?: NodeJS.Platform; run?: ProbeRunner } = {},
+  { doorBase, https = false, platform = process.platform, run = hostRunner }:
+  { doorBase?: string; https?: boolean; platform?: NodeJS.Platform; run?: ProbeRunner } = {},
 ): Promise<SandboxStatus> {
   if (platform !== 'darwin' && platform !== 'linux') {
-    return { available: false, reason: `pi is only sandboxed on macOS and Linux, not ${platform}` };
+    return { available: false, reason: `an external harness is only sandboxed on macOS and Linux, not ${platform}` };
   }
   const problem = doorBase ? doorProblem(doorOf(doorBase)) : null;
   if (problem) return { available: false, reason: problem };
   const cached = run === hostRunner;
-  if (cached && probedOk.has(platform)) return { available: true };
+  const key = `${platform}:${https ? 'https' : 'door'}`;
+  if (cached && probedOk.has(key)) return { available: true };
   const dir = await realpath(await mkdtemp(join(tmpdir(), 'agenthub-sandbox-probe-')));
   try {
     // Any port does: nothing connects, and on Linux the bridge listens in an empty namespace.
     const wrapped = sandboxedCommand(platform, {
-      workspace: dir, tmpDir: dir, door: { host: '127.0.0.1', port: 65535 }, writableWorkspace: true,
+      workspace: dir, tmpDir: dir, writableWorkspace: true,
+      ...(https ? { https: true, keychain: true } : { door: { host: '127.0.0.1', port: 65535 } }),
       ...hiddenPaths(hostSecrets(), dir), argv: ['true'],
     });
     if ('unavailable' in wrapped) return { available: false, reason: wrapped.unavailable };
     const res = await run(wrapped.cmd, wrapped.args);
     if (res.ok) {
-      if (cached) probedOk.add(platform);
+      if (cached) probedOk.add(key);
       return { available: true };
     }
     if (res.code === 'ENOENT') {

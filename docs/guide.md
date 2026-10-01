@@ -674,8 +674,10 @@ Until then the JD page shows those two lines and nothing else. Otherwise it tell
   differ.
 - **JD isn't answering** — JD is not running or is on another port. In the middle of a
   conversation this shows as "Not answering — retrying…" under JD's name, and it reconnects by
-  itself. Changing the token later is the same two edits and two restarts. Voice notes need the hub over HTTPS (the public site); over plain HTTP
-on the tailnet the mic says so instead.
+  itself.
+
+Changing the token later is the same two edits and two restarts. Voice notes need the hub over
+HTTPS (the public site); over plain HTTP on the tailnet the mic says so instead.
 
 ## Operating the hub (on the Spark)
 

@@ -277,8 +277,13 @@ its network is any HTTPS host rather than the hub's door. It can read your Claud
 to), and anything else it can read it could send out over HTTPS — give it ordinary workspace work,
 like pi. Its runs show tokens on the usage page with no dollar figure and never count toward the
 daily cloud cap; your subscription's own limits apply instead. Choosing it for an employee means
-their tasks go to Anthropic's cloud whatever the project's model policy says. The reviewer never
-runs on it.
+their tasks go to Anthropic's cloud — except in a **Local-only** project, which never runs Claude
+Code: those tasks stay on the built-in loop and the turn log says why. The reviewer never runs on
+it.
+
+For now Claude Code runs on a **macOS** hub only. On Linux the sandbox could only give it the
+host's whole network, your local services included, so the Harness list says "claude-code's
+network sandbox is not yet available on Linux" until that can be narrowed to HTTPS.
 
 **Choosing it.** Open an employee's drawer — click their face on the Overview — and use the
 **Harness** select under Model. The field only appears when there is more than one harness to pick

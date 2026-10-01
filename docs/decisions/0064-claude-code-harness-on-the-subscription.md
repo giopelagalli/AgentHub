@@ -58,8 +58,12 @@ so it cannot be pointed at the hub's door, and its login lives in the hub user's
 - C — a key for the API in the hub (`ANTHROPIC_API_KEY`, or `claude setup-token` into the env):
   against the owner's rule.
 - D (chosen) — our sandbox (0055) with a second network mode, `https`: outbound TCP 443 anywhere
-  plus DNS, no door; on macOS the keychain reachable; on Linux `--share-net` and
-  `/run/systemd/resolve` bound back for DNS.
+  plus DNS, no door; on macOS the keychain reachable. **No Linux form yet:** bwrap can only
+  share the host's whole network namespace (`--share-net`) — loopback included, so the hub, the
+  model servers, ComfyUI, browser CDP ports and abstract unix sockets — or none of it. On Linux
+  claude-code is reported unavailable with that reason until egress can be filtered (an HTTPS
+  proxy the sandbox reaches through a socket, or a filtered network namespace); that is the
+  condition to lift it.
 
 ## Decision
 `harness/claude-code.ts` runs `claude` as above, in the workspace, inside `sandboxedCommand` with
@@ -73,8 +77,10 @@ nothing the hub's environment says.
 
 - **Tools:** `workspace` → `Read,Edit,Write,Bash,Grep,Glob`; `read-only` → `Read,Grep,Glob`.
 - **Files written:** the `file_path` of each successful Write/Edit, in order, **plus a filesystem
-  scan** for files modified since the run started (skipping `.git`, `node_modules`) — this catches
-  what Bash wrote. A scan rather than the before/after `git status` first proposed: git in a
+  scan** for files modified since the run started (skipping `.git`, `node_modules`), done only when
+  the run made at least one Bash call — this catches what Bash wrote. A scan that stops at its entry
+  limit says so in the turn log. The scan cannot tell who wrote a file: anything else writing the
+  workspace during a Bash-using run (the owner in the Code tab, a preview build) is counted too. A scan rather than the before/after `git status` first proposed: git in a
   workspace the agent could write runs that workspace's config (`core.fsmonitor`, clean filters),
   and it would run outside the sandbox, in the hub.
 - **Usage:** one ledger row per model from `result.modelUsage` (or, for a run killed before its
@@ -83,11 +89,13 @@ nothing the hub's environment says.
   reads + cache writes, cached = cache reads. Recorded through `AgentLoop.recordUsage`, the same
   hook every gateway call reaches. `cloudUsdSince` sums `usd`, so these rows never count toward
   `MAX_CLOUD_USD_PER_DAY`; the CLI's `total_cost_usd` (a list-price equivalent) is ignored.
-- **Availability** (`detect.ts`): `claude --version` works, `auth status` says `loggedIn` with
+- **Availability** (`detect.ts`), a success cached for 60 s (the check takes ~1 s and the Harness
+  list asks on every load), a failure asked again next time so a fresh login shows at once: `claude --version` works, `auth status` says `loggedIn` with
   `authMethod: "claude.ai"` (asked with the stripped env, so a hub key cannot pass for it; an API
   login is refused), and the `https` sandbox probes OK. Unreadable status output → available with
   reason "login not verified", and the first run fails with the CLI's own message.
-- **Selection:** as pi's — the member's, else the project's; the milestone reviewer never runs on
+- **Selection:** as pi's — the member's, else the project's; a **Local-only** project
+  (`prefer: 'local'`) never runs it and falls back to `builtin`, saying why; the milestone reviewer never runs on
   it; browser/external tools or no bundle fall back to `builtin`, saying why. No door is needed.
 - The shared process handling (process group, abort, wall clock, budget stop, JSON Lines) moved from
   `pi.ts` into `harness/process.ts`, used by both adapters.
@@ -101,10 +109,13 @@ nothing the hub's environment says.
   it is a file. A run could exfiltrate the owner's Claude login over 443. Accepted as the price of
   "use the subscription"; recorded here so it is a known trade, not a surprise. Keychain items of
   other apps may also prompt on the owner's screen if asked for.
-- On Linux a token refresh during a run cannot be saved (`~/.claude` is read-only in the sandbox);
-  if runs there start failing as signed out, run `claude` once on the host. Unverified.
-- A claude-code run bypasses the gateway: no failover, no `maxStreams`, no "pause models", and a
-  local-only project policy does not apply — choosing claude-code for an employee is choosing
-  Anthropic's cloud for their tasks.
+- When Linux gains a form: a token refresh during a run cannot be saved there (`~/.claude` is
+  read-only in the sandbox, and the login is a file), so runs may start failing as signed out until
+  `claude` is run once on the host.
+- A claude-code run bypasses the gateway: no failover, no `maxStreams`, no "pause models" —
+  choosing claude-code for an employee is choosing Anthropic's cloud for their tasks. **Local-only
+  projects never run claude-code**: their work would leave the cluster, which is the policy's whole
+  point, so selection refuses it there.
+- macOS only for now (see Options D); Linux waits on a filtered egress.
 - The subscription's own limits (5-hour/7-day windows, visible as `rate_limit_event`) apply and are
   not surfaced in the hub yet.

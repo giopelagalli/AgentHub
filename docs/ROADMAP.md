@@ -72,6 +72,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 - The Code Tour: steps from the Code map, explanations cached as docs pages (0056–0058).
 
+- pi in an OS sandbox (0055): Seatbelt on macOS (verified with the real pi), bubblewrap on Linux
+  with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
+  pi not offered where the sandbox cannot start. The reviewer on pi behind `HARNESS_REVIEWER_PI=1`.
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -82,9 +86,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
 2. Workbench: a per-project live browser view on the Code tab (FR-B7).
-3. Harnesses, the rest: workspace containment so pi can become the default and the reviewer can
-   leave `builtin` (0049), a project-level Harness select in the header, `claude-code` (FR-G3),
-   and the installer putting pi on a node.
+3. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
+   sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
+   (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
+   a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
+   pi (and `bubblewrap`) on a node.
 4. JD drives the hub; the web door (FR-C1–C5).
 5. Media on the 7900 XTX (FR-E1–E4).
 6. Browser pool (FR-D8).

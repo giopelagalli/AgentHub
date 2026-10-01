@@ -622,6 +622,8 @@ export interface HarnessInfo {
   available: boolean;
   /** What the CLI reports for `--version`; absent when it is not installed. */
   version?: string;
+  /** Why an installed harness is still not offered — for pi, a host that cannot sandbox it. */
+  reason?: string;
 }
 
 /** One employee on a project's roster, stored in the bundle's `team.yaml`. */

@@ -12,6 +12,7 @@ import { piSubagentPrompt } from '../../projects/prompts.js';
 import { clip } from '../loop.js';
 import type { SessionOutcome, Transcript } from '../transcript.js';
 import type { Harness, HarnessContext, HarnessResult, HarnessTask, HarnessToolPolicy } from './index.js';
+import { doorOf, hiddenPaths, hostSecrets, sandboxedCommand, serveDoorSocket } from './sandbox.js';
 
 /** Same caps the built-in loop puts on a live event: a glance, not the transcript. */
 const EVENT_TEXT_LIMIT = 300;
@@ -44,9 +45,9 @@ export function doorModel(route: Route | undefined): string {
 const STDERR_LINE_LIMIT = 200;
 
 /**
- * pi's built-in tools, by policy. `bash` is what makes the workspace-writing set useful and is also
- * the reason pi cannot be contained to the workspace (decision 0049): the read-only set exists for
- * the day a reviewer may run here, and is the set FR-G4 asks for.
+ * pi's built-in tools, by policy. `bash` is what makes the workspace-writing set useful; pi itself
+ * cannot contain it (decision 0049), so the whole process runs in an OS sandbox (decision 0055).
+ * The read-only set is what the reviewer runs with, and is the set FR-G4 asks for.
  */
 const TOOLS: Record<HarnessToolPolicy, string> = {
   workspace: 'read,edit,write,bash,grep,find,ls',
@@ -167,22 +168,37 @@ export function piHarness(deps: PiHarnessDeps): Harness {
 
       let token: MintedApiToken | undefined;
       let configDir: string | undefined;
+      let bridge: { close: () => Promise<void> } | undefined;
       try {
         let workspace: string;
+        let command: { cmd: string; args: string[] };
         try {
           // One `agent` token per run, revoked below: it is the only credential pi is given.
           token = deps.door.tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel(ctx.subject, task.member?.id));
-          configDir = await mkdtemp(join(tmpdir(), 'agenthub-pi-'));
+          // Resolved like the workspace: the sandbox matches real paths, and macOS's tmpdir is a symlink.
+          configDir = await realpath(await mkdtemp(join(tmpdir(), 'agenthub-pi-')));
           await writeFile(join(configDir, 'models.json'), modelsConfig(deps.door.base, model), 'utf8');
           // Resolved once, so a workspace behind a symlink (macOS's /var) still contains pi's paths.
           workspace = await realpath(task.workspace);
+          // pi only ever runs sandboxed (decision 0055): the workspace (unless the policy is read-only)
+          // and its own config dir are the only places it may write, the hub's secrets and other
+          // projects are unreadable, and the door is the only address it may reach.
+          const door = doorOf(deps.door.base);
+          const wrapped = sandboxedCommand(process.platform, {
+            workspace, tmpDir: configDir, door, writableWorkspace: task.tools === 'workspace',
+            ...hiddenPaths(hostSecrets(), workspace),
+            argv: [deps.bin, ...piArgs(model, system, task)],
+          });
+          if ('unavailable' in wrapped) throw new Error(wrapped.unavailable);
+          if (wrapped.doorSocket) bridge = await serveDoorSocket(wrapped.doorSocket, door);
+          command = wrapped;
         } catch (err) {
           const why = `the pi harness could not start: ${(err as Error).message}`;
           deps.transcript.appendEvent(sessionId, why);
           deps.transcript.endSession(sessionId, 'error');
           return { report: why, filesWritten: [], outcome: 'error', sessionId, toolCalls: 0 };
         }
-        const run = await spawnPi(deps.bin, { configDir, workspace, model, key: token.token }, system, task, ctx, emit, record);
+        const run = await spawnPi(command, { configDir, workspace, model, key: token.token }, task, ctx, emit, record);
         const report = run.report.trim();
         if (report) deps.transcript.append(sessionId, { role: 'assistant', content: report });
         if (run.note) deps.transcript.appendEvent(sessionId, run.note);
@@ -198,6 +214,7 @@ export function piHarness(deps: PiHarnessDeps): Harness {
       } finally {
         if (task.member) deps.onBusy?.(false);
         if (token) deps.door.tokens.revoke(token.id, ADMIN_USER);
+        await bridge?.close();
         if (configDir) await rm(configDir, { recursive: true, force: true });
       }
     },
@@ -214,17 +231,11 @@ interface PiRun {
   note?: string;
 }
 
-/**
- * One pi process, start to finish. Resolves rather than rejects: a pi that will not start is an
- * `error` outcome with the reason in the report, the same as a gateway failure is for the loop.
- */
-function spawnPi(
-  bin: string, setup: { configDir: string; workspace: string; model: string; key: string }, system: string,
-  task: HarnessTask, ctx: HarnessContext, emit: (e: TurnEvent) => void, record: (line: string) => void,
-): Promise<PiRun> {
-  const args = [
+/** pi's own command line, after the binary. */
+function piArgs(model: string, system: string, task: HarnessTask): string[] {
+  return [
     '-p', '--mode', 'json',
-    '--model', `${PROVIDER}/${setup.model}`,
+    '--model', `${PROVIDER}/${model}`,
     '--append-system-prompt', system,
     // Thinking is off for workers (decision 0008), and the host's own pi extensions, skills and
     // prompt templates must not leak into a project's run.
@@ -233,6 +244,17 @@ function spawnPi(
     '--tools', TOOLS[task.tools],
     task.task,
   ];
+}
+
+/**
+ * One pi process, start to finish, as the sandboxed `command`. Resolves rather than rejects: a pi
+ * that will not start is an `error` outcome with the reason in the report, the same as a gateway
+ * failure is for the loop.
+ */
+function spawnPi(
+  command: { cmd: string; args: string[] }, setup: { configDir: string; workspace: string; model: string; key: string },
+  task: HarnessTask, ctx: HarnessContext, emit: (e: TurnEvent) => void, record: (line: string) => void,
+): Promise<PiRun> {
   // The run's door token is the one credential added back to the stripped environment, under the
   // name the per-run models.json points at — never on the command line, where it would be visible
   // in the workspace's own process list.
@@ -240,6 +262,9 @@ function spawnPi(
     ...secretsStripped(),
     PI_CODING_AGENT_DIR: setup.configDir,
     PI_OFFLINE: '1',
+    // The config dir is the one writable place besides the workspace, so scratch files go there too.
+    TMPDIR: setup.configDir,
+    npm_config_cache: join(setup.configDir, 'npm'),
     [API_KEY_ENV]: setup.key,
   };
   // Only a concrete cloud model can be priced here; for a tier name the door alone knows what
@@ -250,11 +275,13 @@ function spawnPi(
   return new Promise<PiRun>((settle) => {
     // detached: true makes pi its own process-group leader, so an abort can take down the whole
     // tree — pi's `bash` tool spawns children of its own that a plain child.kill would leave behind.
+    // `sandbox-exec` execs pi in place, so the group is pi's; `bwrap --new-session` puts pi in a
+    // session of its own, and killing bwrap takes the sandbox's whole pid namespace with it.
     //
     // stdin is ignored, not piped: pi accepts a piped-in prompt, so an open stdin with neither data
     // nor EOF makes even `-p` wait forever. Nothing here ever writes to it, and an ignored stdin is
     // the EOF it is waiting for.
-    const child = spawn(bin, args, { cwd: task.workspace, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command.cmd, command.args, { cwd: task.workspace, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
     const filesWritten: string[] = [];
     const pending = new Map<string, { tool: string; args: Record<string, unknown>; at: number }>();

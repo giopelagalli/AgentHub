@@ -114,18 +114,18 @@ describe('handleWsMessage', () => {
     expect([...store.getState().projectBusy]).toEqual([]);
   });
 
-  it('applies browser-frame frames, defaulting a missing lease to null', () => {
+  it('applies browser-frame frames, defaulting a missing lease to null and a missing slot to 0', () => {
     const store = new Store();
     handleWsMessage(store, JSON.stringify({
-      type: 'browser-frame', nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 5,
+      type: 'browser-frame', nodeName: 'macmini', slot: 1, leaseId: 'l1', jpegBase64: 'abc', at: 5,
     }));
-    expect(store.getState().browserFrame).toEqual({
-      nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 5,
+    expect(store.getState().browserFrames['macmini#1']).toEqual({
+      nodeName: 'macmini', slot: 1, leaseId: 'l1', jpegBase64: 'abc', at: 5,
     });
     handleWsMessage(store, JSON.stringify({
       type: 'browser-frame', nodeName: 'macmini', leaseId: null, jpegBase64: 'def', at: 6,
     }));
-    expect(store.getState().browserFrame?.leaseId).toBeNull();
+    expect(store.getState().browserFrames['macmini#0']?.leaseId).toBeNull();
   });
 
   it('ignores malformed and unknown frames without throwing', () => {
@@ -152,7 +152,7 @@ describe('handleWsMessage', () => {
     }
     expect(notifications).toBe(0);
     expect(store.getState().hub).toBeNull();
-    expect(store.getState().browserFrame).toBeNull();
+    expect(store.getState().browserFrames).toEqual({});
     expect(store.getState().projectBusy.size).toBe(0);
   });
 

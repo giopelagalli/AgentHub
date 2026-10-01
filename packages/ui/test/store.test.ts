@@ -19,7 +19,7 @@ function fabricateHubState(agentIds: number[], slugs: string[] = []): HubState {
   };
 }
 
-const frame: BrowserFrame = { nodeName: 'macmini', leaseId: 'l1', jpegBase64: 'abc', at: 10 };
+const frame: BrowserFrame = { nodeName: 'macmini', slot: 0, leaseId: 'l1', jpegBase64: 'abc', at: 10 };
 
 describe('Store', () => {
   it('starts on the projects page with no project, connection down and nothing busy', () => {
@@ -31,16 +31,18 @@ describe('Store', () => {
     expect(s.hub).toBeNull();
     expect(s.busy.size).toBe(0);
     expect(s.projectBusy.size).toBe(0);
-    expect(s.browserFrame).toBeNull();
+    expect(s.browserFrames).toEqual({});
   });
 
-  it('browser-frame keeps only the newest frame', () => {
+  it('browser-frame keeps only the newest frame of each slot', () => {
     const store = new Store();
     store.dispatch({ type: 'browser-frame', frame });
-    expect(store.getState().browserFrame).toEqual(frame);
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
     const newer = { ...frame, at: 11, jpegBase64: 'def' };
+    const other = { ...frame, slot: 1, leaseId: 'l2' };
     store.dispatch({ type: 'browser-frame', frame: newer });
-    expect(store.getState().browserFrame).toEqual(newer);
+    store.dispatch({ type: 'browser-frame', frame: other });
+    expect(store.getState().browserFrames).toEqual({ 'macmini#0': newer, 'macmini#1': other });
   });
 
   it('drops the last frame on leaving the computer page and keeps it on staying', () => {
@@ -48,9 +50,9 @@ describe('Store', () => {
     store.dispatch({ type: 'set-page', page: 'computer' });
     store.dispatch({ type: 'browser-frame', frame });
     store.dispatch({ type: 'set-page', page: 'computer' });
-    expect(store.getState().browserFrame).toEqual(frame);
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
     store.dispatch({ type: 'set-page', page: 'cluster' });
-    expect(store.getState().browserFrame).toBeNull();
+    expect(store.getState().browserFrames).toEqual({});
   });
 
   it('adds and removes busy agents', () => {

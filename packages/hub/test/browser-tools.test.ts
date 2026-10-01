@@ -13,7 +13,7 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { runToolCall, type Tool, type ToolContext } from '../src/agents/tools.js';
 import { LeaseManager } from '../src/browser/lease.js';
-import { BrowserProxy } from '../src/browser/proxy.js';
+import { BrowserProxy, poolSlots } from '../src/browser/proxy.js';
 import { Recorder } from '../src/browser/recorder.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
 import { browserTools, browserOperatorTools, type BrowserToolDeps } from '../src/agents/browser-tools.js';
@@ -44,7 +44,7 @@ beforeEach(async () => {
   registry.register({ name: 'macmini', arch: 'arm64', endpoints: [], jobTypes: [], browser: { url: upstreamUrl } });
 
   recordings = mkdtempSync(join(tmpdir(), 'ah-browser-tools-'));
-  leases = new LeaseManager();
+  leases = new LeaseManager({ slots: () => poolSlots(registry) });
   proxy = new BrowserProxy({ registry, leases, recorder: new Recorder({ root: recordings }) });
   deps = { leases, proxy };
 });
@@ -57,6 +57,35 @@ afterEach(async () => {
 const ctxFor = (sessionId: number): ToolContext => ({ sessionId, log: () => {} });
 
 describe('browserTools — direct tool calls', () => {
+  it("acquires per project: a subagent shares its orchestrator's slot, another project waits", async () => {
+    const inProject = (slug: string, sessionId: number): ToolContext =>
+      ({ ...ctxFor(sessionId), bundle: { dir: `/projects/${slug}` } as unknown as ToolContext['bundle'] });
+    const call = (kind: 'orchestrator' | 'subagent', ctx: ToolContext) =>
+      runToolCall(browserTools(deps, kind), { id: '1', name: 'acquire_browser', arguments: '{}' }, ctx);
+
+    expect(await call('orchestrator', inProject('alpha', 1))).toBe('browser lease granted');
+    expect(await call('subagent', inProject('alpha', 2))).toBe('browser lease granted');
+    expect(leases.status().slots.filter((s) => s.lease)).toHaveLength(1);
+    expect(leases.holder()?.requester.project).toBe('alpha');
+    expect(await call('subagent', inProject('beta', 3))).toBe('queued: position 1');
+  });
+
+  it("a subagent's release_browser leaves its orchestrator's lease standing", async () => {
+    const alpha = (sessionId: number): ToolContext =>
+      ({ ...ctxFor(sessionId), bundle: { dir: '/projects/alpha' } as unknown as ToolContext['bundle'] });
+    const orchTools = browserTools(deps, 'orchestrator');
+    const subTools = browserTools(deps, 'subagent');
+    const call = (tools: typeof orchTools, name: string, ctx: ToolContext, args = '{}') =>
+      runToolCall(tools, { id: '1', name, arguments: args }, ctx);
+
+    expect(await call(orchTools, 'acquire_browser', alpha(1))).toBe('browser lease granted');
+    expect(await call(subTools, 'acquire_browser', alpha(2))).toBe('browser lease granted');
+    expect(await call(subTools, 'release_browser', alpha(2))).toBe('browser lease released (project keeps it)');
+    expect(await call(orchTools, 'browser_navigate', alpha(1), '{"url":"https://start.test/"}')).toBe('page: Start (https://start.test/)');
+    // The subagent let go: it has to ask again before driving.
+    expect(await call(subTools, 'browser_read', alpha(2))).toBe('error: no browser lease — call acquire_browser first');
+  });
+
   it('rejects every browser_* tool until acquire_browser has run', async () => {
     const tools = browserTools(deps, 'orchestrator');
     const ctx = ctxFor(1);
@@ -96,7 +125,7 @@ describe('browserTools — direct tool calls', () => {
     leases.acquire({ kind: 'owner', id: 'owner' });
 
     expect(await runToolCall(tools, { id: '2', name: 'browser_navigate', arguments: '{"url":"https://start.test/"}' }, ctx))
-      .toBe('error: lease lost — owner took control');
+      .toBe('error: lease lost — call acquire_browser again');
     // The session never held a lease again, so later calls report the "no lease" error, not another loss.
     expect(await runToolCall(tools, { id: '3', name: 'browser_read', arguments: '{}' }, ctx))
       .toBe('error: no browser lease — call acquire_browser first');
@@ -299,6 +328,6 @@ describe('browserTools — through the AgentLoop', () => {
 
     const timeline = await new Recorder({ root: recordings }).list(leaseId!);
     expect(timeline.map((a) => [a.op, a.frame])).toEqual([['navigate', '1.jpg'], ['read', '2.jpg']]);
-    expect(driver.calls.map((c) => c.op)).toEqual(['navigate', 'screenshot', 'read', 'screenshot']);
+    expect(driver.calls.map((c) => c.op)).toEqual(['reset', 'navigate', 'screenshot', 'read', 'screenshot']);
   });
 });

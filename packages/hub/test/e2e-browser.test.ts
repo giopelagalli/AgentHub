@@ -158,7 +158,7 @@ describe('phase 5b acceptance: shared browser with owner preempt', () => {
       const asTheAgentSeesIt = await runToolCall(
         tools, { id: 'lost', name: 'browser_read', arguments: '{}' }, { sessionId: run.sessionId, log: () => {} },
       );
-      expect(asTheAgentSeesIt).toBe('error: lease lost — owner took control');
+      expect(asTheAgentSeesIt).toBe('error: lease lost — call acquire_browser again');
 
       // The owner's own actions work while the preempted lease is dead.
       expect((await post('/api/browser/act', { leaseId: ownerLease.leaseId, op: 'read' })).status).toBe(200);

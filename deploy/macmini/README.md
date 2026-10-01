@@ -133,9 +133,11 @@ nodes; leave it unset on macOS.
       enabled: true
       port: 8130                # default; 0 picks an ephemeral one
       headless: false
+      slots: 1                  # isolated contexts in the one browser; up to 8 (FR-D8, 0059)
 
-The daemon starts the browser server, then registers `browser: { url }`
-with the hub; the hub picks the one online node advertising it. Sessions
+The daemon starts the browser server, then registers `browser: { url, slots }`
+with the hub; the hub leases each `(node, slot)` of every online browser
+node, one slot per project. Sessions
 are recorded on the *hub* side, under `data/media/browser/<leaseId>/`
 (`<seq>.jpg` + `actions.jsonl`), capped at 200 frames per lease.
 

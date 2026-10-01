@@ -41,12 +41,14 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
 (`toolbar.ts`: title, centred segmented control, actions). The **project page**
 (`pages/projects.ts`) holds five tabs — Overview (`pages/project/overview.ts`), Plan (the PRD and
-roadmap views), Docs, Code (Files · Terminal · Preview) and Activity — mounted into its body; a
+roadmap views), Docs, Code (Files · Terminal · Preview · Browser) and Activity — mounted into its body; a
 document's chat opens in a pane beside it, a team member's drawer (`panels/chat.ts`) floats over
 it, and the project's levers live in a settings sheet (`pages/project/settings.ts`, controls in
 `pages/project/controls.ts`). **Machines** (`pages/machines.ts`) is Nodes, Browser, Queue and
 Access over the old `cluster`/`computer`/`allocation` mounts, which keep their page ids so the
-store and the browser subscription are unchanged. Styles are a token file (`styles/tokens.css`,
+store and the browser subscription are unchanged. The socket asks for the `browser` topic while
+the computer page or a project's Browser view (`views/browser.ts`, the project's slot; 0063) is on
+screen — `wantsCast` in the store — and the frames are dropped when neither is. Styles are a token file (`styles/tokens.css`,
 light and dark, `data-theme` override) and one stylesheet per area in `styles/`, over `app.css`
 — the component styles that predate the redesign, written against token aliases. Icons are an
 inline SVG set (`icons.ts`); the floating parts are shared: `menu.ts` (the `⋯` and status

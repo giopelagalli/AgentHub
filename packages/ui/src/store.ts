@@ -30,6 +30,11 @@ export interface BrowserFrame {
 /** Key for `browserFrames`: one slot of the browser pool. */
 export const slotKey = (node: string, slot: number): string => `${node}#${slot}`;
 
+/** Whether anything on screen watches the browser cast: the computer page, or a project's Browser view. */
+export function wantsCast(state: Pick<UiState, 'page' | 'projectBrowser'>): boolean {
+  return state.page === 'computer' || state.projectBrowser;
+}
+
 /** Key for the `projectBusy` set: one project agent in one project. */
 export function chatKey(slug: string, who: string): string {
   return `${slug}:${who}`;
@@ -47,8 +52,9 @@ export interface UiState {
   /** A PRD the wizard has just drafted, waiting for the project view to open it. */
   prdSeed: { slug: string; questions: string[] } | null;
   connection: 'live' | 'polling' | 'down';
-  /** Newest screencast frame, or null when nothing has arrived for this visit to the computer page. */
-  /** The newest frame of every slot being cast, by `slotKey`. */
+  /** A project's Code → Browser view is on screen: it watches the cast as the computer page does. */
+  projectBrowser: boolean;
+  /** The newest frame of every slot being cast, by `slotKey`; empty whenever nothing watches the cast. */
   browserFrames: Record<string, BrowserFrame>;
   /** Per project slug: its recent turns, the running one included. */
   turns: Record<string, ProjectTurns>;
@@ -63,6 +69,7 @@ export type StoreEvent =
   | { type: 'set-project'; slug: string }
   | { type: 'prd-drafted'; slug: string; questions: string[] }
   | { type: 'prd-seed-taken' }
+  | { type: 'project-browser'; open: boolean }
   | { type: 'browser-frame'; frame: BrowserFrame }
   | { type: 'turn-event'; frame: TurnFrame }
   | { type: 'turns-loaded'; slug: string; response: TurnsResponse }
@@ -78,6 +85,7 @@ export class Store {
     project: null,
     prdSeed: null,
     connection: 'down',
+    projectBrowser: false,
     browserFrames: {},
     turns: {},
   };
@@ -119,15 +127,16 @@ export class Store {
       case 'busy-reset':
         this.state = { ...this.state, busy: new Set(), projectBusy: new Set() };
         break;
-      // Leaving the computer page drops the last frames: the cast stops with the
+      // When nothing watches the cast any more the last frames go: the cast stops with the
       // unsubscribe, and coming back to a frozen still would read as live.
       case 'set-page':
-        this.state = {
-          ...this.state,
-          page: event.page,
-          browserFrames: event.page === 'computer' ? this.state.browserFrames : {},
-        };
+      case 'project-browser': {
+        const next = event.type === 'set-page'
+          ? { ...this.state, page: event.page }
+          : { ...this.state, projectBrowser: event.open };
+        this.state = wantsCast(next) ? next : { ...next, browserFrames: {} };
         break;
+      }
       case 'set-project':
         this.state = { ...this.state, project: event.slug };
         break;
@@ -138,6 +147,8 @@ export class Store {
         this.state = { ...this.state, prdSeed: null };
         break;
       case 'browser-frame': {
+        // A frame still in flight after the unsubscribe would otherwise outlive the drop.
+        if (!wantsCast(this.state)) break;
         const key = slotKey(event.frame.nodeName, event.frame.slot);
         this.state = { ...this.state, browserFrames: { ...this.state.browserFrames, [key]: event.frame } };
         break;

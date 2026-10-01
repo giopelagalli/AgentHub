@@ -36,6 +36,7 @@ describe('Store', () => {
 
   it('browser-frame keeps only the newest frame of each slot', () => {
     const store = new Store();
+    store.dispatch({ type: 'set-page', page: 'computer' });
     store.dispatch({ type: 'browser-frame', frame });
     expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
     const newer = { ...frame, at: 11, jpegBase64: 'def' };
@@ -52,6 +53,24 @@ describe('Store', () => {
     store.dispatch({ type: 'set-page', page: 'computer' });
     expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
     store.dispatch({ type: 'set-page', page: 'cluster' });
+    expect(store.getState().browserFrames).toEqual({});
+  });
+
+  it('ignores a frame that arrives while nothing watches the cast', () => {
+    const store = new Store();
+    store.dispatch({ type: 'browser-frame', frame });
+    expect(store.getState().browserFrames).toEqual({});
+  });
+
+  it("keeps frames while a project's Browser view watches, and drops them when it closes", () => {
+    const store = new Store();
+    store.dispatch({ type: 'project-browser', open: true });
+    store.dispatch({ type: 'browser-frame', frame });
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
+    store.dispatch({ type: 'set-page', page: 'computer' });
+    store.dispatch({ type: 'project-browser', open: false });
+    expect(store.getState().browserFrames['macmini#0']).toEqual(frame);
+    store.dispatch({ type: 'set-page', page: 'projects' });
     expect(store.getState().browserFrames).toEqual({});
   });
 

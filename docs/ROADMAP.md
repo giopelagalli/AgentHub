@@ -79,6 +79,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   with a unix-socket bridge to the door; writes to the workspace only, network to the door only;
   pi not offered where the sandbox cannot start. The reviewer on pi behind `HARNESS_REVIEWER_PI=1`.
 
+- `claude-code` harness (FR-G3, 0064): the `claude` CLI on the hub host's signed-in subscription,
+  stream-json mapped onto the turn feed, in the same sandbox with outbound HTTPS (verified end to
+  end on macOS), usage as `anthropic-subscription` rows with no dollars, offered only when
+  `claude auth status` shows a subscription login.
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -92,8 +97,8 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 3. Harnesses, the rest: pi becomes the default and `HARNESS_REVIEWER_PI` defaults on once the
    sandbox (0055) is verified on real hardware on both platforms — macOS is; the Linux `bwrap` path
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
-   a project-level Harness select in the header, `claude-code` (FR-G3), and the installer putting
-   pi (and `bubblewrap`) on a node.
+   a project-level Harness select in the header, the claude-code bwrap path verified on the Spark
+   (0064), and the installer putting pi (and `bubblewrap`) on a node.
 4. JD drives the hub; the web door (FR-C1–C5).
 5. Media on the 7900 XTX (FR-E1–E4).
 6. Accounts, grants, per-member JD, the public site (FR-F1–F6).

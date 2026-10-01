@@ -122,6 +122,54 @@ describe('sandboxedCommand on Linux', () => {
   });
 });
 
+describe('the https network (claude-code, decision 0064)', () => {
+  const https = (over: Partial<SandboxOptions> = {}): SandboxOptions => ({
+    workspace: '/data/projects/demo/workspace', tmpDir: '/tmp/agenthub-claude-x', https: true, keychain: true,
+    writableWorkspace: true, hidden: [], argv: ['claude', '-p', '--', 'task'], ...over,
+  } as SandboxOptions);
+
+  it('on macOS allows outbound 443, name resolution and the keychain, and no door', () => {
+    const c = sandboxedCommand('darwin', https());
+    if ('unavailable' in c) throw new Error(c.unavailable);
+    const profile = resolvedProfile(c.args);
+    expect(profile).toContain('(deny default)');
+    expect(profile).toContain('(allow network-outbound (remote tcp "*:443"))');
+    expect(profile).toContain('(allow network-outbound (literal "/private/var/run/mDNSResponder"))');
+    expect(profile).toContain('(global-name "com.apple.SecurityServer")');
+    expect(profile).not.toContain('localhost:');
+    expect(profile).not.toContain('network*');
+    expect(allowsWrite(profile, '/data/projects/demo/workspace')).toBe(true);
+    expect(allowsWrite(profile, '/tmp/agenthub-claude-x')).toBe(true);
+    expect(c.args.slice(-4)).toEqual(['claude', '-p', '--', 'task']);
+  });
+
+  it('reaches the keychain only when asked, and pi never is', () => {
+    for (const o of [https({ keychain: false }), opts()]) {
+      const c = sandboxedCommand('darwin', o);
+      if ('unavailable' in c) throw new Error(c.unavailable);
+      expect(resolvedProfile(c.args)).not.toContain('SecurityServer');
+    }
+  });
+
+  it('on Linux shares the network namespace instead of bridging a door', () => {
+    const c = sandboxedCommand('linux', https());
+    if ('unavailable' in c) throw new Error(c.unavailable);
+    expect(c.cmd).toBe('bwrap');
+    expect(c.doorSocket).toBeUndefined();
+    expect(hasRun(c.args, '--unshare-all', '--share-net')).toBe(true);
+    expect(hasRun(c.args, '--bind', '/data/projects/demo/workspace', '/data/projects/demo/workspace')).toBe(true);
+    expect(c.args).not.toContain(DOOR_BRIDGE_SOURCE);
+    expect(c.args.slice(c.args.indexOf('--') + 1)).toEqual(['claude', '-p', '--', 'task']);
+  });
+
+  it('probes the https sandbox separately from the door one', async () => {
+    const asked: string[][] = [];
+    const run: ProbeRunner = async (_cmd, args) => { asked.push(args); return { ok: true }; };
+    expect(await sandboxStatus({ https: true, platform: 'linux', run })).toEqual({ available: true });
+    expect(asked[0]).toContain('--share-net');
+  });
+});
+
 describe('sandboxedCommand refusals', () => {
   it('refuses a door that is not on loopback — a hub bound to one address (HUB_HOST)', () => {
     for (const platform of ['darwin', 'linux'] as const) {

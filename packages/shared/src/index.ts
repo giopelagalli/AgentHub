@@ -632,7 +632,8 @@ export type Avatar = (typeof AVATARS)[number];
 /**
  * Which runtime executes an employee's task. `builtin` is the hub's own tool loop — the manager's
  * runtime and the fallback for everyone. `pi` is the open-source coding agent (pi.dev) run as a
- * subprocess in the workspace. `claude-code` is reserved for the third implementation (FR-G3).
+ * subprocess in the workspace. `claude-code` is the `claude` CLI on the hub host's own signed-in
+ * subscription, never an API key (FR-G3, decision 0064).
  */
 export const HARNESS_KINDS = ['builtin', 'pi', 'claude-code'] as const;
 export type HarnessKind = (typeof HARNESS_KINDS)[number];

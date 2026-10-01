@@ -147,6 +147,15 @@ through a per-run unix-socket bridge, `serveDoorSocket`, since the sandbox has i
 and `sandboxStatus({ doorBase })` probes it by running it, caching a success. `detect.ts` is "is the CLI on PATH *and* can this host sandbox it", which `routes.ts`
 serves as `GET /api/harnesses` (with the reason when not); pi is never run unconfined. The reviewer
 stays on `builtin` (FR-G4) unless `HARNESS_REVIEWER_PI=1`, which runs it on pi with read-only tools.
+`claude-code.ts` runs the `claude` CLI (`-p --output-format stream-json`) on the hub host's own
+signed-in subscription — no key in the hub, Anthropic/Claude env vars stripped, HOME kept — in the
+same sandbox with its second network mode, `{ https: true, keychain: true }` (outbound 443 + DNS,
+the macOS keychain; no door); files written are its Write/Edit paths plus a scan for files modified
+during the run, and its usage goes to the ledger through `AgentLoop.recordUsage` as
+`anthropic-subscription` rows with `usd: null`, outside the cloud cap (0064). `detect.ts` offers it
+when `claude auth status` says a subscription login and the https sandbox probes OK; the reviewer
+never runs on it. `process.ts` is the subprocess handling both CLI adapters share: process group,
+abort, wall clock, budget stop, JSON Lines.
 
 **`projects/`** — `bundle.ts` (a git repo per project: manifest, PRD, roadmap, docs, decisions,
 team, briefings, workspace), `prd.ts` (twelve fixed sections, the audit score, the drafter and

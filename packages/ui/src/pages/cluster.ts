@@ -55,7 +55,8 @@ type NodeAction = 'drain' | 'undrain' | 'pause-models' | 'resume-models' | 'remo
 export function nodeActions(node: NodeInfo): NodeAction[] {
   if (node.arch === 'cloud') return [];
   const actions: NodeAction[] = [node.draining ? 'undrain' : 'drain'];
-  if (node.endpoints.length) actions.push(node.modelsPaused ? 'resume-models' : 'pause-models');
+  if (node.modelsPaused) actions.push('resume-models');
+  else if (node.endpoints.length) actions.push('pause-models');
   actions.push('remove');
   return actions;
 }

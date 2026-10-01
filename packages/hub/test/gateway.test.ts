@@ -47,6 +47,20 @@ describe('ModelGateway', () => {
     expect(gateway.pick('worker', { prefer: 'auto' })?.node.name).toBe('spark');
   });
 
+  it('never sends a Local route to the cloud when every local model is paused, and says why', async () => {
+    const { registry, gateway } = setup();
+    registry.register({ name: 'cloud-fireworks', arch: 'cloud', endpoints: [
+      { tier: 'worker', provider: 'fireworks', url: 'http://127.0.0.1:1', model: FLASH, maxStreams: 2 },
+    ] });
+    registry.setModelsPaused('spark', true);
+    expect(gateway.pick('worker', { prefer: 'local' })).toBeNull();
+    expect(gateway.localModelsPaused('worker')).toBe(true);
+    await expect(gateway.chat('worker', [{ role: 'user', content: 'x' }], { route: { prefer: 'local' } }))
+      .rejects.toThrow('no capacity for tier: worker (local models paused)');
+    // Auto still falls through to the cloud tier.
+    expect(gateway.pick('worker', { prefer: 'auto' })?.node.name).toBe('cloud-fireworks');
+  });
+
   it('picks null for unserved tier and errors on chat', async () => {
     const { gateway } = setup();
     expect(gateway.pick('video-gen')).toBeNull();

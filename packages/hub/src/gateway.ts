@@ -284,7 +284,22 @@ export class ModelGateway {
     if (route?.prefer === 'local' && out.some((c) => !isCloudEndpoint(c.endpoint))) {
       return out.filter((c) => !isCloudEndpoint(c.endpoint));
     }
+    // ...except when the owner paused the local models: Local is a spending promise, so a tier
+    // whose local endpoints are merely paused gets no candidates rather than a cloud fallback (0054).
+    if (route?.prefer === 'local' && this.localModelsPaused(tier)) return [];
     return out;
+  }
+
+  /** Whether some online, undrained node has a local `tier` endpoint that the owner paused. */
+  localModelsPaused(tier: Tier): boolean {
+    return this.registry.online().some((n) => n.modelsPaused && !n.draining
+      && n.endpoints.some((e) => e.tier === tier && !isCloudEndpoint(e)));
+  }
+
+  /** The ` (local models paused)` note when pausing is why `route` has nothing to pick for `tier`. */
+  private pauseNote(tier: Tier, route?: Route): string {
+    return route?.prefer === 'local' && this.localModelsPaused(tier) && this.eligible(tier, route).length === 0
+      ? ' (local models paused)' : '';
   }
 
   /** Lower sorts first: the group `route` asks for, then the rest. */
@@ -394,7 +409,7 @@ export class ModelGateway {
         // Only when lifting the cap would actually have found an endpoint: a tier nothing serves at
         // all is still plain "no capacity", which is what it is.
         const capped = this.cloudCapped && this.pickFrom(tier, route, true) !== null;
-        throw new Error(`no capacity for tier: ${tier}${capped ? ' (cloud spend cap reached)' : ''}`);
+        throw new Error(`no capacity for tier: ${tier}${capped ? ' (cloud spend cap reached)' : this.pauseNote(tier, route)}`);
       }
       const key = this.key(picked.node, picked.endpoint);
       // A project that named a model gets it, but only on the cloud it named: a local endpoint

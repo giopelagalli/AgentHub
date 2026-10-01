@@ -24,6 +24,7 @@ describe('nodeActions', () => {
     expect(nodeActions(node({ endpoints: serving }))).toEqual(['drain', 'pause-models', 'remove']);
     expect(nodeActions(node({ endpoints: serving, modelsPaused: true }))).toEqual(['drain', 'resume-models', 'remove']);
     expect(nodeActions(node({ endpoints: serving, draining: true, modelsPaused: true }))).toEqual(['undrain', 'resume-models', 'remove']);
+    expect(nodeActions(node({ modelsPaused: true }))).toEqual(['drain', 'resume-models', 'remove']);
   });
 
   it('offers nothing for a synthetic cloud node', () => {

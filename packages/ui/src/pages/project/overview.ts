@@ -169,7 +169,7 @@ function teamNode(data: OverviewData, actions: OverviewActions): HTMLElement {
     const dot = el('span', `dot member__dot dot--${status === 'working' ? 'working dot--pulse' : 'idle'}`);
     tile.appendChild(dot);
     face.appendChild(tile);
-    face.append(el('span', 'member__name', card.name), el('span', 'member__role', card.role === 'Project orchestrator' ? 'Manager' : card.role));
+    face.append(el('span', 'member__name', card.name), el('span', 'member__role', card.kind === 'manager' ? 'Plans each turn' : card.role));
     const doing = doingCaption(running, card.id, 40);
     const doingLine = el('span', 'member__doing', doing ?? '');
     doingLine.hidden = !doing;

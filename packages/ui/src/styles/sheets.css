@@ -262,6 +262,185 @@
   justify-content: flex-end;
 }
 
+/* --- New project: three choices, then one thing at a time ------------------------------------ */
+
+.wizard-sheet {
+  width: min(600px, 100%);
+}
+
+.wizard-sheet[data-step='draft'] {
+  width: min(760px, 100%);
+}
+
+.wizard__head {
+  display: grid;
+  flex: none;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  gap: var(--sp-2);
+  align-items: start;
+  padding: 22px var(--sp-4) 6px;
+  text-align: center;
+}
+
+.wizard__head .btn--icon {
+  margin-top: -2px;
+}
+
+/* A hidden Back keeps its column, so the title stays centred. */
+.wizard__head .wizard__back[hidden] {
+  display: inline-flex !important;
+  visibility: hidden;
+}
+
+.wizard__titles h2 {
+  font-family: var(--display);
+  font-size: var(--fs-title);
+  letter-spacing: -0.01em;
+}
+
+.wizard__sub {
+  margin-top: 4px;
+  color: var(--label-2);
+}
+
+.wizard__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-height: 0;
+  padding: var(--sp-5) var(--sp-6) var(--sp-4);
+  overflow-y: auto;
+}
+
+.wizard__foot {
+  display: flex;
+  flex: none;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--sp-3) var(--sp-5) var(--sp-4);
+}
+
+.wizard__error {
+  flex: 1;
+  color: var(--red);
+}
+
+.wizard__foot .actions {
+  flex-wrap: nowrap;
+}
+
+.wizard__note {
+  font-size: var(--fs-sm);
+  color: var(--label-2);
+}
+
+.wizard__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--sp-3);
+}
+
+.wizard__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  align-items: stretch;
+}
+
+.wizard__group > .btn {
+  align-self: flex-start;
+}
+
+.wizard__source {
+  width: 100%;
+  font-size: var(--fs-ui);
+}
+
+.field__hint {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.input--large {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: var(--fs-read);
+}
+
+/* The three ways to start, as big rows you can't miss. */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--sp-4);
+  align-items: center;
+  width: 100%;
+  padding: 16px 16px 16px 18px;
+  font: inherit;
+  color: var(--label);
+  text-align: left;
+  background: var(--bg-grouped);
+  border: 0;
+  border-radius: var(--r-lg);
+  cursor: pointer;
+  transition: background-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+
+.choice:hover {
+  background: color-mix(in srgb, var(--bg-grouped) 88%, var(--label));
+}
+
+.choice:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.choice > .icon {
+  color: var(--label-4);
+}
+
+.choice__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  color: var(--accent-text);
+  background: var(--bg-raised);
+  border-radius: 12px;
+  box-shadow: 0 0 0 0.5px var(--sep), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.choice__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.choice__title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.choice__line {
+  color: var(--label-2);
+}
+
+@media (max-width: 640px) {
+  .wizard__body {
+    padding: var(--sp-4);
+  }
+
+  .wizard__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* --- text being written: a draft, a plan --------------------------------------------------------- */
 
 .stream {

@@ -147,6 +147,7 @@
   height: 100%;
   max-width: none;
   border: 0;
+  border-radius: 0;
   box-shadow: none;
   animation: none;
 }
@@ -550,17 +551,27 @@
   cursor: pointer;
 }
 
-.ov__turn + .ov__turn {
-  box-shadow: 0 -1px 0 var(--sep);
+.ov__turn {
+  position: relative;
+}
+
+.ov__turn + .ov__turn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 10px;
+  left: 10px;
+  height: 1px;
+  background: var(--sep);
 }
 
 .ov__turn:hover {
   background: var(--hover);
-  box-shadow: none;
 }
 
-.ov__turn:hover + .ov__turn {
-  box-shadow: none;
+.ov__turn:hover::before,
+.ov__turn:hover + .ov__turn::before {
+  opacity: 0;
 }
 
 .ov__turntime,

@@ -26,6 +26,8 @@ export function openMenu(anchor: HTMLElement, entries: MenuEntry[]): () => void 
   const menu = el('div', 'menu');
   menu.setAttribute('role', 'menu');
   const items: HTMLElement[] = [];
+  // Where some items carry an icon, the rest keep its column, so the labels line up.
+  const iconColumn = entries.some((entry) => entry !== 'separator' && entry.icon);
 
   for (const entry of entries) {
     if (entry === 'separator') {
@@ -45,6 +47,7 @@ export function openMenu(anchor: HTMLElement, entries: MenuEntry[]): () => void 
     node.setAttribute('role', 'menuitem');
     node.tabIndex = -1;
     if (entry.icon) node.appendChild(icon(entry.icon, 16));
+    else if (iconColumn) node.appendChild(el('span', 'menu__iconspace'));
     node.appendChild(el('span', undefined, entry.label));
     if (entry.hint) node.appendChild(el('span', 'menu__hint', entry.hint));
     node.addEventListener('click', () => {
@@ -58,7 +61,10 @@ export function openMenu(anchor: HTMLElement, entries: MenuEntry[]): () => void 
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
   const width = menu.offsetWidth;
-  const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.right - width));
+  // Under the button, opening toward the middle of the window: from its left edge on the left
+  // half, from its right edge on the right half.
+  const wanted = rect.left + rect.width / 2 < window.innerWidth / 2 ? rect.left : rect.right - width;
+  const left = Math.max(8, Math.min(window.innerWidth - width - 8, wanted));
   menu.style.left = `${left}px`;
   menu.style.top = `${rect.bottom + 6}px`;
   anchor.setAttribute('aria-expanded', 'true');

@@ -483,6 +483,11 @@ select.input {
   color: var(--red);
 }
 
+.menu__iconspace {
+  flex: none;
+  width: 16px;
+}
+
 .menu__sep {
   height: 1px;
   margin: 5px 10px;

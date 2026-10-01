@@ -114,6 +114,21 @@ describe("the drawer's Harness field", () => {
     expect(slot.querySelector('select')!.value).toBe('');
   });
 
+  it('disables claude-code on a Local-only project, saying why, and enables it otherwise', () => {
+    const available = ALL.map((h) => (h.kind === 'claude-code' ? { kind: h.kind, available: true, version: '2.1.0' } : h));
+    const claudeOption = (localOnly: boolean) => {
+      const slot = document.createElement('div');
+      fillHarnessField(slot, 'demo', member, available, 'builtin', localOnly);
+      return [...slot.querySelectorAll('option')].find((o) => o.value === 'claude-code')!;
+    };
+    const blocked = claudeOption(true);
+    expect(blocked.disabled).toBe(true);
+    expect(blocked.title).toBe(CLAUDE_CODE_LOCAL_ONLY_REASON);
+    const open = claudeOption(false);
+    expect(open.disabled).toBe(false);
+    expect(open.title).toBe('');
+  });
+
   it('stays empty when only the built-in loop runs on this host', () => {
     const slot = document.createElement('div');
     fillHarnessField(slot, 'demo', member, BUILTIN_ONLY, 'builtin');

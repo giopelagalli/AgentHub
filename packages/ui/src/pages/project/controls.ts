@@ -160,6 +160,7 @@ export function projectHarness(manifest: Pick<ProjectManifest, 'harness'> | null
  */
 export function fillHarnessField(
   slot: HTMLElement, slug: string, member: TeamMemberView, harnesses: HarnessInfo[], projectDefault: HarnessKind,
+  localOnly = false,
 ): void {
   const offered = harnesses.filter((h) => h.available);
   slot.replaceChildren();
@@ -174,6 +175,10 @@ export function fillHarnessField(
   for (const harness of offered) {
     const item = el('option', undefined, `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`);
     item.value = harness.kind;
+    if (harness.kind === 'claude-code' && localOnly) {
+      item.disabled = true;
+      item.title = CLAUDE_CODE_LOCAL_ONLY_REASON;
+    }
     select.appendChild(item);
   }
   let saved = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';

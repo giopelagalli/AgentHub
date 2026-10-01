@@ -520,7 +520,8 @@ export type WsMessage =
  * and the turn's start and end. Streamed live over the websocket and replayed by `/turns`.
  */
 export type TurnEvent =
-  | { kind: 'turn-start'; who: 'manager' }
+  /** `requestedBy` is the label of the API token that asked for the turn (0067); absent for the owner and the scheduler. */
+  | { kind: 'turn-start'; who: 'manager'; requestedBy?: string }
   /** `text` is at most 300 chars. */
   | { kind: 'text'; who: string; text: string }
   /** `args` is a JSON-ish summary of at most 200 chars. */
@@ -543,6 +544,8 @@ export interface TurnEventFrame { type: 'turn-event'; slug: string; sessionId: n
 /** One orchestrator turn as `GET /api/projects/:slug/turns` replays it. */
 export interface TurnRecord {
   sessionId: number;
+  /** The API token label that asked for this turn (its `turn-start`'s), so JD can tell its own turns apart. */
+  requestedBy?: string;
   startedAt: number;
   endedAt: number | null;
   outcome: string | null;

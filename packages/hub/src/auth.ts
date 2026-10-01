@@ -30,9 +30,10 @@ export interface AuthOptions {
  * How a route is guarded. `none` is unguarded (the static UI, which has to be reachable to render
  * the login box), `open` is a guarded prefix's explicit exception, `daemon` accepts the daemon
  * bearer *or* an owner session, `door` is the OpenAI-compatible door, whose own user-API-token
- * bearer `door.ts` checks, and `owner` accepts the session cookie only.
+ * bearer `door.ts` checks, `assistant` accepts an owner session *or* an `assistant`-kind user API
+ * token (`ASSISTANT_ROUTES`), and `owner` accepts the session cookie only.
  */
-export type Access = 'none' | 'open' | 'daemon' | 'door' | 'owner';
+export type Access = 'none' | 'open' | 'daemon' | 'door' | 'assistant' | 'owner';
 
 /**
  * Where a daemon route names the node it is about. A per-node token is only good for its own node,
@@ -62,6 +63,27 @@ const DAEMON_ROUTES = new Map<string, NodeSubject>([
   ['POST /api/jobs/:id/artifact', { from: 'query', key: 'node' }],
   ['POST /api/jobs/:id/complete', { from: 'body', key: 'node' }],
   ['POST /api/jobs/:id/fail', { from: 'body', key: 'node' }],
+]);
+
+/**
+ * The `<METHOD> <route>` pairs the owner's assistant (JD, decision 0065) may reach with an
+ * `assistant`-kind user API token: read the hub's and the projects' state, create a project and
+ * draft its plan, run a turn, pause/resume it, and set its priority. An allow-list rather than a
+ * deny-list, so a route added later is the owner's until someone puts it here on purpose — tokens,
+ * nodes, enrollment, GitHub, the terminal, previews, code writes, media and the browser never are.
+ */
+const ASSISTANT_ROUTES = new Set<string>([
+  'GET /api/state',
+  'GET /api/briefings',
+  'GET /api/projects',
+  'GET /api/projects/:slug/turns',
+  'POST /api/projects',
+  'POST /api/projects/:slug/prd/draft',
+  'POST /api/projects/:slug/roadmap/generate',
+  'POST /api/projects/:slug/turn',
+  'POST /api/projects/:slug/pause',
+  'POST /api/projects/:slug/resume',
+  'POST /api/projects/:slug/priority',
 ]);
 
 /**
@@ -102,6 +124,7 @@ export function routeAccess(method: string, route: string | undefined): Access {
   if (method === 'POST' && route === '/api/login') return 'open';
   if (method === 'POST' && route === '/api/nodes/enroll') return 'open';
   if (DAEMON_ROUTES.has(`${method} ${route}`)) return 'daemon';
+  if (ASSISTANT_ROUTES.has(`${method} ${route}`)) return 'assistant';
   return 'owner';
 }
 

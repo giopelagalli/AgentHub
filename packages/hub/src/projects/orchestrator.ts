@@ -13,7 +13,7 @@ import type { AgentRunResult } from '../agents/loop.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import type { MediaDesk } from './media.js';
-import type { ProjectBundle } from './bundle.js';
+import { byline, type ProjectBundle } from './bundle.js';
 import type { Github } from './github.js';
 import { planningContext } from './prd.js';
 import { orchestratorSystemPrompt } from './prompts.js';
@@ -67,7 +67,7 @@ export class ProjectOrchestrator {
 
   constructor(private deps: ProjectOrchestratorDeps) {}
 
-  async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
+  async turn(opts: { instruction?: string; signal?: AbortSignal; requestedBy?: string } = {}): Promise<Briefing> {
     const { bundle, loop, queue, registry, transcript, github, leases, browser, media, external, onBusy, onEvent, door } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
@@ -116,7 +116,7 @@ export class ProjectOrchestrator {
       ...(orchestratorRoute ? { route: orchestratorRoute } : {}),
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,
-      onStart: (id) => { sessionId = id; emit({ kind: 'turn-start', who: 'manager' }); },
+      onStart: (id) => { sessionId = id; emit({ kind: 'turn-start', who: 'manager', ...(opts.requestedBy ? { requestedBy: opts.requestedBy } : {}) }); },
       onEvent: (e, at) => onEvent?.(sessionId, e, at),
     });
     const n = ++this.turns;
@@ -134,7 +134,7 @@ export class ProjectOrchestrator {
     // Otherwise the master still needs a report: synthesize one from the board and what was said.
     const briefing = await this.synthesize(manifest, result);
     await bundle.publishBriefing(briefing);
-    await bundle.commit(`agent: turn ${n} — ${label(briefing.summary)}`);
+    await bundle.commit(`agent: turn ${n} — ${label(briefing.summary)}${byline(opts.requestedBy)}`);
     return finish(briefing, result.outcome);
   }
 

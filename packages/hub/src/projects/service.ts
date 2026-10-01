@@ -11,7 +11,7 @@ import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
 import type { BrowserProxy } from '../browser/proxy.js';
 import type { MediaDesk } from './media.js';
-import { ProjectBundle } from './bundle.js';
+import { ProjectBundle, byline } from './bundle.js';
 import { assertPushable, pushBranchFor, type Github } from './github.js';
 import { ProjectOrchestrator } from './orchestrator.js';
 import { isPrdScaffold } from './prd.js';
@@ -78,6 +78,8 @@ export interface ProjectInit {
   intake?: ProjectIntake;
   /** Import: the repository to clone into `workspace/`, and the branch to clone (else the default). */
   source?: { ref: GithubRepoRef; branch?: string };
+  /** The API token label that asked for the project, for its commits (0067); absent for the owner. */
+  by?: string;
 }
 
 /** A project's latest briefing together with the prose the master is allowed to read. */
@@ -194,7 +196,7 @@ export class ProjectService {
       // Checked here rather than only at the first push: a repository whose branch is literally
       // `agenthub/<slug>` can never be written back, and the owner should hear that on import.
       assertPushable(source);
-      await bundle.commit(`chore: import ${ref.owner}/${ref.repo}@${branch}`);
+      await bundle.commit(`chore: import ${ref.owner}/${ref.repo}@${branch}${byline(init.by)}`);
     } catch (err) {
       this.bundles.delete(init.slug);
       await rm(bundle.dir, { recursive: true, force: true });
@@ -221,12 +223,12 @@ export class ProjectService {
     return bundle;
   }
 
-  pause(slug: string): Promise<Manifest> {
-    return this.setStatus(slug, 'paused', 'pause project');
+  pause(slug: string, by?: string): Promise<Manifest> {
+    return this.setStatus(slug, 'paused', `pause project${byline(by)}`);
   }
 
-  resume(slug: string): Promise<Manifest> {
-    return this.setStatus(slug, 'active', 'resume project');
+  resume(slug: string, by?: string): Promise<Manifest> {
+    return this.setStatus(slug, 'active', `resume project${byline(by)}`);
   }
 
   /** Archiving is a terminal status, not a deletion: the bundle stays on disk and stops being scheduled. */
@@ -234,10 +236,10 @@ export class ProjectService {
     return this.setStatus(slug, 'done', 'archive project');
   }
 
-  async setPriority(slug: string, priority: Priority): Promise<Manifest> {
+  async setPriority(slug: string, priority: Priority, by?: string): Promise<Manifest> {
     const bundle = await this.get(slug);
     await bundle.setPriority(priority);
-    await bundle.commit(`agent: set priority ${priority}`);
+    await bundle.commit(`agent: set priority ${priority}${byline(by)}`);
     return bundle.manifest();
   }
 
@@ -297,8 +299,10 @@ export class ProjectService {
    *
    * The budget is checked inside the serialized section, so a turn queued behind another counts it.
    * A manual turn is never blocked by the interval or the enabled flag — only by the caps.
+   * `requestedBy` names the API token that asked for it (0067), on its `turn-start` and its commit.
    */
-  runTurn(slug: string, instruction?: string, signal?: AbortSignal): Promise<Briefing> {
+  runTurn(slug: string, instruction?: string, opts: { signal?: AbortSignal; requestedBy?: string } = {}): Promise<Briefing> {
+    const { signal, requestedBy } = opts;
     return this.serialize(slug, async () => {
       const { usedToday, maxPerDay, hubUsedToday, hubMaxPerDay } = await this.budget(slug);
       if (hubUsedToday >= hubMaxPerDay) this.refuse(slug, `hub-wide cap of ${hubMaxPerDay} turns per day reached`);
@@ -320,6 +324,7 @@ export class ProjectService {
         const orchestrator = await this.orchestratorFor(slug);
         const briefing = await orchestrator.turn({
           ...(instruction ? { instruction } : {}),
+          ...(requestedBy ? { requestedBy } : {}),
           signal: controller.signal,
         });
         for (const listener of this.listeners) listener(briefing);

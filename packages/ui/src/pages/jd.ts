@@ -103,9 +103,27 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
   };
 
   const showUnreachable = (): void => {
-    notice(`${name} isn’t answering`, ['The hub is set up for JD but can’t reach it. Check that JD is running.'], {
-      label: 'Try again', run: () => { body.replaceChildren(); void start(); },
-    });
+    notice(`${name} isn’t answering`, ['The hub is set up for JD but can’t reach it. Check that JD is running.'], tryAgain);
+  };
+
+  const tryAgain = { label: 'Try again', run: () => { body.replaceChildren(); void start(); } };
+
+  const showToken = (): void => {
+    const how = el('p', 'jd__noticeline jd__noticeline--small');
+    how.append(
+      'Put the same ', el('code', '', 'JD_WEB_TOKEN'), ' in ', el('code', '', '~/AgentHub/configs/hub.env'), ' and ',
+      el('code', '', '~/telegramManager/.env'), ', then restart both.',
+    );
+    notice('The token doesn’t match', [`${name} is running but refused the hub’s token.`, how], tryAgain);
+  };
+
+  const showNoPassword = (): void => {
+    const how = el('p', 'jd__noticeline jd__noticeline--small');
+    how.append('Set ', el('code', '', 'HUB_PASSWORD'), ' in the hub’s ', el('code', '', 'hub.env'), ' and restart the hub.');
+    notice('Set a hub password first', [
+      'JD is set up, but this hub has no password — anyone who reached it could talk to JD as you, so the door stays shut.',
+      how,
+    ]);
   };
 
   const start = async (): Promise<void> => {
@@ -121,9 +139,15 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
       setName(status.name);
       store.dispatch({ type: 'jd-name', name: status.name });
     }
-    if (!status.configured) showSetup();
-    else if (!status.reachable) showUnreachable();
-    else chat();
+    if (!status.configured) {
+      if (status.reason === 'no-password') showNoPassword();
+      else showSetup();
+    } else if (!status.reachable) {
+      if (status.reason === 'token') showToken();
+      else showUnreachable();
+    } else {
+      chat();
+    }
   };
 
   // --- the conversation ---------------------------------------------------------------------------
@@ -570,8 +594,9 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
       let attempt = 0;
       let everOpen = false;
       let retry: ReturnType<typeof setTimeout> | undefined;
+      let givenUp = false;
       const connect = (): void => {
-        if (!alive) return;
+        if (!alive || givenUp) return;
         clearTimeout(retry);
         const next = openStream(streamUrl());
         socket = next;
@@ -592,11 +617,15 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
             else render();
           }
         });
-        next.addEventListener('close', () => {
+        next.addEventListener('close', (event) => {
           if (!alive || socket !== next) return;
           socket = null;
-          sub.textContent = 'Reconnecting…';
           if (typing) setTyping(false);
+          // The hub says why it closed: a token JD refuses will not fix itself by retrying.
+          const why = String((event as CloseEvent).reason ?? '');
+          if (/token/i.test(why)) { givenUp = true; showToken(); return; }
+          if (/not configured/i.test(why)) { givenUp = true; showSetup(); return; }
+          sub.textContent = /not reachable/i.test(why) ? 'Not answering — retrying…' : 'Reconnecting…';
           retry = setTimeout(connect, backoffMs(attempt++));
         });
       };

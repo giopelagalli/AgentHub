@@ -114,6 +114,7 @@ describe('the JD page', () => {
     teardown?.();
     teardown = undefined;
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     document.body.replaceChildren();
   });
 
@@ -204,11 +205,99 @@ describe('the JD page', () => {
     expect(input.value).toBe('');
   });
 
+  it('says which: a token JD refuses, or a hub with no password', async () => {
+    stubHub({ 'GET /api/jd/status': () => ({ configured: true, reachable: false, reason: 'token' }) });
+    let host = mount();
+    await settle();
+    expect(host.querySelector('.jd__noticehead')?.textContent).toBe('The token doesn’t match');
+    expect(host.querySelector('.jd__notice')?.textContent).toContain('JD_WEB_TOKEN');
+    teardown!();
+    vi.unstubAllGlobals();
+
+    stubHub({ 'GET /api/jd/status': () => ({ configured: false, reachable: false, reason: 'no-password' }) });
+    host = mount();
+    await settle();
+    expect(host.querySelector('.jd__noticehead')?.textContent).toBe('Set a hub password first');
+    expect(host.querySelector('.jd__envlines')).toBeNull();
+  });
+
   it('says so when JD is configured but not answering', async () => {
     stubHub({ 'GET /api/jd/status': () => ({ configured: true, reachable: false }) });
     const host = mount();
     await settle();
     expect(host.querySelector('.jd__noticehead')?.textContent).toContain('isn’t answering');
     expect(host.querySelector('.jd__notice .btn')?.textContent).toBe('Try again');
+  });
+
+  describe('the stream', () => {
+    /** A socket the test opens and drops by hand. */
+    class FakeSocket extends EventTarget {
+      close = vi.fn();
+      open(): void { this.dispatchEvent(new Event('open')); }
+      drop(reason = ''): void { this.dispatchEvent(Object.assign(new Event('close'), { code: 1011, reason })); }
+    }
+    const chatHub = () => stubHub({
+      'GET /api/jd/status': () => ({ configured: true, reachable: true }),
+      'GET /api/jd/history': () => ({ messages: [] }),
+      'GET /api/jd/keys': () => ({ keys: [] }),
+    });
+    const flush = async (): Promise<void> => { for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0); };
+
+    function mountWithStream(): { host: HTMLElement; sockets: FakeSocket[] } {
+      const sockets: FakeSocket[] = [];
+      const host = document.createElement('main');
+      document.body.appendChild(host);
+      teardown = mountJd(host, new Store(), {
+        openStream: () => { const socket = new FakeSocket(); sockets.push(socket); return socket as unknown as WebSocket; },
+      });
+      return { host, sockets };
+    }
+
+    it('reconnects after a close, reloads history, and stops for good on unmount', async () => {
+      vi.useFakeTimers();
+      const calls = chatHub();
+      const { host, sockets } = mountWithStream();
+      await flush();
+      expect(sockets).toHaveLength(1);
+      sockets[0]!.open();
+      expect(host.querySelector('.jd__sub')?.textContent).toBe('Online');
+
+      sockets[0]!.drop();
+      expect(host.querySelector('.jd__sub')?.textContent).toBe('Reconnecting…');
+      expect(sockets).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.open();
+      await flush();
+      expect(calls.filter((c) => c.url.startsWith('/api/jd/history'))).toHaveLength(2);
+
+      teardown!();
+      teardown = undefined;
+      expect(sockets[1]!.close).toHaveBeenCalled();
+      sockets[1]!.drop();
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it('gives up and says so when the hub closes the stream over the token', async () => {
+      vi.useFakeTimers();
+      chatHub();
+      const { host, sockets } = mountWithStream();
+      await flush();
+      sockets[0]!.open();
+      sockets[0]!.drop('JD refused the hub’s token');
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(sockets).toHaveLength(1);
+      expect(host.querySelector('.jd__noticehead')?.textContent).toBe('The token doesn’t match');
+    });
+
+    it('says JD is not answering while it retries', async () => {
+      vi.useFakeTimers();
+      chatHub();
+      const { host, sockets } = mountWithStream();
+      await flush();
+      sockets[0]!.drop('JD is not reachable');
+      expect(host.querySelector('.jd__sub')?.textContent).toBe('Not answering — retrying…');
+    });
   });
 });

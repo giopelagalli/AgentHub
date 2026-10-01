@@ -71,7 +71,7 @@ const isBlank = (line: string): boolean => line.trim() === '';
 
 /**
  * The lines a step shows: from its line to the end of the block that starts there, found without
- * parsing anything (decision 0054).
+ * parsing anything (decision 0056).
  *
  * The block ends at the first blank line whose next non-blank line is indented no deeper than the
  * starting line — a blank line *inside* a function is followed by the function's own, deeper,

@@ -67,6 +67,8 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   levers, Machines (Nodes · Browser · Queue · Access) in place of Cluster/Computer/Allocation, a
   three-choice New project sheet, and the docs shell (0047, 0052) for the PRD, Docs and Help.
 
+- The Code Tour: steps from the Code map, explanations cached as docs pages (0056–0058).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -79,7 +81,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    Code want it too.
 2. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
-3. Workbench: the Tour over the Code map (FR-B6, FR-B7).
+0. Workbench: a per-project live browser view on the Code tab (FR-B7).
 4. Harnesses, the rest: workspace containment so pi can become the default and the reviewer can
    leave `builtin` (0049), a project-level Harness select in the header, `claude-code` (FR-G3),
    and the installer putting pi on a node.

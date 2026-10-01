@@ -17,7 +17,7 @@ import { CODE_MAP_PAGE, guidePrompt, tourInstruction } from './prompts.js';
  * explanation of what the lines do and why.
  *
  * An explanation is a model run, so it is made once and kept: the first reader of a step pays for
- * it and everyone after reads a docs page (decision 0055). The page is keyed by what was explained —
+ * it and everyone after reads a docs page (decision 0057). The page is keyed by what was explained —
  * the path, the line and a hash of the snippet — so a file edited since is explained afresh rather
  * than described from memory.
  */

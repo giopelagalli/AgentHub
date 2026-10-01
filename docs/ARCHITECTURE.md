@@ -236,12 +236,12 @@ persona in `chat.ts`, read-only by construction (0045).
 owner-only route, `GET /api/projects/:slug/tour/:index` → `{ index, total, step, snippet,
 explanation, cached }`. Steps and snippets come from `@agenthub/shared/tour` — `tourSteps(map)` (the
 map's `path:line` spans in order) and `tourSnippet(text, line)` (the line to the end of its block by
-indentation, at most 60 lines; 0054) — the same functions the UI draws the step with, so what is
+indentation, at most 60 lines; 0056) — the same functions the UI draws the step with, so what is
 tinted is what was explained. An explanation is the guide's prompt and read-only belt on the worker
 tier, six tool calls, serialised per project and aborted with the request; it is kept as a committed
 page `docs/tour/NN-<title>.md` whose key line (path, line, range, snippet hash) must match for the
-page to be served again (0055). The UI half is `views/tour.ts`, a third tab beside Files and Map
-(0056).
+page to be served again (0057). The UI half is `views/tour.ts`, a third tab beside Files and Map
+(0058).
 
 **`browser/`** — the shared-browser lease, proxy and recorder; one session today, a pool later.
 

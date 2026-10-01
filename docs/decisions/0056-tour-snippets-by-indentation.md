@@ -1,4 +1,4 @@
-# 0054 — A tour step's snippet ends where its indentation says the block ends
+# 0056 — A tour step's snippet ends where its indentation says the block ends
 Date: 2026-10-01
 Decided by: senior-coder
 Status: accepted

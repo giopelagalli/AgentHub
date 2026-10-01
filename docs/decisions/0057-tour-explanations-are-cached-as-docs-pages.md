@@ -1,4 +1,4 @@
-# 0055 — Tour explanations are cached as committed docs pages, keyed by the snippet
+# 0057 — Tour explanations are cached as committed docs pages, keyed by the snippet
 Date: 2026-10-01
 Decided by: senior-coder
 Status: accepted

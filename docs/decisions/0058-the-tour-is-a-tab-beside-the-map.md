@@ -1,4 +1,4 @@
-# 0056 — The tour is a third tab beside Files and Map, entered by *Start tour*
+# 0058 — The tour is a third tab beside Files and Map, entered by *Start tour*
 Date: 2026-10-01
 Decided by: senior-coder
 Status: accepted

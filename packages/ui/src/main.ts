@@ -2,6 +2,8 @@ import './styles/tokens.css';
 import './styles/controls.css';
 import './app.css';
 import './styles/shell.css';
+import './styles/project.css';
+import './styles/sheets.css';
 import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';
 import { mountHelp } from './pages/help.js';

@@ -69,7 +69,11 @@ export function mountPreview(host: HTMLElement, ctx: ViewContext): () => void {
   // the owner's own app, served from the hub's origin, and nothing else is granted.
   frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals');
   const logBox = el('pre', 'preview__log');
-  root.append(bar, settingsBox, stage, logBox);
+  // The page's bar under the toolbar takes this view's bar when it offers one.
+  if (ctx.actions) {
+    ctx.actions.replaceChildren(bar);
+    root.append(settingsBox, stage, logBox);
+  } else root.append(bar, settingsBox, stage, logBox);
   host.appendChild(root);
 
   const act = (action: 'start' | 'stop' | 'restart'): void => {

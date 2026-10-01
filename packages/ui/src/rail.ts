@@ -152,6 +152,32 @@ export interface RailOptions {
   onLayout(layout: { collapsed: boolean; drawerOpen: boolean }): void;
 }
 
+/**
+ * The New project sheet, and what happens once it has drafted a PRD: the project is selected, the
+ * page lands on it, and the drafter's open questions ride along to the PRD.
+ *
+ * A project the hub has only just been told about isn't in the pushed state yet, so it is pulled
+ * before selecting — otherwise the next push would find the slug unknown and move the selection
+ * back to the top of the list.
+ */
+export function openNewProject(store: Store): void {
+  openProjectWizard(document.body, {
+    onDone: (slug, questions) => {
+      void getJson<HubState>('/api/state')
+        .then((state) => store.dispatch({ type: 'hub-state', state }))
+        .catch(() => { /* the socket will bring it along in a moment */ })
+        .finally(() => {
+          store.dispatch({ type: 'set-project', slug });
+          store.dispatch({ type: 'set-page', page: 'projects' });
+          store.dispatch({ type: 'prd-drafted', slug, questions });
+          toast(questions.length
+            ? `PRD drafted — ${questions.length} open question${questions.length === 1 ? '' : 's'}`
+            : 'PRD drafted.');
+        });
+    },
+  });
+}
+
 /** Narrower than this, the sidebar stops sharing the window and becomes a drawer over it. */
 const NARROW = '(max-width: 760px)';
 
@@ -208,28 +234,9 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
 
   host.append(head, searchBox, list, foot);
 
-  /**
-   * A project the hub has only just been told about isn't in the pushed state yet, so pull it
-   * before selecting — otherwise the next push would find the slug unknown and move the selection
-   * back to the top of the list.
-   */
-  const drafted = (slug: string, questions: string[]): void => {
-    void getJson<HubState>('/api/state')
-      .then((state) => store.dispatch({ type: 'hub-state', state }))
-      .catch(() => { /* the socket will bring it along in a moment */ })
-      .finally(() => {
-        store.dispatch({ type: 'set-project', slug });
-        store.dispatch({ type: 'set-page', page: 'projects' });
-        store.dispatch({ type: 'prd-drafted', slug, questions });
-        toast(questions.length
-          ? `PRD drafted — ${questions.length} open question${questions.length === 1 ? '' : 's'}`
-          : 'PRD drafted.');
-      });
-  };
-
   create.addEventListener('click', () => {
     closeDrawer();
-    openProjectWizard(document.body, { onDone: drafted });
+    openNewProject(store);
   });
 
   function renderRows(state: UiState): void {

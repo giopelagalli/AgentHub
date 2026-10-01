@@ -1,0 +1,308 @@
+/* Sheets: the box that comes down over the window — the project's settings, New project — and
+   the grouped lists inside them. A soft shadow because they float; nothing else on the page has
+   one. */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background: var(--scrim);
+  animation: scrim-in var(--dur) var(--ease);
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+}
+
+.modal__box {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  overflow: hidden;
+  color: var(--label);
+  background: var(--bg-raised);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-sheet);
+  animation: sheet-in 220ms var(--ease);
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+}
+
+/* --- settings: grouped like macOS Settings ---------------------------------------------------- */
+
+.settings {
+  background: var(--bg-grouped);
+}
+
+.settings__head {
+  display: flex;
+  flex: none;
+  gap: var(--sp-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px var(--sp-5) 14px;
+  border-bottom: 1px solid var(--sep);
+}
+
+.settings__titles h2 {
+  font-size: var(--fs-h3);
+}
+
+.settings__sub {
+  margin-top: 1px;
+  color: var(--label-3);
+}
+
+.settings__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-5) var(--sp-6);
+  overflow-y: auto;
+}
+
+.sgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sgroup__title {
+  padding: 0 4px;
+  font-size: var(--fs-ui);
+  font-weight: 600;
+  color: var(--label);
+}
+
+.sgroup__box {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-raised);
+  border-radius: 10px;
+  box-shadow: 0 0 0 0.5px var(--sep);
+}
+
+.sgroup__foot {
+  padding: 2px 4px 0;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--label-3);
+}
+
+.srow {
+  position: relative;
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+  min-height: 44px;
+  padding: 7px 14px;
+}
+
+.srow + .srow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 14px;
+  height: 1px;
+  background: var(--sep);
+}
+
+.srow__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.srow__label {
+  color: var(--label);
+}
+
+.srow__hint {
+  font-size: var(--fs-sm);
+  color: var(--label-3);
+}
+
+.srow__control {
+  display: flex;
+  flex: none;
+  gap: var(--sp-2);
+  align-items: center;
+  max-width: 60%;
+}
+
+.srow__control .select {
+  max-width: 100%;
+}
+
+.srow__face {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg-grouped);
+  border-radius: 9px;
+}
+
+.srow__face svg {
+  image-rendering: pixelated;
+}
+
+.srow__remove {
+  color: var(--label-3);
+}
+
+.srow__remove:hover:not(:disabled) {
+  color: var(--red);
+}
+
+.srow--full {
+  display: block;
+  padding: 10px 14px 12px;
+}
+
+.srow--full .seg {
+  display: flex;
+}
+
+.srow--full .seg__option {
+  flex: 1;
+}
+
+.srow--action {
+  width: 100%;
+  font: inherit;
+  color: var(--accent-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.srow--action:hover {
+  background: var(--hover);
+}
+
+.settings__inline {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  color: var(--label-2);
+}
+
+.settings__number {
+  width: 64px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- the hire form, inside Team --------------------------------------------------------------- */
+
+.hire {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hire__row {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.hire__row .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.hire__avatars {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hire__avatar {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  background: var(--bg-grouped);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.hire__avatar svg {
+  image-rendering: pixelated;
+}
+
+.hire__avatar:hover {
+  background: var(--hover);
+}
+
+.hire__avatar[aria-checked='true'] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.hire__instructions {
+  width: 100%;
+}
+
+.hire__actions {
+  justify-content: flex-end;
+}
+
+/* --- text being written: a draft, a plan --------------------------------------------------------- */
+
+.stream {
+  max-height: 46vh;
+  padding: 12px 14px;
+  margin: 0;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--label-2);
+  background: var(--bg-sunk);
+  border-radius: var(--r-md);
+}
+
+@media (max-width: 640px) {
+  .modal {
+    align-items: end;
+    padding: 0;
+  }
+
+  .modal__box {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    animation-name: sheet-up;
+  }
+
+  @keyframes sheet-up {
+    from { transform: translateY(24px); opacity: 0; }
+  }
+
+  .settings__head,
+  .settings__body {
+    padding-right: var(--sp-4);
+    padding-left: var(--sp-4);
+  }
+
+  .srow__control {
+    max-width: 55%;
+  }
+}

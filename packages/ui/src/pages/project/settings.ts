@@ -30,6 +30,8 @@ export interface SettingsOptions {
   onScheduleChanged: () => void;
   /** Scroll to and open a section first, e.g. Team from the Overview's add button. */
   section?: SettingsSection;
+  /** The sheet has gone, whichever way it was closed. */
+  onClose?: () => void;
 }
 
 export interface SettingsHandle {
@@ -65,7 +67,7 @@ function row(label: string, control?: HTMLElement | null, hint?: string): HTMLEl
 
 export function openProjectSettings(host: HTMLElement, options: SettingsOptions): SettingsHandle {
   const slug = options.project()?.slug ?? '';
-  const modal = openModal(host, { className: 'settings', label: 'Project settings' });
+  const modal = openModal(host, { className: 'settings', label: 'Project settings', ...(options.onClose ? { onClose: options.onClose } : {}) });
 
   const head = el('header', 'settings__head');
   const titles = el('div', 'settings__titles');

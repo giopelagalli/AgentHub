@@ -96,7 +96,11 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
 
   const mapBox = el('article', 'md code__map');
 
-  root.append(bar, panes, mapBox);
+  // The page's bar under the toolbar takes this view's bar when it offers one.
+  if (ctx.actions) {
+    ctx.actions.replaceChildren(bar);
+    root.append(panes, mapBox);
+  } else root.append(bar, panes, mapBox);
   host.replaceChildren(root);
 
   /**

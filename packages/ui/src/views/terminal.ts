@@ -78,7 +78,11 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
   bar.append(banner, restart);
   const screen = el('div', 'term__screen');
   const foot = el('p', 'term__foot', FOOTER);
-  root.append(bar, screen, foot);
+  // The page's bar under the toolbar takes this view's bar when it offers one.
+  if (ctx.actions) {
+    ctx.actions.replaceChildren(bar);
+    root.append(screen, foot);
+  } else root.append(bar, screen, foot);
   host.appendChild(root);
 
   const term = new Terminal({

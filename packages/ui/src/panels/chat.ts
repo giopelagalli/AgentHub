@@ -19,6 +19,8 @@ export interface ChatTarget {
   name: string;
   /** Line under the heading — who this agent is. */
   subtitle?: string;
+  /** Their face beside the heading — an `AVATARS` id. */
+  avatar?: string;
   /** SSE route this drawer posts `{ text }` to. */
   endpoint: string;
   /** Route the stored history is read from (`{ messages }`); omitted where there is none to read. */

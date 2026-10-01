@@ -1,4 +1,4 @@
-import { PRIORITY_RANK, type ModelCatalog, type ModelPolicy, type Priority, type TeamMemberView } from '@agenthub/shared';
+import { PRIORITY_RANK, type HarnessInfo, type HarnessKind, type ModelCatalog, type ModelPolicy, type Priority, type TeamMemberView } from '@agenthub/shared';
 import { sendJson } from '../../api.js';
 import { el } from '../../dom.js';
 import { memberModelOptions, modelOptions, policyFromValue, policyPillText, valueFromPolicy, workerOptions, SAME_AS_ORCHESTRATOR } from '../../models.js';
@@ -136,6 +136,55 @@ export function modelPickers(
     }, () => { worker.value = workerCurrent; });
   });
   return { main, worker };
+}
+
+/** What the Harness select calls each kind — the built-in loop has no product name of its own. */
+const HARNESS_LABELS: Record<HarnessKind, string> = {
+  builtin: 'Built-in loop',
+  pi: 'pi',
+  'claude-code': 'Claude Code',
+};
+
+/**
+ * The employee's Harness select, beside their Model one (FR-G4), filled into `slot` — which the
+ * drawer already shows, so a harness list that lands after the drawer opened still appears in it.
+ * Only harnesses this hub host can actually run are offered — a kind whose CLI is missing would
+ * only fail at turn time — so with nothing installed but the built-in loop there is no choice to
+ * make and the slot stays empty.
+ */
+export function fillHarnessField(slot: HTMLElement, slug: string, member: TeamMemberView, harnesses: HarnessInfo[]): void {
+  const offered = harnesses.filter((h) => h.available);
+  slot.replaceChildren();
+  slot.hidden = offered.length < 2;
+  if (slot.hidden) return;
+  const field = el('label', 'drawer__field');
+  field.append(el('span', 'drawer__fieldlabel', 'Harness'));
+  const select = el('select', 'select');
+  for (const harness of offered) {
+    const item = el('option', undefined, harness.kind === 'builtin'
+      ? `${HARNESS_LABELS.builtin} (project default)`
+      : `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`);
+    item.value = harness.kind === 'builtin' ? '' : harness.kind;
+    select.appendChild(item);
+  }
+  const current = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
+  select.value = current;
+  const hint = el('p', 'drawer__fieldhint', 'pi is not confined to the workspace.');
+  const showHint = (): void => { hint.hidden = select.value !== 'pi'; };
+  select.addEventListener('change', () => {
+    showHint();
+    const next = select.value ? (select.value as HarnessKind) : null;
+    void sendJson(`/api/projects/${slug}/team/${member.id}`, { harness: next }, 'PATCH')
+      .then(() => toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`))
+      .catch((error: unknown) => {
+        toast(`Could not set ${member.name}'s harness: ${String(error)}`, 'error');
+        select.value = current;
+        showHint();
+      });
+  });
+  field.appendChild(select);
+  showHint();
+  slot.append(field, hint);
 }
 
 /**

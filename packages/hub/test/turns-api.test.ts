@@ -90,6 +90,24 @@ describe('GET /api/projects/:slug/turns', () => {
     expect(replayed).toEqual(live);
   });
 
+  it('puts each project\'s last turn outcome in /api/state', async () => {
+    const h = await openHub();
+    for (const slug of ['demo', 'other']) {
+      await h.app.inject({ method: 'POST', url: '/api/projects', payload: { slug, title: slug, intent: 'ship it' } });
+    }
+    const failed = h.transcript.startSession('orchestrator', 'demo', 'orchestrator');
+    h.transcript.endSession(failed, 'error', 1234);
+    h.transcript.startSession('orchestrator', 'other', 'orchestrator'); // still running: no outcome yet
+    // Any project change refreshes the cached list the state is built from.
+    await h.app.inject({ method: 'POST', url: '/api/projects', payload: { slug: 'third', title: 'third', intent: 'ship it' } });
+
+    const state = (await h.app.inject({ method: 'GET', url: '/api/state' })).json();
+    const by = (slug: string) => state.projects.find((p: { slug: string }) => p.slug === slug);
+    expect(by('demo').lastTurn).toEqual({ outcome: 'error', endedAt: 1234 });
+    expect(by('other').lastTurn).toBeUndefined();
+    expect(by('third').lastTurn).toBeUndefined();
+  });
+
   it('shows a turn in progress as running and without an end', async () => {
     const h = await openHub([
       { toolCalls: [{ name: 'run_shell', arguments: { cmd: ['sleep', '2'] } }] },

@@ -4,7 +4,7 @@ import type { ChatMessage, ChatResult, CloudProvider, Tier, ToolCall, ToolDef } 
 import { LoginThrottle } from './auth.js';
 import type { Db } from './db.js';
 import { ADMIN_USER, hashToken } from './enrollment.js';
-import { isCloudEndpoint, type ModelGateway, type Route } from './gateway.js';
+import { CLOUD_PROVIDERS, isCloudEndpoint, type ModelGateway, type Route } from './gateway.js';
 import type { NodeRegistry } from './node-registry.js';
 import type { UsageStore } from './usage.js';
 
@@ -42,6 +42,28 @@ export const API_TOKEN_PREFIX = 'ah_';
 export const MAX_LABEL_LENGTH = 64;
 
 export const newApiToken = (): string => `${API_TOKEN_PREFIX}${randomBytes(API_TOKEN_BYTES).toString('hex')}`;
+
+/**
+ * The label of the `agent` token a pi run is minted (decision 0050): `pi:<project>/<member id>`,
+ * the member part empty when the run has no roster member. The door reads it back to put the run's
+ * spend under its project and member, as the built-in loop's is. The prefix is reserved: the
+ * owner's `POST /api/tokens` refuses it, so only a pi run ever holds such a label.
+ */
+export const HARNESS_LABEL_PREFIX = 'pi:';
+const HARNESS_LABEL_RE = /^pi:([a-z0-9-]{1,40})\/(.*)$/;
+
+export const harnessTokenLabel = (project: string, memberId: string | undefined): string =>
+  `${HARNESS_LABEL_PREFIX}${project}/${memberId ?? ''}`.slice(0, MAX_LABEL_LENGTH);
+
+/** The project and member a harness token's spend belongs to; null for any other token. */
+export function harnessAttribution(token: ApiTokenView): { subject: string; memberId: string | null } | null {
+  if (token.kind !== 'agent') return null;
+  const match = HARNESS_LABEL_RE.exec(token.label);
+  if (!match) return null;
+  // A label cut at the length limit has lost the end of its member id, so it names no member.
+  const full = token.label.length < MAX_LABEL_LENGTH;
+  return { subject: match[1]!, memberId: full && match[2] ? match[2] : null };
+}
 
 /** One token as the owner sees it — never its hash, and never its plaintext after the mint. */
 export interface ApiTokenView {
@@ -101,6 +123,17 @@ export class ApiTokens {
   }
 
   /**
+   * Revokes every live pi run token. A run cannot outlive the hub process that started it, so at
+   * startup any such token is a leftover of a crash, and it is closed rather than left to the owner.
+   */
+  revokeHarnessTokens(): number {
+    return this.db.prepare(
+      // `substr` rather than `LIKE`: an exact prefix, with no wildcard or case folding to reason about.
+      `UPDATE api_tokens SET revoked_at=? WHERE kind='agent' AND substr(label, 1, ?)=? AND revoked_at IS NULL`,
+    ).run(this.now(), HARNESS_LABEL_PREFIX.length, HARNESS_LABEL_PREFIX).changes;
+  }
+
+  /**
    * Who `token` speaks for, or null when it is unknown or revoked — one answer for both, so a
    * caller cannot tell a revoked token from a made-up one. A hit stamps `last_used_at`, which is
    * the only thing that says whether a token in the list is still in use.
@@ -124,6 +157,18 @@ export const TIER_MODELS: Record<string, Tier> = {
 };
 
 /**
+ * A tier name's optional route suffix — `agenthub/worker@local`, `@cloud` or `@<provider>` — as the
+ * `Route` it asks for (0050). Documented rather than listed in `/v1/models`: it is how a caller with
+ * a project's model policy (pi, for one) carries that policy through the door.
+ */
+function suffixRoute(suffix: string): { route: Route; local?: true } | null {
+  if (suffix === 'local') return { route: { prefer: 'local' }, local: true };
+  if (suffix === 'cloud') return { route: { prefer: 'cloud' } };
+  if (CLOUD_PROVIDERS.includes(suffix as CloudProvider)) return { route: { prefer: 'cloud', provider: suffix as CloudProvider } };
+  return null;
+}
+
+/**
  * Which tier a request's `model` asks for, and how to route it; null when nothing serves it.
  * `local` marks a request that must not be allowed to fall through to a cloud endpoint — see the
  * capacity check in the route handler.
@@ -131,8 +176,13 @@ export const TIER_MODELS: Record<string, Tier> = {
 export function resolveModel(
   registry: NodeRegistry, model: string,
 ): { tier: Tier; route?: Route; local?: true } | null {
-  const tier = TIER_MODELS[model];
-  if (tier) return { tier };
+  const at = model.lastIndexOf('@');
+  const tier = TIER_MODELS[at > 0 ? model.slice(0, at) : model];
+  if (tier) {
+    if (at <= 0) return { tier };
+    const routed = suffixRoute(model.slice(at + 1));
+    return routed ? { tier, ...routed } : null;
+  }
   // A concrete id: whatever endpoint is serving it right now fixes both the tier and the route. A
   // cloud id is asked of that provider (and that model); a local id is local-only, because a local
   // endpoint serves what its node loaded and no other node's model is a substitute for it.
@@ -335,6 +385,10 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
     if (!label || label.length > MAX_LABEL_LENGTH) {
       return reply.code(400).send({ error: `label must be 1-${MAX_LABEL_LENGTH} characters` });
     }
+    // Reserved for pi run tokens, whose label books their spend to a project and is swept at startup.
+    if (label.startsWith(HARNESS_LABEL_PREFIX)) {
+      return reply.code(400).send({ error: `labels starting with ${HARNESS_LABEL_PREFIX} are reserved for harness runs` });
+    }
     // `user` is the admin until accounts land (PRD FR-F1); the column is already here for them.
     return reply.code(201).send(tokens.mint(ADMIN_USER, kind as TokenKind, label));
   });
@@ -410,8 +464,17 @@ export async function door(app: FastifyInstance, opts: DoorOptions): Promise<voi
       });
       // The door's own row in the hub's one ledger, so the cost chip and the daily cloud cap see an
       // outside client exactly as they see a project turn.
+      // A pi run's token books its spend to its project and member instead (0050), so it shows in
+      // the project's cost like the built-in loop's.
       if (result.usage) {
-        opts.usage.record({ ...result.usage, subject: `door:${token.label}`, sessionId: null, memberId: null, kind: 'door' });
+        const harness = harnessAttribution(token);
+        opts.usage.record({
+          ...result.usage,
+          subject: harness?.subject ?? `door:${token.label}`,
+          sessionId: null,
+          memberId: harness?.memberId ?? null,
+          kind: 'door',
+        });
       }
       const usage = wireUsage(result);
       // What actually served the request, which for a tier name is only known now.

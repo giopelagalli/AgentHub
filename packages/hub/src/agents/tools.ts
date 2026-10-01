@@ -7,12 +7,14 @@ import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { ProjectBundle } from '../projects/bundle.js';
 import { auditPrd } from '../projects/prd.js';
-import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, subagentSystemPrompt, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
+import { CODE_MAP_MAX_LINES, CODE_MAP_PAGE, SUBAGENT_ROLES, type SubagentRole } from '../projects/prompts.js';
 import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
-import { SUBAGENT_TOOL_CALLS } from './budgets.js';
+import { HARNESS_WALL_CLOCK_MS, SUBAGENT_TOOL_CALLS } from './budgets.js';
+import type { HarnessDoor } from './harness/index.js';
+import { selectHarness } from './harness/select.js';
 import { clip, type AgentLoop, type AgentRunResult } from './loop.js';
 import { routeFor } from '../gateway.js';
 
@@ -851,6 +853,8 @@ export interface SubagentDeps {
   modelPolicy?: ModelPolicy;
   /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
+  /** The hub's own door, which an external harness calls models through; absent, pi is refused. */
+  door?: HarnessDoor;
 }
 
 export interface SubagentRun {
@@ -881,32 +885,47 @@ export interface SubagentOutcome extends AgentRunResult {
 export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: SubagentRun): Promise<SubagentOutcome> {
   const { member, role } = run;
   const who = member?.id ?? role;
-  const written: string[] = [];
-  const tools = run.tools ?? [...workspaceTools({ onWrite: (p) => { if (!written.includes(p)) written.push(p); } }), ...(run.extras ?? [])];
   ctx.onEvent?.({ kind: 'subagent-start', who, name: member?.name ?? role, role, task: clip(run.task, EVENT_TASK_LIMIT) });
   const startedAt = Date.now();
   // A member's own model override wins over the project's; falling back to it is what makes an
   // unoverridden employee run on the project's policy same as before.
   const route = routeFor(member?.model ?? deps.modelPolicy, 'worker');
-  const res = await deps.loop.run({
-    kind: 'subagent',
-    subject: deps.subject,
-    tier: 'worker',
-    system: subagentSystemPrompt(role, (run.extras ?? []).map((t) => t.def.name), member?.instructions),
-    user: run.task,
-    tools,
-    who,
-    ...(member ? { memberId: member.id, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
+  // Which runtime executes the task (FR-G1). `builtin` is this function's own behaviour, unchanged;
+  // anything else runs the same assignment elsewhere and reports back through the same events.
+  const { harness } = await selectHarness({
+    loop: deps.loop,
+    extras: run.extras ?? [],
+    pinnedTools: !!run.tools,
+    tools: (onWrite) => run.tools ?? [...workspaceTools({ onWrite }), ...(run.extras ?? [])],
+    log: ctx.log,
+    ...(ctx.bundle ? { bundle: ctx.bundle } : {}),
+    ...(member ? { member, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
     ...(route ? { route } : {}),
-    // No hub: a subagent gets its workspace and nothing else — no queue, no node registry.
-    ctx: { bundle: ctx.bundle },
-    maxToolCalls: SUBAGENT_TOOL_CALLS,
-    signal: ctx.signal,
-    onLog: ctx.log,
-    onEvent: ctx.onEvent,
+    ...(deps.door ? { door: deps.door } : {}),
   });
+  const res = await harness.run({
+    workspace: ctx.bundle?.workspace ?? process.cwd(),
+    task: run.task,
+    role,
+    // A pinned belt is today only ever the milestone reviewer's read-only one; the policy says so
+    // for a harness that reads `tools` rather than being handed the belt itself.
+    tools: run.tools ? 'read-only' : 'workspace',
+    budget: { toolCalls: SUBAGENT_TOOL_CALLS, wallClockMs: HARNESS_WALL_CLOCK_MS },
+    ...(member?.instructions ? { instructions: member.instructions } : {}),
+    ...(member ? { member } : {}),
+    ...(route ? { route } : {}),
+    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  }, { who, subject: deps.subject, log: ctx.log, ...(ctx.onEvent ? { onEvent: ctx.onEvent } : {}) });
   ctx.onEvent?.({ kind: 'subagent-end', who, outcome: res.outcome, ms: Date.now() - startedAt });
-  return { ...res, filesWritten: written };
+  return {
+    sessionId: res.sessionId,
+    text: res.report,
+    toolCalls: res.toolCalls,
+    outcome: res.outcome,
+    truncated: res.truncated ?? false,
+    filesWritten: res.filesWritten,
+    ...(res.lastTool ? { lastTool: res.lastTool } : {}),
+  };
 }
 
 /**

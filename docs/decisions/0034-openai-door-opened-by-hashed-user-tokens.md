@@ -72,3 +72,6 @@ the gateway has nowhere to put them, so they are accepted and ignored rather tha
 A concrete *local* id needs the gateway's new `localAvailable(tier)` to keep its promise, because
 `prefer: 'local'` is local-*first*: without the check a drained node would have turned "run this
 on my own hardware" into a cloud bill. The door refuses with a 503 instead.
+
+Amended by 0050: a tier name takes a route suffix — `@local` (with the same 503), `@cloud`,
+`@<provider>` — documented but not listed in `/v1/models`, so a caller can carry a model policy.

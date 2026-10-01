@@ -98,6 +98,15 @@ export class AgentLoop {
    */
   constructor(private deps: { gateway: ModelGateway; transcript: Transcript; onUsage?: (u: LoopUsage) => void }) {}
 
+  /**
+   * The gateway and the transcript, for a run that does not go through `run()`. An external harness
+   * (`agents/harness/`) resolves its own endpoint and keeps its own session, and everything that
+   * hands work to a subagent already holds the loop — so it travels rather than being threaded
+   * through every caller of `runSubagent` a second time.
+   */
+  get gateway(): ModelGateway { return this.deps.gateway; }
+  get transcript(): Transcript { return this.deps.transcript; }
+
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
     const { transcript, gateway } = this.deps;
     const sessionId = transcript.startSession(opts.kind, opts.subject, opts.tier, opts.memberId ? { memberId: opts.memberId } : {});

@@ -210,6 +210,47 @@ The **Models** select on each project:
 The Cluster page shows every node's tiers and live stream counts, so you can see where a turn is
 actually running.
 
+## Harnesses
+
+A *harness* is the program that actually does an employee's task. The model decides what to do;
+the harness is what reads files, edits them and runs commands.
+
+- **Built-in loop** — the hub's own. Nothing to install, tools scoped to the project workspace,
+  and the only runtime the manager and the milestone reviewer ever use. This is the default.
+- **pi** — [pi.dev](https://pi.dev), an open-source coding agent. The hub runs it as a program in
+  the project's workspace, pointed at the same model the employee would have used anyway, and
+  shows its work in the Activity feed exactly like a built-in run: the same tool calls, the same
+  report, the same "files written" line.
+
+**Installing pi on the hub host.** The hub only offers a harness it can actually start, so pi has
+to be on the hub machine's `PATH` — installing it in your laptop's terminal does nothing. On the
+Spark:
+
+```
+npm install -g @mariozechner/pi-coding-agent
+pi --version
+```
+
+Then restart nothing: the hub checks for it per request. (The installer will do this step for you
+once harnesses are part of it; for now it is one command.)
+
+**Choosing it.** Open an employee's drawer — click their card in the org chart — and use the
+**Harness** select under Model. The field only appears when there is more than one harness to pick
+from, and **Built-in loop (project default)** puts them back on whatever the project uses. Nothing
+else changes: their model override, their standing instructions and their history all stay.
+
+**What to know before you switch someone:**
+
+- pi runs commands in the workspace with the hub's own permissions, and unlike the built-in tools
+  it does not check the paths it is given — a task that asks it to touch something outside the
+  project can. Give pi to employees doing ordinary workspace work, not to one following
+  instructions from somewhere you don't control.
+- The reviewer always runs on the built-in loop, whatever you set. It judges a milestone with
+  read-only tools, and that guarantee is worth more than the choice.
+- Spend on a pi run shows in the turn's cost line but not yet on the usage page.
+- If pi isn't installed, or the model endpoint isn't one it can speak to, the employee quietly
+  runs on the built-in loop instead and the job log says why — the work still gets done.
+
 ## Nodes
 
 **Cluster** lists nodes with status, the model per tier, active streams, and the job queue.

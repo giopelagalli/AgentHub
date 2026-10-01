@@ -52,6 +52,11 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   commit as `Owner edit: <path>`, the read-only **Guide** docked beside it, and `docs/code-map.md`
   with `path:line` links that open a file at that line (0043–0046).
 
+- The pi spike and the `Harness` interface: pi verified drivable headlessly against a custom
+  OpenAI endpoint, `agents/harness/` with `builtin` (unchanged) and `pi`, a **Harness** select per
+  employee offered only when the CLI is on the host, `GET /api/harnesses` (FR-G1, G2, G4;
+  0031, 0032).
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
@@ -65,8 +70,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 2. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple
    Silicon 48 GB).
 3. Workbench: the Tour over the Code map (FR-B6, FR-B7).
-4. Harnesses: the pi spike, then `pi` as the default employee harness and `claude-code` as an
-   option (0013).
+4. Harnesses, the rest: workspace containment so pi can become the default and the reviewer can
+   leave `builtin` (0049), a project-level Harness select in the header, `claude-code` (FR-G3),
+   and the installer putting pi on a node.
 5. JD drives the hub; the web door (FR-C1–C5).
 6. Media on the 7900 XTX (FR-E1–E4).
 7. Browser pool (FR-D8).

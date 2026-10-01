@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
+import type { AutoRun, BrowserRequesterKind, BrowserStatus, CloudProvider, HarnessKind, HubState, Job, JobResult, JobSpec, JobType, MilestoneStatus, ModelCatalog, ModelPolicy, ModelPrice, NodeInfo, NodeRegistration, Priority, ProjectManifest, ServingEndpoint, TeamMember, TeamMemberView, TeamRoster, TeamSessionView, TeamStatus, Tier, TurnEvent, TurnRecord, UsageReport, VideoPayload } from '@agenthub/shared';
 import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom } from '@agenthub/shared';
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
@@ -31,6 +31,7 @@ import { ResourceManager, sqliteSlotStore, VideoSlotBusyError } from './resource
 import { AgentRuntime } from './agents.js';
 import { AgentLoop } from './agents/loop.js';
 import { Transcript, type SessionRecord } from './agents/transcript.js';
+import { harnessRoutes, harnessStatus } from './agents/harness/index.js';
 import { ProjectService, TurnRefusedError, type StopOptions } from './projects/service.js';
 import { terminalRoutes, TERMINAL_ROUTE } from './projects/terminal.js';
 import { MasterOrchestrator } from './projects/master.js';
@@ -1667,6 +1668,10 @@ export function createHub(opts: HubOptions = {}): Hub {
     }));
   });
 
+  // Which runtimes this host can run an employee's task in (FR-G1); its own file because detection
+  // is a property of the host, not of any project.
+  app.register(harnessRoutes);
+
   // --- project team roster ------------------------------------------------------
 
   /** What the roster shows about a session: its outcome and the tail of its last message. */
@@ -1735,26 +1740,38 @@ export function createHub(opts: HubOptions = {}): Hub {
   });
 
   /**
-   * A per-employee override of the project's model policy (`TeamMember.model`) — `model: null`
-   * clears it back to the project default. Accepts exactly what `POST .../model` does, via
-   * `validateModelPolicy`.
+   * A per-employee override of the project's defaults: `model` (the model policy, via
+   * `validateModelPolicy`) and `harness` (which runtime runs their tasks). Either may be sent
+   * alone; `null` clears that one back to the project default. A harness this host cannot run is
+   * refused here rather than silently falling back at turn time.
    */
   app.patch('/api/projects/:slug/team/:id', async (req, reply) => {
     const { slug, id } = req.params as { slug: string; id: string };
-    const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null }>;
-    if (body.model === undefined) return reply.code(400).send({ error: 'invalid model' });
-    const validated = body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
+    const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null; harness: HarnessKind | null }>;
+    if (body.model === undefined && body.harness === undefined) return reply.code(400).send({ error: 'invalid model' });
+    const validated = body.model === undefined || body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
     if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });
+    if (body.harness !== undefined && body.harness !== null) {
+      const offered = (await harnessStatus()).find((h) => h.kind === body.harness);
+      if (!offered) return reply.code(400).send({ error: 'invalid harness' });
+      if (!offered.available) return reply.code(400).send({ error: `${body.harness} is not installed on this hub` });
+    }
     const bundle = await resolveProject(slug, reply);
     if (!bundle) return reply;
     const members = await bundle.team();
     const member = members.find((m) => m.id === id);
     if (!member) return reply.code(404).send({ error: 'unknown member' });
     const updated: TeamMember = { ...member };
-    if (validated) updated.model = validated.policy;
-    else delete updated.model;
+    if (body.model !== undefined) {
+      if (validated) updated.model = validated.policy;
+      else delete updated.model;
+    }
+    if (body.harness !== undefined) {
+      if (body.harness) updated.harness = body.harness;
+      else delete updated.harness;
+    }
     await bundle.writeTeam(members.map((m) => (m.id === id ? updated : m)));
-    await bundle.commit(`owner: set ${member.name}'s model`);
+    await bundle.commit(`owner: set ${member.name}'s ${body.harness !== undefined ? 'harness' : 'model'}`);
     await refreshProjects();
     return updated;
   });

@@ -52,6 +52,8 @@ export interface ChatTarget {
    * once, where there is something for the reader to click.
    */
   onCodeRef?: (path: string, line: number) => void;
+  /** Text already in the message box when the drawer opens — the tour's "Ask about this". */
+  draft?: string;
   /**
    * The drawer has gone, whichever way it was closed. The sheet uses it to give the space back to
    * the document; a caller that closed the drawer itself hears about it too.
@@ -135,6 +137,7 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   input.type = 'text';
   input.placeholder = `Message ${target.name}`;
   input.autocomplete = 'off';
+  if (target.draft) input.value = target.draft;
   const send = document.createElement('button');
   send.type = 'submit';
   send.textContent = 'Send';
@@ -406,6 +409,8 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   void loadActivity();
   void loadHistory();
   input.focus();
+  // A draft is there to be finished: the caret goes after it, not before.
+  if (target.draft) input.setSelectionRange(input.value.length, input.value.length);
 
   let closed = false;
   function dispose(): void {

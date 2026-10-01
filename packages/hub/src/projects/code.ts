@@ -159,7 +159,7 @@ const commitEnv = (): Record<string, string> => ({
 });
 
 /** A path the owner's editor may not read or write, whatever the containment check says about it. */
-const isProtectedPath = (path: string): boolean =>
+export const isProtectedPath = (path: string): boolean =>
   path.split('/').some((segment) => SKIPPED_DIRS.has(segment));
 
 const NOT_OWN_CODE = "path is not the project's own code";

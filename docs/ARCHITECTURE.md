@@ -14,7 +14,9 @@ ends; nothing here does I/O except the shell helper.
 
 **`packages/mocks`** — a strict OpenAI-compatible mock server (validates tool and `tool_calls`
 wire shapes, scripts replies — a fixed `script`, or a per-request `respond` hook — records
-requests), a ComfyUI mock, and a daemon-config writer for
+requests), a ComfyUI mock, a mock JD web API (`jd-mock.ts`, `@agenthub/mocks/jd`: every 0069
+route with canned replies — a keyboard answered by an `edit`, a voice reply with a WAV it serves,
+typing and a proactive message on `/stream` every 20 s), and a daemon-config writer for
 tests. Strictness is the point: a lenient mock once hid a broken wire format behind 650 green
 tests.
 
@@ -26,7 +28,7 @@ register (0003).
 **`packages/hub/sim`** — the simulation behind `npm run sim` / `sim:ui` (0051): `startSim()` runs
 the hub in-process with auth on, the strict OpenAI mock answering through `agent-script.ts` (a
 stateless responder that reads each request's system prompt and history to play the manager,
-coder, reviewer, PRD and roadmap leads and the chats), a mock node plus one left to go stale, and
+coder, reviewer, PRD and roadmap leads and the chats), a mock node plus one left to go stale, the mock JD behind the JD page, and
 seeds three projects through the hub's own routes (`seed.ts`, data in `content.ts`). Dev tooling,
 not product: nothing in `src/` imports it. It lives in the hub package because it needs `createHub`
 and the mocks, and the hub already depends on both.
@@ -44,7 +46,7 @@ real ComfyUI.
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework (redesign: 0048, 0053). A store fed by
 `/api/state` and the socket, and a window of three places: a navigation-only sidebar (`rail.ts`:
-projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
+JD at the top, projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
 (`toolbar.ts`: title, centred segmented control, actions). The **project page**
 (`pages/projects.ts`) holds five tabs — Overview (`pages/project/overview.ts`), Plan (the PRD and
 roadmap views), Docs (Pages · Media), Code (Files · Terminal · Preview · Browser) and Activity — mounted into its body; a
@@ -65,6 +67,15 @@ CodeMirror is the Code tab's and is loaded only when Files opens (0043); its chr
 tokens and its syntax palette follows the scheme. `@xterm/xterm` and `@xterm/addon-fit` are the
 terminal's and load only when the Terminal opens, with their CSS (0041). Bundle: 200 kB JS (72 kB
 gzip) and 79 kB CSS (15 kB gzip), plus the 565 kB editor chunk and the 336 kB terminal chunk.
+
+**`packages/ui/src/pages/jd.ts`** + **`jd.ts`** — the JD page (FR-C4, 0071): the owner's
+conversation with JD through `/api/jd/*`. `jd.ts` is the pure half — `renderJdText` (JD's
+Telegram-HTML parsed into an inert document and *rebuilt* from an allow-list of `b i u s code pre
+a[http(s)]`, never `innerHTML`), `mergeMessages` (edits replace by id), time stamps, the stream's
+backoff, the recording type. The page renders keyed by message id (a playing voice note survives new
+messages), keeps the scroll pinned unless the owner scrolled up, reconnects `/api/jd/stream` with
+backoff and reloads history after a gap, and records voice notes with `MediaRecorder` on a tap.
+Unconfigured it shows the two env lines; it is DOM-tested in happy-dom.
 
 **`packages/ui/src/panels/docshell.ts`** — the docs shell (0047): one three-column documentation
 layout (grouped, filterable page rail; breadcrumb, title and pager; *On this page*), used by the
@@ -234,6 +245,17 @@ listeners are wired, because the handshake completes before the handler runs and
 is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (the frame helpers and
 a lazy `mountTerminal`) and `terminal-mount.ts` (xterm.js, the fit addon, reconnect with a banner —
 a reconnect is a *new* shell and says so), the only module that imports xterm.
+
+**`jd.ts`** — the JD web door, the hub's half (FR-C4, 0069, 0070): one plugin that proxies JD's
+tailnet-only API under the owner's login. The 0069 routes are registered by name under
+`/api/jd/*` and forwarded with the bearer (`JD_WEB_TOKEN`) and the browser's `Content-Type`, body
+bytes untouched (a catch-all buffer parser in the plugin's scope, 10 MB), and nothing else of the
+browser's — no cookie, no `Authorization`. JD unreachable is 502, past 120 s is 504, and JD's own
+401/403 becomes 502 so the UI never mistakes it for an expired session. `/api/jd/audio/:id`
+answers byte ranges itself so Safari plays the clip; `/api/jd/stream` bridges a browser socket to
+JD's `/stream` one to one, closing each with the other, its upgrade origin-checked like the
+terminal's. `/api/jd/status` answers locally (`configured`, `reachable`, `name`). Every route is
+`owner` by `routeAccess`'s default, and the door opens only on a hub with a password.
 
 **`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
 per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and

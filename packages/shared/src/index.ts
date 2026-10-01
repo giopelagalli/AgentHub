@@ -818,3 +818,35 @@ export interface TeamRoster {
   members: TeamMemberView[];
   manager: { status: TeamStatus; currentSession?: TeamSessionView };
 }
+
+/**
+ * The JD web door's wire (decision 0069): one message as JD's HTTP API and `/api/jd/*` carry it.
+ * `text` is Telegram's HTML subset when `format` is `html`; `edit` replaces the message whose `id`
+ * it repeats.
+ */
+export interface JdMessage {
+  id: string;
+  from: 'owner' | 'jd';
+  at: number;
+  text: string;
+  format: 'html' | 'plain';
+  buttons?: { label: string; data: string }[][];
+  audio?: { id: string; mime: string };
+  edit?: true;
+}
+
+/** What JD's `/stream` (and so `/api/jd/stream`) pushes. */
+export type JdStreamFrame = { type: 'message'; message: JdMessage } | { type: 'typing'; on: boolean };
+
+/** `GET /api/jd/status`, answered by the hub itself. */
+export interface JdStatus {
+  configured: boolean;
+  reachable: boolean;
+  name?: string;
+  /**
+   * Why JD cannot be talked to, when it cannot: `no-password` — `JD_URL` is set but the hub has no
+   * `HUB_PASSWORD`, so the door stays shut; `token` — JD answered 401/403 to the hub's bearer;
+   * `unreachable` — JD did not answer at all.
+   */
+  reason?: 'no-password' | 'token' | 'unreachable';
+}

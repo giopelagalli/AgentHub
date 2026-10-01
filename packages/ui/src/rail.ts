@@ -22,7 +22,7 @@ import { runningTurn } from './turns.js';
  * keeps the id of the page it used to be (`cluster` is Nodes, `computer` the shared browser,
  * `allocation` the queue), so the socket's browser subscription and the store need no translation.
  */
-export type PageId = 'projects' | 'cluster' | 'computer' | 'allocation' | 'access' | 'help';
+export type PageId = 'projects' | 'jd' | 'cluster' | 'computer' | 'allocation' | 'access' | 'help';
 
 /** The sidebar's system places; the projects view is reached through the list instead. */
 export type RailPlace = 'machines' | 'help';
@@ -145,6 +145,7 @@ function railSignature(state: UiState): string {
     state.page,
     state.project,
     state.connection,
+    state.jdName,
     state.hub ? 'hub' : 'waiting',
     projects.map((p) => `${p.slug}:${p.title}:${projectDot(p, state)}`).join('|'),
   ].join('~');
@@ -204,6 +205,19 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   hide.setAttribute('aria-controls', SIDEBAR_ID);
   head.append(brand, create, hide);
 
+  // JD, the owner's assistant (FR-C4), is a place of its own and the one conversation the owner
+  // returns to most: it sits above the projects rather than with the system places at the bottom.
+  const assistant = el('nav', 'sidebar__top');
+  assistant.setAttribute('aria-label', 'Assistant');
+  const jdRow = button('', 'sidebar__row');
+  const jdLabel = el('span', 'sidebar__title', 'JD');
+  jdRow.append(icon('chat', 16), jdLabel);
+  jdRow.addEventListener('click', () => {
+    store.dispatch({ type: 'set-page', page: 'jd' });
+    closeDrawer();
+  });
+  assistant.appendChild(jdRow);
+
   const searchBox = el('label', 'sidebar__search');
   const search = el('input');
   search.type = 'search';
@@ -237,7 +251,7 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   status.setAttribute('role', 'status');
   foot.appendChild(status);
 
-  host.append(head, searchBox, list, foot);
+  host.append(head, assistant, searchBox, list, foot);
 
   create.addEventListener('click', () => {
     closeDrawer();
@@ -279,6 +293,10 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
       if (entry.current) node.setAttribute('aria-current', 'page');
       else node.removeAttribute('aria-current');
     }
+    if (state.page === 'jd') jdRow.setAttribute('aria-current', 'page');
+    else jdRow.removeAttribute('aria-current');
+    jdLabel.textContent = state.jdName ?? 'JD';
+    jdRow.title = state.jdName ?? 'JD';
     const word = badgeLabel(state.connection);
     statusText.textContent = word.charAt(0) + word.slice(1).toLowerCase();
     statusDot.className = `dot dot--${state.connection === 'live' ? 'working' : state.connection === 'polling' ? 'needs' : 'error'}`;

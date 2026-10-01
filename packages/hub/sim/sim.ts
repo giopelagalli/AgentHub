@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
+import { createMockJd, type MockJd } from '@agenthub/mocks/jd';
 import type { NodeRegistration } from '@agenthub/shared';
 import type { FastifyInstance } from 'fastify';
 import { FakeDriver } from '../../node-daemon/src/browser/driver.js';
@@ -21,6 +22,7 @@ import { seedProjects, type HubCall } from './seed.js';
 export const SIM_PASSWORD = 'sim';
 const SIM_SESSION_SECRET = 'agenthub-sim-session-secret';
 const SIM_DAEMON_TOKEN = 'agenthub-sim-daemon-token';
+const SIM_JD_TOKEN = 'agenthub-sim-jd-token';
 /** The mock's endpoints are priced as these Fireworks models, so every cost surface shows dollars. */
 const ORCHESTRATOR_MODEL = 'accounts/fireworks/models/glm-5p3';
 const WORKER_MODEL = 'accounts/fireworks/models/glm-5p3-flash';
@@ -112,11 +114,13 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
   let browser: FastifyInstance | undefined;
   let heartbeat: NodeJS.Timeout | undefined;
   let mediaNode: MediaNode | undefined;
+  let jd: MockJd | undefined;
   const stop = async (): Promise<void> => {
     clearInterval(heartbeat);
     await mediaNode?.stop();
     await hub?.stop();
     await browser?.close();
+    await jd?.close();
     await mock?.close();
     if (tempRoot) await rm(dataRoot, { recursive: true, force: true });
   };
@@ -129,7 +133,13 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
     await m.listen({ port: 0, host: '127.0.0.1' });
     const mockUrl = `http://127.0.0.1:${(m.server.address() as { port: number }).port}`;
 
+    // JD's web API, faked (FR-C4): the JD page talks to it through the hub's door.
+    const j = createMockJd({ token: SIM_JD_TOKEN });
+    jd = j;
+    await j.listen({ port: 0, host: '127.0.0.1' });
+
     const h = createHub({
+      jd: { url: `http://127.0.0.1:${(j.server.address() as { port: number }).port}`, token: SIM_JD_TOKEN },
       dbPath: join(dataRoot, 'hub.db'),
       projectsRoot: join(dataRoot, 'projects'),
       assistant: { memoryRoot: join(dataRoot, 'memory') },

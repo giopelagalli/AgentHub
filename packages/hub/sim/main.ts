@@ -56,6 +56,7 @@ console.log([
   `  open       ${open}${values.ui ? `   (hub API at ${sim.url})` : ''}`,
   `  password   ${sim.password}`,
   `  data       ${sim.dataRoot}${values.data ? '' : '   (temporary, removed on exit)'}`,
+  '  jd         a mock JD on the JD page (canned replies; "button", "link", "slow" and the mic do things)',
   `  nodes      sim-spark (online, mock model)   sim-mini (browser, 3 slots)   sim-media (images + clips, mock ComfyUI)   sim-pc (goes offline ~15 s after start)`,
   ...(sim.seeded.length
     ? ['  projects', ...sim.seeded.map((l) => `    ${l}`)]

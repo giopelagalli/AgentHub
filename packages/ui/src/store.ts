@@ -58,6 +58,8 @@ export interface UiState {
   browserFrames: Record<string, BrowserFrame>;
   /** Per project slug: its recent turns, the running one included. */
   turns: Record<string, ProjectTurns>;
+  /** JD's display name once `/api/jd/status` has said it; the sidebar says "JD" until then. */
+  jdName: string | null;
 }
 
 export type StoreEvent =
@@ -74,7 +76,8 @@ export type StoreEvent =
   | { type: 'turn-event'; frame: TurnFrame }
   | { type: 'turns-loaded'; slug: string; response: TurnsResponse }
   | { type: 'turns-failed'; slug: string }
-  | { type: 'connection'; status: UiState['connection'] };
+  | { type: 'connection'; status: UiState['connection'] }
+  | { type: 'jd-name'; name: string | null };
 
 export class Store {
   private state: UiState = {
@@ -88,6 +91,7 @@ export class Store {
     projectBrowser: false,
     browserFrames: {},
     turns: {},
+    jdName: null,
   };
   private listeners = new Set<(s: UiState) => void>();
 
@@ -177,6 +181,9 @@ export class Store {
       }
       case 'connection':
         this.state = { ...this.state, connection: event.status };
+        break;
+      case 'jd-name':
+        this.state = { ...this.state, jdName: event.name };
         break;
     }
     for (const listener of this.listeners) listener(this.state);

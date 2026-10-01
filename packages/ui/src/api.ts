@@ -35,6 +35,11 @@ export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> 
   return (await request(url, signal ? { signal } : undefined)).json() as Promise<T>;
 }
 
+/** POST raw bytes (a recording) as `type`; the answer is JSON. */
+export async function sendBytes<T>(url: string, body: Blob, type: string): Promise<T> {
+  return (await request(url, { method: 'POST', headers: { 'content-type': type }, body })).json() as Promise<T>;
+}
+
 /** POST with an optional JSON body; 204s and empty bodies come back as `null`. */
 export async function sendJson<T>(url: string, body?: unknown, method = 'POST'): Promise<T | null> {
   const response = await request(url, {

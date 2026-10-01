@@ -98,6 +98,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 - The project's default harness (0068): `POST /api/projects/:slug/harness` (owner-only, the
   member route's refusals plus claude-code on Local-only), a Harness row in the settings sheet,
   and the drawer's "Project default (<kind>)".
+- The web door, the hub's side (FR-C4; 0069–0071): `/api/jd/*` proxies JD's web API behind the
+  owner's login (named routes, raw bytes, 502/504, audio ranges, the stream bridged), a **JD** page
+  at the top of the sidebar (chat, JD's buttons and quick keys, voice notes both ways, typing), and
+  a mock JD in the simulation.
 
 ## In progress
 
@@ -116,7 +120,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
    (AppArmor's user-namespace rule, the door bridge) must be run on the Spark by the owner. Then:
    claude-code on Linux once its egress can be narrowed to HTTPS (a proxy over a socket or a
    filtered namespace, 0064), and the installer putting pi (and `bubblewrap`) on a node.
-3. The web door (FR-C4–C5).
+3. The web door: JD's side deployed (FR-C4); FR-C5.
 4. Media on the real 7900 XTX: ComfyUI on ROCm, the owner's by-hand test, the templates exported
    over the placeholders (`deploy/amd/comfy/README.md`); then FR-E4 (JD → a render → Telegram).
 5. Accounts, grants, per-member JD, the public site (FR-F1–F6).

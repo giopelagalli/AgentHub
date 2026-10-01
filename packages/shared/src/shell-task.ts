@@ -40,7 +40,7 @@ export function resolveWorkspace(root: string, project: string | undefined, cwd:
 export const HUB_SECRET_ENV = [
   'GITHUB_TOKEN', 'FIREWORKS_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
   'HUB_PASSWORD', 'HUB_SESSION_SECRET', 'DAEMON_TOKEN', 'TELEGRAM_BOT_TOKEN',
-  'XAI_API_KEY', 'X_API_KEY', 'GEMINI_API_KEY', 'SEARCH_API_KEY',
+  'XAI_API_KEY', 'X_API_KEY', 'GEMINI_API_KEY', 'SEARCH_API_KEY', 'JD_WEB_TOKEN',
 ];
 
 /** Credentials named by a prefix rather than exactly — the GitHub App's key, id and secret. */

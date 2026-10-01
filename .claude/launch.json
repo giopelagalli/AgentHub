@@ -33,6 +33,18 @@
         "set -a; . ./configs/hub.env; set +a; PORT=4001 HUB_PASSWORD=dev exec npm run dev:hub"
       ],
       "port": 4001
+    },
+    {
+      "name": "sim",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "sim"],
+      "port": 4100
+    },
+    {
+      "name": "sim-ui",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "sim:ui"],
+      "port": 5180
     }
   ]
 }

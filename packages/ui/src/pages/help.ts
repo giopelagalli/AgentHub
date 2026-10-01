@@ -2,6 +2,7 @@ import guide from '../../../../docs/guide.md?raw';
 import { el } from '../dom.js';
 import { mountDocShell, splitSections } from '../panels/docshell.js';
 import type { Store } from '../store.js';
+import { toolbar } from '../toolbar.js';
 
 /**
  * The Help page: the user guide in the docs shell, so it reads like the documentation site it is.
@@ -15,12 +16,18 @@ import type { Store } from '../store.js';
 /** The guide's own contents list, still built the way the rest of the app expects it. */
 export { docToc as guideToc } from '../panels/docshell.js';
 
-export function mountHelp(host: HTMLElement, store: Store): () => void {
+export function mountHelp(host: HTMLElement, _store: Store): () => void {
+  const view = el('div', 'view');
+  const bar = toolbar();
+  bar.leading.appendChild(el('h1', 'toolbar__title', 'Help'));
+  const body = el('div', 'view__body');
   const page = el('div', 'help');
-  host.appendChild(page);
+  body.appendChild(page);
+  view.append(bar.root, body);
+  host.appendChild(view);
 
   const shell = mountDocShell(page, {
-    pages: splitSections(guide).map((section) => ({ ...section, section: 'Sections' })),
+    pages: splitSections(guide).map((section) => ({ ...section, section: 'Guide' })),
     current: '',
     title: 'Guide',
     mode: 'scroll',

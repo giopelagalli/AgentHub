@@ -25,6 +25,7 @@ import { mountPrd } from '../views/prd.js';
 import { mountPreview } from '../views/preview.js';
 import { mountRoadmap } from '../views/roadmap.js';
 import { mountTerminal } from '../views/terminal.js';
+import { toolbar } from '../toolbar.js';
 
 export { button, el };
 
@@ -446,7 +447,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   const artifactsBox = el('div', 'artifacts');
   const bodyBox = el('div', 'detail__body');
   detail.append(headBox, progress, artifactsBox, bodyBox);
-  host.appendChild(detail);
+  const view = el('div', 'view');
+  const bar = toolbar();
+  const titleNode = el('h1', 'toolbar__title');
+  bar.leading.appendChild(titleNode);
+  const scroller = el('div', 'view__body');
+  scroller.appendChild(detail);
+  view.append(bar.root, scroller);
+  host.appendChild(view);
 
   /** One drawer at a time: a second would land on top of the first. */
   let closeDrawer: (() => void) | null = null;
@@ -703,6 +711,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** The header row: what the project is, and the levers that apply to the whole of it. */
   function renderHead(project: ProjectManifest): void {
     headBox.replaceChildren();
+    titleNode.textContent = project.title;
     const line = el('div', 'detail__title');
     line.append(
       el('h1', undefined, project.title),
@@ -1033,6 +1042,6 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     closeSheet();
     rosterToken++;
     artifactToken++;
-    detail.remove();
+    view.remove();
   };
 }

@@ -1,24 +1,29 @@
 import './styles/tokens.css';
 import './styles/controls.css';
 import './app.css';
+import './styles/shell.css';
 import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';
-import { mountAllocation } from './pages/allocation.js';
-import { mountCluster } from './pages/cluster.js';
-import { mountComputer } from './pages/computer.js';
 import { mountHelp } from './pages/help.js';
+import { mountMachines } from './pages/machines.js';
 import { mountProjects } from './pages/projects.js';
 import { openLoginPanel } from './panels/login.js';
-import { mountRail, type PageId } from './rail.js';
+import { mountRail, placeOf, type PageId } from './rail.js';
 import { Store } from './store.js';
 import { toast } from './toast.js';
 
-/** Every page mounts into the same host and hands back its own teardown. */
-const MOUNTS: Record<PageId, (host: HTMLElement, store: Store) => () => void> = {
+/**
+ * The three places the main area can hold. Machines' four sections are one place: moving between
+ * them is the page's own business, so the shell only remounts when the place itself changes.
+ */
+type Place = 'projects' | 'machines' | 'help';
+
+const placeFor = (page: PageId): Place => (page === 'projects' ? 'projects' : placeOf(page) ?? 'projects');
+
+/** Every place mounts into the same host and hands back its own teardown. */
+const MOUNTS: Record<Place, (host: HTMLElement, store: Store) => () => void> = {
   projects: mountProjects,
-  computer: mountComputer,
-  cluster: mountCluster,
-  allocation: mountAllocation,
+  machines: mountMachines,
   help: mountHelp,
 };
 
@@ -32,26 +37,31 @@ const app = hostElement();
 const store = new Store();
 
 const rail = document.createElement('aside');
-rail.className = 'rail';
+rail.className = 'sidebar';
 
 const page = document.createElement('main');
 page.className = 'page';
 app.append(rail, page);
 
 mountRail(rail, store, {
-  onCollapsed: (collapsed) => app.classList.toggle('app--tight', collapsed),
+  onLayout: ({ collapsed, drawerOpen }) => {
+    app.classList.toggle('app--collapsed', collapsed);
+    app.classList.toggle('app--drawer', drawerOpen);
+  },
 });
 
-/** The page on screen, swapped whole when the rail selection changes. */
-let showing: PageId | null = null;
+/** The place on screen, swapped whole when the sidebar selection changes. */
+let showing: Place | null = null;
 let teardown: (() => void) | null = null;
 
 store.subscribe((state) => {
-  if (state.page === showing) return;
-  showing = state.page;
-  teardown?.();
+  if (teardown === null) return;
+  const next = placeFor(state.page);
+  if (next === showing) return;
+  showing = next;
+  teardown();
   page.replaceChildren();
-  teardown = MOUNTS[state.page](page, store);
+  teardown = MOUNTS[next](page, store);
 });
 
 /**
@@ -69,14 +79,14 @@ async function boot(): Promise<void> {
     return;
   }
   if (teardown === null) {
-    showing = store.getState().page;
+    showing = placeFor(store.getState().page);
     teardown = MOUNTS[showing](page, store);
   }
   connect(store);
   // Back from GitHub's install screen. Say so once and take the parameter off the address bar, so
   // a reload doesn't toast again.
   if (githubReturn(window.location.search)) {
-    toast('GitHub connected. Its repositories are in New project → Import a repo.');
+    toast('GitHub connected. Its repositories are in New project → Import from GitHub.');
     window.history.replaceState(null, '', withoutGithubParam(window.location.href));
   }
   // Dev harness: `?fake-turns` (or `=idle`, `=long`) plays scripted turn frames into the store.

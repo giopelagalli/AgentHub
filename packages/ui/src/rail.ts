@@ -2,38 +2,52 @@ import type { HubState, ProjectManifest } from '@agenthub/shared';
 import { getJson } from './api.js';
 import { badgeLabel } from './badge.js';
 import { button, el } from './dom.js';
+import { icon, type IconName } from './icons.js';
 import { openProjectWizard } from './panels/wizard.js';
-import type { Store, UiState } from './store.js';
+import { turnsOf, type Store, type UiState } from './store.js';
 import { toast } from './toast.js';
+import { SIDEBAR_EVENT, iconButton } from './toolbar.js';
+import { runningTurn } from './turns.js';
 
 /**
- * The left rail: the three whole-app pages, the New project button, and the project list, in one
- * column. `projects` is not a rail link — the list is the projects view, and picking a row is what
- * puts a project back in the main area.
+ * The sidebar: navigation and nothing else. The projects are the list; New project is the `+` in
+ * its header; the two system places — Machines and Help — sit small at the bottom. It hides with
+ * the toolbar's sidebar button or `[`, and on a phone-width window it is a drawer over the page.
  *
- * Everything above `mountRail` is pure, so the rail's shape can be read without a DOM.
+ * Everything above `mountRail` is pure, so the sidebar's shape can be read without a DOM.
  */
 
-export type PageId = 'projects' | 'computer' | 'cluster' | 'allocation' | 'help';
+/**
+ * Every screen the main area can show. Machines is one place with four sections, and each section
+ * keeps the id of the page it used to be (`cluster` is Nodes, `computer` the shared browser,
+ * `allocation` the queue), so the socket's browser subscription and the store need no translation.
+ */
+export type PageId = 'projects' | 'cluster' | 'computer' | 'allocation' | 'access' | 'help';
 
-/** The pages the rail links to; the projects view is reached through the list instead. */
-export type RailPageId = Exclude<PageId, 'projects'>;
+/** The sidebar's system places; the projects view is reached through the list instead. */
+export type RailPlace = 'machines' | 'help';
 
 export interface RailPage {
-  id: RailPageId;
+  id: RailPlace;
   label: string;
-  /** One line under the label, so the rail says what each page is for. */
-  hint: string;
-  /** What stands in for the label once the rail is collapsed to a strip. */
-  initial: string;
+  icon: IconName;
+  /** Where clicking the entry lands. */
+  page: PageId;
 }
 
 export const RAIL_PAGES: readonly RailPage[] = [
-  { id: 'computer', label: 'Computer', hint: 'Shared browser', initial: 'Co' },
-  { id: 'cluster', label: 'Cluster', hint: 'Nodes and jobs', initial: 'Cl' },
-  { id: 'allocation', label: 'Allocation', hint: 'What runs first', initial: 'Al' },
-  { id: 'help', label: 'Help', hint: 'How AgentHub works', initial: 'He' },
+  { id: 'machines', label: 'Machines', icon: 'machines', page: 'cluster' },
+  { id: 'help', label: 'Help', icon: 'help', page: 'help' },
 ];
+
+/** The four sections of Machines, in the order its segmented control shows them. */
+export const MACHINE_PAGES: readonly PageId[] = ['cluster', 'computer', 'allocation', 'access'];
+
+/** Which sidebar place a page belongs to; a project belongs to none. */
+export function placeOf(page: PageId): RailPlace | null {
+  if (page === 'help') return 'help';
+  return MACHINE_PAGES.includes(page) ? 'machines' : null;
+}
 
 export interface RailEntry extends RailPage {
   current: boolean;
@@ -41,26 +55,49 @@ export interface RailEntry extends RailPage {
 
 export interface RailModel {
   collapsed: boolean;
-  /** Every page link, with the one being shown marked; none is, on a project. */
+  /** Every place, with the one being shown marked; none is, on a project. */
   entries: RailEntry[];
-  /** The New project button's face: the words, or a bare + in the strip. */
-  newProjectLabel: string;
-  /** The search box and the list are what the strip gives up for its width. */
-  showsProjects: boolean;
-  /** What the chevron would do next, for its title and its label. */
+  /** What the sidebar button would do next, for its title and its label. */
   toggleLabel: string;
 }
 
-/** The rail's shape at this page and this width. */
+/** The sidebar's shape at this page. */
 export function railModel(page: PageId, collapsed: boolean): RailModel {
+  const place = placeOf(page);
   return {
     collapsed,
-    entries: RAIL_PAGES.map((item) => ({ ...item, current: item.id === page })),
-    newProjectLabel: collapsed ? '+' : 'New project',
-    showsProjects: !collapsed,
-    toggleLabel: collapsed ? 'Expand the rail' : 'Collapse the rail',
+    entries: RAIL_PAGES.map((item) => ({ ...item, current: item.id === place })),
+    toggleLabel: collapsed ? 'Show the sidebar' : 'Hide the sidebar',
   };
 }
+
+/**
+ * A project's dot: green while a turn runs, amber when it is blocked on the owner, red when its
+ * last turn failed, a hollow ring while paused, grey otherwise. A turn is only known about for a
+ * project whose turns have reached the store, which is every one the socket has reported on.
+ */
+export type ProjectDot = 'working' | 'needs' | 'error' | 'paused' | 'idle' | 'done';
+
+export function projectDot(project: ProjectManifest, state: UiState): ProjectDot {
+  const turns = turnsOf(state, project.slug).turns;
+  if (runningTurn(turns)) return 'working';
+  if (project.status === 'paused') return 'paused';
+  if (project.status === 'done') return 'done';
+  if (project.status === 'blocked') return 'needs';
+  const last = turns[0];
+  if (last?.outcome && /fail|error|abort/i.test(last.outcome)) return 'error';
+  return 'idle';
+}
+
+/** The dot's words, for its tooltip and for a screen reader. */
+export const DOT_WORDS: Record<ProjectDot, string> = {
+  working: 'Working',
+  needs: 'Needs you',
+  error: 'Last turn failed',
+  paused: 'Paused',
+  idle: 'Idle',
+  done: 'Done',
+};
 
 /** Free-text filter over the project list: a case-insensitive match on title or slug. */
 export function filterProjects(projects: ProjectManifest[], query: string): ProjectManifest[] {
@@ -81,7 +118,7 @@ export function stepSelection(projects: ProjectManifest[], slug: string | null, 
 
 const COLLAPSED_KEY = 'agenthub.rail.collapsed';
 
-/** How wide the rail was left last time. Storage can be blocked, in which case it opens wide. */
+/** Whether the sidebar was left hidden last time. Storage can be blocked, in which case it shows. */
 export function readCollapsed(): boolean {
   try {
     return localStorage.getItem(COLLAPSED_KEY) === '1';
@@ -94,68 +131,82 @@ export function writeCollapsed(collapsed: boolean): void {
   try {
     localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
   } catch {
-    /* private browsing: the rail just forgets between visits */
+    /* private browsing: the sidebar just forgets between visits */
   }
 }
 
-/** Everything the rail draws, short of the roster itself. */
+/** Everything the sidebar draws. */
 function railSignature(state: UiState): string {
   const projects = state.hub?.projects ?? [];
   return [
     state.page,
     state.project,
+    state.connection,
     state.hub ? 'hub' : 'waiting',
-    projects.map((p) => `${p.slug}:${p.title}:${p.status}:${p.priority}`).join('|'),
+    projects.map((p) => `${p.slug}:${p.title}:${projectDot(p, state)}`).join('|'),
   ].join('~');
 }
 
 export interface RailOptions {
-  /** Told the new width so the shell can give the main area the room. */
-  onCollapsed(collapsed: boolean): void;
+  /** Told how the sidebar now sits, so the shell can lay the window out around it. */
+  onLayout(layout: { collapsed: boolean; drawerOpen: boolean }): void;
 }
 
+/** Narrower than this, the sidebar stops sharing the window and becomes a drawer over it. */
+const NARROW = '(max-width: 760px)';
+
 /**
- * Mounts the rail in `host`. It owns its own collapsed state — the chevron and `[` both go
- * through `setCollapsed`, which persists it and hands the shell the new width.
+ * Mounts the sidebar in `host`. It owns whether it shows: the toolbar's button and `[` both go
+ * through `toggle`, which on a wide window hides or shows it (and remembers that), and on a narrow
+ * one opens or closes the drawer.
  */
 export function mountRail(host: HTMLElement, store: Store, options: RailOptions): void {
   let collapsed = readCollapsed();
+  let drawerOpen = false;
+  const narrow = typeof matchMedia === 'function' ? matchMedia(NARROW) : null;
 
-  const head = el('div', 'rail__head');
-  const brand = el('div', 'rail__brand', 'AgentHub');
-  const toggle = button('', 'rail__toggle');
-  toggle.appendChild(el('span', 'rail__chevron'));
-  head.append(brand, toggle);
+  host.setAttribute('aria-label', 'Sidebar');
 
-  const pages = el('nav', 'rail__pages');
-  pages.setAttribute('aria-label', 'Pages');
-  const pageButtons = new Map<RailPageId, HTMLButtonElement>();
-  for (const item of RAIL_PAGES) {
-    const node = button('', 'rail__page');
-    node.append(
-      el('span', 'rail__initial', item.initial),
-      el('span', 'rail__label', item.label),
-      el('span', 'rail__hint', item.hint),
-    );
-    node.addEventListener('click', () => store.dispatch({ type: 'set-page', page: item.id }));
-    pages.appendChild(node);
-    pageButtons.set(item.id, node);
-  }
+  const head = el('div', 'sidebar__head');
+  const brand = el('div', 'sidebar__brand', 'AgentHub');
+  const create = iconButton('plus', 'New project');
+  const hide = iconButton('sidebar', 'Hide the sidebar ([)');
+  head.append(brand, create, hide);
 
-  const create = el('button', 'btn btn--primary rail__new', 'New project');
-  create.type = 'button';
-  const search = el('input', 'input rail__search');
+  const searchBox = el('label', 'sidebar__search');
+  const search = el('input');
   search.type = 'search';
-  search.placeholder = 'Search projects';
-  const rows = el('div', 'rail__rows');
-  const list = el('div', 'rail__list');
-  list.append(search, rows);
+  search.placeholder = 'Search';
+  search.setAttribute('aria-label', 'Search projects');
+  searchBox.append(icon('search', 14), search);
 
-  const foot = el('div', 'rail__foot');
-  const badge = el('span', 'badge');
-  foot.appendChild(badge);
+  const list = el('nav', 'sidebar__list');
+  list.setAttribute('aria-label', 'Projects');
+  const listHead = el('div', 'sidebar__section', 'Projects');
+  const rows = el('div', 'sidebar__rows');
+  list.append(listHead, rows);
 
-  host.append(head, pages, create, list, foot);
+  const foot = el('nav', 'sidebar__foot');
+  foot.setAttribute('aria-label', 'System');
+  const placeButtons = new Map<RailPlace, HTMLButtonElement>();
+  for (const item of RAIL_PAGES) {
+    const node = button('', 'sidebar__row sidebar__place');
+    node.append(icon(item.icon, 16), el('span', 'sidebar__title', item.label));
+    node.addEventListener('click', () => {
+      store.dispatch({ type: 'set-page', page: item.page });
+      closeDrawer();
+    });
+    foot.appendChild(node);
+    placeButtons.set(item.id, node);
+  }
+  const status = el('div', 'sidebar__status');
+  const statusDot = el('span', 'dot');
+  const statusText = el('span');
+  status.append(statusDot, statusText);
+  status.setAttribute('role', 'status');
+  foot.appendChild(status);
+
+  host.append(head, searchBox, list, foot);
 
   /**
    * A project the hub has only just been told about isn't in the pushed state yet, so pull it
@@ -177,6 +228,7 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   };
 
   create.addEventListener('click', () => {
+    closeDrawer();
     openProjectWizard(document.body, { onDone: drafted });
   });
 
@@ -184,20 +236,24 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
     const matches = filterProjects(state.hub?.projects ?? [], search.value);
     rows.replaceChildren();
     if (!matches.length) {
-      rows.appendChild(el('p', 'empty', state.hub ? 'No projects match.' : 'Waiting for the hub…'));
+      rows.appendChild(el('p', 'sidebar__empty', state.hub
+        ? (search.value.trim() ? 'No projects match.' : 'No projects yet.')
+        : 'Waiting for the hub…'));
       return;
     }
     for (const project of matches) {
-      const row = button('', 'row');
-      if (project.slug === state.project) row.setAttribute('aria-current', 'true');
-      row.append(
-        el('span', 'row__title', project.title),
-        el('span', `pill pill--${project.status}`, project.status),
-        el('span', 'row__priority', project.priority),
-      );
+      const row = button('', 'sidebar__row');
+      const onProject = state.page === 'projects' && project.slug === state.project;
+      if (onProject) row.setAttribute('aria-current', 'page');
+      const kind = projectDot(project, state);
+      const dot = el('span', `dot dot--${kind === 'working' ? 'working dot--pulse' : kind}`);
+      dot.title = DOT_WORDS[kind];
+      row.append(dot, el('span', 'sidebar__title', project.title), el('span', 'sr-only', `, ${DOT_WORDS[kind]}`));
+      row.title = project.title;
       row.addEventListener('click', () => {
         store.dispatch({ type: 'set-project', slug: project.slug });
         store.dispatch({ type: 'set-page', page: 'projects' });
+        closeDrawer();
       });
       rows.appendChild(row);
     }
@@ -206,38 +262,55 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   function renderShape(state: UiState): void {
     const model = railModel(state.page, collapsed);
     for (const entry of model.entries) {
-      const node = pageButtons.get(entry.id);
+      const node = placeButtons.get(entry.id);
       if (!node) continue;
       if (entry.current) node.setAttribute('aria-current', 'page');
       else node.removeAttribute('aria-current');
-      node.title = collapsed ? `${entry.label} — ${entry.hint}` : '';
     }
-    create.textContent = model.newProjectLabel;
-    create.title = 'New project';
-    list.hidden = !model.showsProjects;
-    toggle.title = model.toggleLabel;
-    toggle.setAttribute('aria-label', model.toggleLabel);
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    badge.textContent = collapsed ? '' : badgeLabel(state.connection);
-    badge.dataset.status = state.connection;
+    const word = badgeLabel(state.connection);
+    statusText.textContent = word.charAt(0) + word.slice(1).toLowerCase();
+    statusDot.className = `dot dot--${state.connection === 'live' ? 'working' : state.connection === 'polling' ? 'needs' : 'error'}`;
+    status.title = state.connection === 'live'
+      ? 'Connected to the hub'
+      : state.connection === 'polling' ? 'The live connection dropped; reading the hub every few seconds' : 'The hub is not answering';
   }
 
-  const setCollapsed = (next: boolean): void => {
-    collapsed = next;
-    writeCollapsed(next);
-    options.onCollapsed(next);
-    renderShape(store.getState());
+  const layout = (): void => {
+    const isNarrow = narrow?.matches ?? false;
+    host.inert = isNarrow ? !drawerOpen : collapsed;
+    options.onLayout({ collapsed, drawerOpen: isNarrow && drawerOpen });
   };
 
-  toggle.addEventListener('click', () => setCollapsed(!collapsed));
+  function closeDrawer(): void {
+    if (!drawerOpen) return;
+    drawerOpen = false;
+    layout();
+  }
+
+  const toggle = (): void => {
+    if (narrow?.matches) {
+      drawerOpen = !drawerOpen;
+      layout();
+      if (drawerOpen) search.focus();
+      return;
+    }
+    collapsed = !collapsed;
+    writeCollapsed(collapsed);
+    layout();
+  };
+
+  hide.addEventListener('click', toggle);
+  window.addEventListener(SIDEBAR_EVENT, toggle);
+  narrow?.addEventListener('change', () => { drawerOpen = false; layout(); });
+  // A tap on the dimmed page beside the open drawer closes it.
+  document.addEventListener('pointerdown', (event) => {
+    if (!drawerOpen || !(event.target instanceof Node) || host.contains(event.target)) return;
+    if ((event.target as HTMLElement).closest?.('.toolbar__sidebar')) return;
+    closeDrawer();
+  });
 
   let last = '';
-  let connection: UiState['connection'] | null = null;
   const render = (state: UiState): void => {
-    if (state.connection !== connection) {
-      connection = state.connection;
-      renderShape(state);
-    }
     const next = railSignature(state);
     if (next === last) return;
     last = next;
@@ -246,26 +319,31 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   };
 
   search.addEventListener('input', () => renderRows(store.getState()));
+  search.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && search.value) { search.value = ''; renderRows(store.getState()); }
+  });
 
   const typing = (): boolean => {
     const active = document.activeElement;
     return active instanceof HTMLInputElement
       || active instanceof HTMLTextAreaElement
-      || active instanceof HTMLSelectElement;
+      || active instanceof HTMLSelectElement
+      || (active instanceof HTMLElement && active.isContentEditable);
   };
 
   const onKey = (event: KeyboardEvent): void => {
     if (typing() || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.key === 'Escape' && drawerOpen) { closeDrawer(); return; }
     if (event.key === '[') {
       event.preventDefault();
-      setCollapsed(!collapsed);
+      toggle();
       return;
     }
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    // Inside a drawer, the wizard or an artifact sheet the same two keys belong to whatever is
-    // focused there.
+    // Inside a drawer, the wizard, a sheet, an editor or a terminal the same two keys belong to
+    // whatever is focused there.
     const active = document.activeElement;
-    if (active instanceof HTMLElement && active.closest('.drawer, .modal, .sheet')) return;
+    if (active instanceof HTMLElement && active.closest('.drawer, .modal, .sheet, .cm-editor, .term, .seg, .menu')) return;
     const state = store.getState();
     const matches = filterProjects(state.hub?.projects ?? [], search.value);
     const next = stepSelection(matches, state.project, event.key === 'ArrowRight' ? 1 : -1);
@@ -276,7 +354,7 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   };
   window.addEventListener('keydown', onKey);
 
-  options.onCollapsed(collapsed);
+  layout();
   store.subscribe(render);
   render(store.getState());
 }

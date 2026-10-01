@@ -262,7 +262,7 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
  * appended to that rather than replacing it.
  *
  * The workspace rule is stated rather than enforced: an external harness runs with its working
- * directory set to `workspace/` but nothing stops it walking out (decision 0031).
+ * directory set to `workspace/` but nothing stops it walking out (decision 0049).
  */
 export function piSubagentPrompt(role: SubagentRole, instructions?: string): string {
   return [

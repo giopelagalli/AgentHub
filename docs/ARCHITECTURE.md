@@ -93,15 +93,19 @@ and no negative one), `budgets.ts`, `transcript.ts`. The built-in loop is the ma
 and the fallback harness (0013).
 
 **`agents/harness/`** — where an employee's task actually runs. `Harness.run(task, ctx)` takes one
-assignment (workspace, task, role, instructions, endpoint, tool policy, budget, signal) and returns
+assignment (workspace, task, role, instructions, route, tool policy, budget, signal) and returns
 a report, the files written and an outcome, emitting the run's `TurnEvent`s through `ctx.onEvent` —
 so the Activity feed and the employee drawer look the same whichever runtime produced them (FR-G1).
 `builtin.ts` is the existing `loop.run` path, unchanged and the default. `pi.ts` spawns the pi CLI
 (pi.dev) in the workspace with `-p --mode json`, maps its JSON Lines events onto ours, collects the
 files its `write`/`edit` calls named, enforces the tool-call budget pi has no limit of its own for,
-and kills the process group on abort (0031). `select.ts` picks the harness — the member's, else the
-project's, else `builtin` — and resolves the model endpoint a subprocess needs (0032); every reason
-a choice cannot be honoured falls back to `builtin` with a line in the job log. `detect.ts` is
+and kills the process group on abort (0049). pi reaches models only through the hub's own door
+(`door.ts`): its per-run `models.json` points at `<selfBase>/v1` with an `agent` API token minted at
+run start and revoked in `finally`, so failover, the ledger, the cloud cap and `maxStreams` apply
+(0050). `select.ts` picks the harness — the member's, else the project's, else `builtin` — given a
+`HarnessDoor` (the hub's listen base and its `ApiTokens`) plumbed from `createHub` through
+`ProjectService` and the orchestrator; every reason a choice cannot be honoured falls back to
+`builtin` with the reason in the run's session events. `detect.ts` is
 "is the CLI on PATH", which `routes.ts` serves as `GET /api/harnesses`. The reviewer stays on
 `builtin` (FR-G4).
 

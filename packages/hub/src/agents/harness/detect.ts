@@ -15,7 +15,7 @@ const VERSION_TIMEOUT_MS = 5000;
 async function cliVersion(bin: string): Promise<string | null> {
   try {
     const { stdout, stderr } = await run(bin, ['--version'], { timeout: VERSION_TIMEOUT_MS });
-    // pi 0.73 prints its version on stderr, not stdout (verified, decision 0031); either stream
+    // pi 0.73 prints its version on stderr, not stdout (verified, decision 0049); either stream
     // counts, because the question being answered is "did it run", not "what did it say where".
     const line = (stdout.trim() || stderr.trim()).split('\n')[0]?.trim();
     return line || null;

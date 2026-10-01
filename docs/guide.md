@@ -218,9 +218,10 @@ the harness is what reads files, edits them and runs commands.
 - **Built-in loop** — the hub's own. Nothing to install, tools scoped to the project workspace,
   and the only runtime the manager and the milestone reviewer ever use. This is the default.
 - **pi** — [pi.dev](https://pi.dev), an open-source coding agent. The hub runs it as a program in
-  the project's workspace, pointed at the same model the employee would have used anyway, and
-  shows its work in the Activity feed exactly like a built-in run: the same tool calls, the same
-  report, the same "files written" line.
+  the project's workspace and shows its work in the Activity feed exactly like a built-in run: the
+  same tool calls, the same report, the same "files written" line. pi never gets a provider key: it
+  calls models through the hub's own door (`/v1`), with a token made for that one run and revoked
+  when it ends, so it is served by the same models — and the same failover — as everything else.
 
 **Installing pi on the hub host.** The hub only offers a harness it can actually start, so pi has
 to be on the hub machine's `PATH` — installing it in your laptop's terminal does nothing. On the
@@ -247,9 +248,12 @@ else changes: their model override, their standing instructions and their histor
   instructions from somewhere you don't control.
 - The reviewer always runs on the built-in loop, whatever you set. It judges a milestone with
   read-only tools, and that guarantee is worth more than the choice.
-- Spend on a pi run shows in the turn's cost line but not yet on the usage page.
-- If pi isn't installed, or the model endpoint isn't one it can speak to, the employee quietly
-  runs on the built-in loop instead and the job log says why — the work still gets done.
+- Spend on a pi run lands on the usage page (as `door:pi:<project>/<employee>`) and counts toward
+  the daily cloud cap like any other call. While a run is live its token shows in the API tokens
+  list; it disappears when the run ends.
+- If pi isn't installed, or the hub's door isn't reachable yet, the employee runs on the built-in
+  loop instead and the run's session events say why — the work still gets done. pi's own error
+  output lands in the same place.
 
 ## Nodes
 

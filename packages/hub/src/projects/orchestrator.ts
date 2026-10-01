@@ -3,6 +3,7 @@ import { routeFor, type ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
+import type { HarnessDoor } from '../agents/harness/index.js';
 import type { Transcript } from '../agents/transcript.js';
 import { bundleTools, hubTools, spawnSubagentTool, workspaceTools, type Tool } from '../agents/tools.js';
 import { completeMilestoneTool } from '../agents/verify.js';
@@ -46,6 +47,8 @@ export interface ProjectOrchestratorDeps {
   external?: Tool[];
   /** Notified with (memberId, busy) whenever a delegated subagent run starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
+  /** The hub's own door, handed to delegated runs so an external harness can reach models. */
+  door?: HarnessDoor;
   /** Receives every live event of a turn, keyed by the turn's orchestrator session, with its `at`. */
   onEvent?: (sessionId: number, e: TurnEvent, at: number) => void;
 }
@@ -62,7 +65,7 @@ export class ProjectOrchestrator {
   constructor(private deps: ProjectOrchestratorDeps) {}
 
   async turn(opts: { instruction?: string; signal?: AbortSignal } = {}): Promise<Briefing> {
-    const { bundle, loop, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent } = this.deps;
+    const { bundle, loop, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent, door } = this.deps;
     const manifest = await bundle.manifest();
     const before = await bundle.latestBriefing();
     const browserDeps = leases && browser ? { leases, proxy: browser } : undefined;
@@ -71,7 +74,11 @@ export class ProjectOrchestrator {
     // `runSubagent` — a member's own `model` overrides this policy, so the raw policy travels
     // rather than a route already pinned to the project's own choice.
     const orchestratorRoute = routeFor(manifest.modelPolicy, 'orchestrator');
-    const delegation = { loop, subject: manifest.slug, onBusy, ...(manifest.modelPolicy ? { modelPolicy: manifest.modelPolicy } : {}) };
+    const delegation = {
+      loop, subject: manifest.slug, onBusy,
+      ...(manifest.modelPolicy ? { modelPolicy: manifest.modelPolicy } : {}),
+      ...(door ? { door } : {}),
+    };
 
     // The turn's own bracketing events. The loop persists what happens inside it under the session
     // it starts, so these two go through the same store and the same sink once that session exists.

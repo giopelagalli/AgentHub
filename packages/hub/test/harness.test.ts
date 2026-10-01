@@ -7,6 +7,8 @@ import { dump, load } from 'js-yaml';
 import type { HarnessKind, TeamMember, TeamRoster, TurnEvent } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI } from '@agenthub/mocks';
 import { openDb } from '../src/db.js';
+import { ApiTokens } from '../src/door.js';
+import { ADMIN_USER } from '../src/enrollment.js';
 import { NodeRegistry } from '../src/node-registry.js';
 import { ModelGateway } from '../src/gateway.js';
 import { ProjectBundle } from '../src/projects/bundle.js';
@@ -14,12 +16,12 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 import { runSubagent, type Tool, type ToolContext } from '../src/agents/tools.js';
-import { harnessStatus } from '../src/agents/harness/index.js';
+import { harnessStatus, type HarnessDoor } from '../src/agents/harness/index.js';
 import { createHub, type Hub } from '../src/server.js';
 
 /**
  * A stand-in for the pi CLI on PATH. It answers `--version` like the real one and otherwise emits
- * the JSON Lines event stream verified in decision 0031 — `tool_execution_start`/`_end` around
+ * the JSON Lines event stream verified in decision 0049 — `tool_execution_start`/`_end` around
  * each tool call, `message_end` per assistant message — driven by `FAKE_PI_MODE`. It records its
  * argv, cwd and the config pi was pointed at, so a test can assert how the adapter invoked it.
  *
@@ -30,7 +32,7 @@ const { appendFileSync, mkdirSync, readFileSync, writeFileSync } = require('node
 const { dirname, join, resolve } = require('node:path');
 
 const argv = process.argv.slice(2);
-// On stderr, which is where pi 0.73 actually prints it (decision 0031).
+// On stderr, which is where pi 0.73 actually prints it (decision 0049).
 if (argv.includes('--version')) { process.stderr.write('0.73.1-fake\\n'); process.exit(0); }
 
 writeFileSync(process.env.FAKE_PI_LOG, JSON.stringify({
@@ -92,6 +94,10 @@ let mock: MockOpenAI;
 let transcript: Transcript;
 let gateway: ModelGateway;
 let loop: AgentLoop;
+let tokens: ApiTokens;
+let door: HarnessDoor;
+/** Where the hub's door is said to listen; the fake pi only records it, so nothing has to answer. */
+const DOOR_BASE = 'http://127.0.0.1:4555';
 const savedPath = process.env.PATH;
 
 beforeEach(async () => {
@@ -115,6 +121,8 @@ beforeEach(async () => {
   transcript = new Transcript(db);
   gateway = new ModelGateway(registry);
   loop = new AgentLoop({ gateway, transcript });
+  tokens = new ApiTokens(db);
+  door = { base: () => DOOR_BASE, tokens };
 });
 
 afterEach(async () => {
@@ -149,13 +157,17 @@ function context(signal?: AbortSignal): Run {
   return { events, logs, ctx };
 }
 
+/** The latest subagent session's plain events, joined — what the drawer shows besides the feed. */
+const sessionEvents = (): string =>
+  transcript.events(transcript.sessions({ kind: 'subagent' })[0].id).map((e) => e.content).join('\n');
+
 const invocation = async (): Promise<Invocation> => JSON.parse(await readFile(logPath, 'utf8')) as Invocation;
 
 describe('the pi harness', () => {
   it("runs the task in the workspace, maps pi's events and reports what it wrote", async () => {
     process.env.FAKE_PI_MODE = 'write';
     const { events, ctx } = context();
-    const res = await runSubagent({ loop, subject: 'demo' }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+    const res = await runSubagent({ loop, subject: 'demo', door }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
 
     expect(res.outcome).toBe('stop');
     expect(res.text).toBe('Wrote src/app.js and ran the tests.');
@@ -171,14 +183,15 @@ describe('the pi harness', () => {
       expect.objectContaining({ kind: 'tool-call', tool: 'bash' }),
       expect.objectContaining({ kind: 'tool-result', tool: 'bash', ok: true }),
       { kind: 'text', who: 'coder-1', text: 'Wrote src/app.js and ran the tests.' },
-      { kind: 'usage', who: 'coder-1', usd: 0, tokens: 150 },
+      // Priced by the door's ledger row, not here: the worker tier names no model to price.
+      { kind: 'usage', who: 'coder-1', usd: null, tokens: 150 },
       expect.objectContaining({ kind: 'subagent-end', who: 'coder-1', outcome: 'stop' }),
     ]);
   });
 
   it('records the run under its own session so the employee drawer can replay it', async () => {
     const { ctx } = context();
-    const res = await runSubagent({ loop, subject: 'demo' }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+    const res = await runSubagent({ loop, subject: 'demo', door }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
 
     const session = transcript.sessions({ kind: 'subagent' })[0];
     expect(session).toMatchObject({ memberId: 'coder-1', subject: 'demo', outcome: 'stop' });
@@ -189,29 +202,33 @@ describe('the pi harness', () => {
     expect(transcript.turnEvents(session.id).map((e) => e.kind)).toEqual(['text', 'usage']);
   });
 
-  it('points pi at the endpoint the gateway picked, with the key in its environment and not on disk', async () => {
-    await runSubagent({ loop, subject: 'demo' }, context().ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+  it("points pi at the hub's own door, with a per-run token in its environment and not on disk", async () => {
+    await runSubagent({ loop, subject: 'demo', door }, context().ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
 
-    const { argv, cwd, models, githubToken } = await invocation();
+    const { argv, cwd, models, key, githubToken } = await invocation();
     expect(cwd).toBe(await realpath(bundle.workspace));
     expect(argv).toContain('-p');
     expect(argv[argv.indexOf('--mode') + 1]).toBe('json');
-    expect(argv[argv.indexOf('--model') + 1]).toBe('agenthub/mock-model');
+    expect(argv[argv.indexOf('--model') + 1]).toBe('agenthub/agenthub/worker');
     expect(argv[argv.indexOf('--tools') + 1]).toBe('read,edit,write,bash,grep,find,ls');
     expect(argv[argv.indexOf('--thinking') + 1]).toBe('off');
     expect(argv.at(-1)).toBe('Fix boot()');
     const provider = models.providers.agenthub;
-    expect(provider.baseUrl).toBe(`${gateway.pick('worker')!.endpoint.url}/v1`);
+    expect(provider.baseUrl).toBe(`${DOOR_BASE}/v1`);
     expect(provider.api).toBe('openai-completions');
-    expect(provider.models.map((m) => m.id)).toEqual(['mock-model']);
-    // The config names the variable; the secret itself only ever exists in pi's environment.
+    expect(provider.models.map((m) => m.id)).toEqual(['agenthub/worker']);
+    // The config names the variable; the token itself only ever exists in pi's environment.
     expect(provider.apiKey).toBe('AGENTHUB_HARNESS_KEY');
+    expect(key).toMatch(/^ah_[0-9a-f]{48}$/);
+    // Minted for this run and revoked when it ended: the door no longer opens to it.
+    expect(tokens.verify(key!)).toBeNull();
+    expect(tokens.list(ADMIN_USER)).toEqual([]);
     // And the hub's own credentials are stripped from that environment, as for any agent shell.
     expect(githubToken).toBeNull();
   });
 
   it("carries the role and the member's standing instructions into pi's system prompt", async () => {
-    await runSubagent({ loop, subject: 'demo' }, context().ctx, {
+    await runSubagent({ loop, subject: 'demo', door }, context().ctx, {
       role: 'coder', member: member({ instructions: 'Always run the linter.' }), task: 'Fix boot()',
     });
 
@@ -226,15 +243,16 @@ describe('the pi harness', () => {
   it('does not report a write that landed outside the workspace', async () => {
     process.env.FAKE_PI_MODE = 'escape';
     const { logs, ctx } = context();
-    const res = await runSubagent({ loop, subject: 'demo' }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+    const res = await runSubagent({ loop, subject: 'demo', door }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
 
     expect(res.filesWritten).toEqual([]);
     expect(logs.join('\n')).toContain('pi wrote outside the workspace');
+    expect(sessionEvents()).toContain('pi wrote outside the workspace');
   });
 
   it('stops the run at the tool-call budget pi has no limit of its own for', async () => {
     process.env.FAKE_PI_MODE = 'many';
-    const res = await runSubagent({ loop, subject: 'demo' }, context().ctx, { role: 'coder', member: member(), task: 'Churn' });
+    const res = await runSubagent({ loop, subject: 'demo', door }, context().ctx, { role: 'coder', member: member(), task: 'Churn' });
 
     expect(res.outcome).toBe('budget-exhausted');
     expect(res.toolCalls).toBeGreaterThanOrEqual(SUBAGENT_TOOL_CALLS);
@@ -245,7 +263,7 @@ describe('the pi harness', () => {
   it('kills the process group when the turn is aborted', async () => {
     process.env.FAKE_PI_MODE = 'hang';
     const controller = new AbortController();
-    const running = runSubagent({ loop, subject: 'demo' }, context(controller.signal).ctx, {
+    const running = runSubagent({ loop, subject: 'demo', door }, context(controller.signal).ctx, {
       role: 'coder', member: member(), task: 'Wait',
     });
     // Abort once pi is actually up, so the kill has a live process group to land on.
@@ -260,18 +278,30 @@ describe('the pi harness', () => {
   it('reports a pi that fails to run as an error rather than a silent empty report', async () => {
     process.env.FAKE_PI_MODE = 'fail';
     const { logs, ctx } = context();
-    const res = await runSubagent({ loop, subject: 'demo' }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+    const res = await runSubagent({ loop, subject: 'demo', door }, ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
 
     expect(res.outcome).toBe('error');
     expect(res.text).toContain('the pi harness ended without a report');
     expect(logs.join('\n')).toContain('pi: no such model');
+    // `ctx.log` is a no-op in production; the session's events are where pi's stderr survives.
+    expect(sessionEvents()).toContain('pi: no such model');
+  });
+
+  it('ends the session as an error when setting the run up fails', async () => {
+    const broken = { base: () => DOOR_BASE, tokens: { mint: () => { throw new Error('database is locked'); } } as unknown as ApiTokens };
+    const res = await runSubagent({ loop, subject: 'demo', door: broken }, context().ctx, { role: 'coder', member: member(), task: 'Fix boot()' });
+
+    expect(res.outcome).toBe('error');
+    expect(res.text).toContain('database is locked');
+    expect(existsSync(logPath)).toBe(false);
+    expect(transcript.sessions({ kind: 'subagent' })[0].outcome).toBe('error');
   });
 });
 
 describe('choosing a harness', () => {
   const runFor = async (m: TeamMember, extra: { role?: 'coder' | 'reviewer'; tools?: Tool[] } = {}): Promise<Run> => {
     const run = context();
-    await runSubagent({ loop, subject: 'demo' }, run.ctx, { role: 'coder', task: 'Fix boot()', member: m, ...extra });
+    await runSubagent({ loop, subject: 'demo', door }, run.ctx, { role: 'coder', task: 'Fix boot()', member: m, ...extra });
     return run;
   };
 
@@ -307,6 +337,26 @@ describe('choosing a harness', () => {
     const { logs } = await runFor(member());
     expect(existsSync(logPath)).toBe(false);
     expect(logs.join('\n')).toContain('pi is not installed on this host');
+    expect(sessionEvents()).toContain('pi is not installed on this host; running on the built-in loop');
+  });
+
+  it("refuses pi, saying why, when the hub's door is not available", async () => {
+    for (const unavailable of [undefined, { base: () => null, tokens }]) {
+      const run = context();
+      await runSubagent({ loop, subject: 'demo', ...(unavailable ? { door: unavailable } : {}) }, run.ctx, {
+        role: 'coder', task: 'Fix boot()', member: member(),
+      });
+      expect(existsSync(logPath)).toBe(false);
+      expect(run.logs.join('\n')).toContain("the hub's door is not available to pi");
+      expect(sessionEvents()).toContain("the hub's door is not available to pi; running on the built-in loop");
+    }
+  });
+
+  it('runs on the built-in loop when the manifest names a harness that does not exist', async () => {
+    await setProjectHarness('bogus' as HarnessKind);
+    await runFor(member({ harness: undefined }));
+    expect(existsSync(logPath)).toBe(false);
+    expect(mock.requests.length).toBeGreaterThan(0);
   });
 });
 

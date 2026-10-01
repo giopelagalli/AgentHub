@@ -1,4 +1,5 @@
 import type { HarnessKind, TeamMember, TurnEvent } from '@agenthub/shared';
+import type { ApiTokens } from '../../door.js';
 import type { Route } from '../../gateway.js';
 import type { SubagentRole } from '../../projects/prompts.js';
 import type { SessionOutcome } from '../transcript.js';
@@ -20,21 +21,15 @@ export interface Harness {
 export type HarnessToolPolicy = 'workspace' | 'read-only';
 
 /**
- * A concrete model endpoint an external harness is pointed at — resolved from the same `Route` the
- * built-in loop would have used, because a subprocess cannot call `gateway.chat` itself.
- *
- * This is the interim shape: once the hub's own OpenAI-compatible door exists, every harness gets
- * the door's url with a short-lived token instead, and the endpoint below stops being resolved per
- * run (decision 0032).
+ * The hub's own OpenAI-compatible door (`door.ts`), as an external harness reaches it: the base the
+ * hub is listening on and the token store a per-run `agent` token is minted from (decision 0050).
+ * A subprocess cannot call `gateway.chat`, so it calls the door, which does — and so gets failover,
+ * the usage ledger, the cloud cap and `maxStreams` like every other model call.
  */
-export interface HarnessEndpoint {
-  /** The OpenAI-compatible base the gateway itself posts to, without the `/v1` suffix. */
-  url: string;
-  model: string;
-  /** Name of the env var holding the bearer token; absent when the endpoint needs none. */
-  apiKeyEnv?: string;
-  /** What the hub prices this endpoint's tokens as; never `anthropic`, which pi cannot speak. */
-  provider: 'openai' | 'fireworks';
+export interface HarnessDoor {
+  /** `http://127.0.0.1:<port>`, without `/v1`; null until the hub is listening. */
+  base: () => string | null;
+  tokens: ApiTokens;
 }
 
 export interface HarnessTask {
@@ -49,8 +44,6 @@ export interface HarnessTask {
   member?: TeamMember;
   /** The gateway preference for this run — what `builtin` hands to `loop.run`. */
   route?: Route;
-  /** Where an external harness sends its model calls; absent when none could be resolved. */
-  endpoint?: HarnessEndpoint;
   tools: HarnessToolPolicy;
   budget: HarnessBudget;
   signal?: AbortSignal;
@@ -96,4 +89,4 @@ export { builtinHarness } from './builtin.js';
 export { piHarness } from './pi.js';
 export { harnessStatus, piBinary } from './detect.js';
 export { harnessRoutes } from './routes.js';
-export { endpointFor, selectHarness, type HarnessSelection, type HarnessSelectOptions } from './select.js';
+export { selectHarness, type HarnessSelection, type HarnessSelectOptions } from './select.js';

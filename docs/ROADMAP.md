@@ -54,8 +54,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 
 - The pi spike and the `Harness` interface: pi verified drivable headlessly against a custom
   OpenAI endpoint, `agents/harness/` with `builtin` (unchanged) and `pi`, a **Harness** select per
-  employee offered only when the CLI is on the host, `GET /api/harnesses` (FR-G1, G2, G4;
-  0031, 0032).
+  employee offered only when the CLI is on the host, `GET /api/harnesses`; pi calls models through
+  the hub's own door with a per-run token, so its spend is in the ledger (FR-G1, G2, G4; 0049,
+  0050).
 
 ## In progress
 

@@ -1,14 +1,16 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { TokenUsage, TurnEvent } from '@agenthub/shared';
 import { secretsStripped } from '@agenthub/shared/shell';
+import type { ApiTokens, MintedApiToken } from '../../door.js';
+import { ADMIN_USER } from '../../enrollment.js';
 import { costUsd, priceFor } from '../../providers/fireworks.js';
 import { piSubagentPrompt } from '../../projects/prompts.js';
 import { clip } from '../loop.js';
 import type { SessionOutcome, Transcript } from '../transcript.js';
-import type { Harness, HarnessContext, HarnessEndpoint, HarnessResult, HarnessTask, HarnessToolPolicy } from './index.js';
+import type { Harness, HarnessContext, HarnessResult, HarnessTask, HarnessToolPolicy } from './index.js';
 
 /** Same caps the built-in loop puts on a live event: a glance, not the transcript. */
 const EVENT_TEXT_LIMIT = 300;
@@ -20,12 +22,18 @@ const KILL_ESCALATION_MS = 5000;
 
 /** The provider name pi is told to use; only ever defined in the per-run config this adapter writes. */
 const PROVIDER = 'agenthub';
-/** The env var the per-run config names for the endpoint's bearer; the value is passed in pi's env. */
+/** The env var the per-run config names for the door's bearer; the value is passed in pi's env. */
 const API_KEY_ENV = 'AGENTHUB_HARNESS_KEY';
+/** The door's tier name for the worker: routing stays the gateway's call, as for any door client. */
+const WORKER_MODEL = 'agenthub/worker';
+/** How much of one stderr line reaches the session's event log. */
+const STDERR_LINE_LIMIT = 200;
+/** The longest token label the door accepts (`MAX_LABEL_LENGTH`). */
+const TOKEN_LABEL_LIMIT = 64;
 
 /**
  * pi's built-in tools, by policy. `bash` is what makes the workspace-writing set useful and is also
- * the reason pi cannot be contained to the workspace (decision 0031): the read-only set exists for
+ * the reason pi cannot be contained to the workspace (decision 0049): the read-only set exists for
  * the day a reviewer may run here, and is the set FR-G4 asks for.
  */
 const TOOLS: Record<HarnessToolPolicy, string> = {
@@ -39,12 +47,14 @@ export interface PiHarnessDeps {
   /** The pi executable, from `piBinary()`. */
   bin: string;
   transcript: Transcript;
+  /** The hub's door, already resolved to the base it is listening on (decision 0050). */
+  door: { base: string; tokens: ApiTokens };
   onBusy?: (busy: boolean) => void;
 }
 
 // --- pi's JSON event stream (`--mode json`) ----------------------------------
 // Only the fields this adapter reads. The stream is JSON Lines on stdout, LF-delimited, starting
-// with a `session` header; see pi's docs/json.md and the shapes verified in decision 0031.
+// with a `session` header; see pi's docs/json.md and the shapes verified in decision 0049.
 
 interface PiTextBlock { type: 'text'; text: string }
 interface PiContentBlock { type: string; text?: string }
@@ -71,25 +81,25 @@ const resultText = (blocks: PiContentBlock[] | undefined): string =>
 
 /**
  * The models.json pi reads out of `PI_CODING_AGENT_DIR`: one provider, one model, pointed at the
- * endpoint the gateway would have used. `apiKey` names an environment variable rather than holding
- * the secret, so the token never lands on disk — pi resolves the name against its own environment.
+ * hub's own door. `apiKey` names an environment variable rather than holding the token, so the
+ * token never lands on disk — pi resolves the name against its own environment.
  *
- * The `compat` flags are what an OpenAI-compatible server that is not OpenAI needs: vLLM and
- * llama.cpp reject the `developer` role and `reasoning_effort` outright.
+ * The `compat` flags keep pi to the plainest OpenAI wire shape: the door maps `developer` to
+ * `system` itself, and forwards no `reasoning_effort` to whichever endpoint serves the call.
  */
-function modelsConfig(endpoint: HarnessEndpoint): string {
+function modelsConfig(base: string, model: string): string {
   return JSON.stringify({
     providers: {
       [PROVIDER]: {
-        baseUrl: `${endpoint.url}/v1`,
+        baseUrl: `${base}/v1`,
         api: 'openai-completions',
         apiKey: API_KEY_ENV,
         compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
         // Prices stay zero: the hub prices the tokens itself from its own table, so pi's numbers
         // would only be a second, disagreeing answer.
         models: [{
-          id: endpoint.model,
-          name: endpoint.model,
+          id: model,
+          name: model,
           reasoning: false,
           input: ['text'],
           contextWindow: 128_000,
@@ -123,8 +133,6 @@ export function piHarness(deps: PiHarnessDeps): Harness {
   return {
     kind: 'pi',
     async run(task: HarnessTask, ctx: HarnessContext): Promise<HarnessResult> {
-      const { endpoint } = task;
-      if (!endpoint) throw new Error('pi harness needs a model endpoint');
       const system = piSubagentPrompt(task.role, task.instructions);
       const sessionId = deps.transcript.startSession(
         'subagent', ctx.subject, 'worker', task.member ? { memberId: task.member.id } : {},
@@ -138,11 +146,32 @@ export function piHarness(deps: PiHarnessDeps): Harness {
       };
       deps.transcript.append(sessionId, { role: 'system', content: system });
       deps.transcript.append(sessionId, { role: 'user', content: task.task });
+      // `ctx.log` goes nowhere in production, so what is worth reading later goes to the session too.
+      const record = (line: string): void => {
+        ctx.log(line);
+        deps.transcript.appendEvent(sessionId, line);
+      };
+      // The member's concrete model when the route names one, else the door's worker tier.
+      const model = task.route?.model ?? WORKER_MODEL;
 
-      const configDir = await mkdtemp(join(tmpdir(), 'agenthub-pi-'));
+      let token: MintedApiToken | undefined;
+      let configDir: string | undefined;
       try {
-        await writeFile(join(configDir, 'models.json'), modelsConfig(endpoint), 'utf8');
-        const run = await spawnPi(deps.bin, configDir, system, task, ctx, emit);
+        let workspace: string;
+        try {
+          // One `agent` token per run, revoked below: it is the only credential pi is given.
+          token = deps.door.tokens.mint(ADMIN_USER, 'agent', clip(`pi:${ctx.subject}/${ctx.who}`, TOKEN_LABEL_LIMIT));
+          configDir = await mkdtemp(join(tmpdir(), 'agenthub-pi-'));
+          await writeFile(join(configDir, 'models.json'), modelsConfig(deps.door.base, model), 'utf8');
+          // Resolved once, so a workspace behind a symlink (macOS's /var) still contains pi's paths.
+          workspace = await realpath(task.workspace);
+        } catch (err) {
+          const why = `the pi harness could not start: ${(err as Error).message}`;
+          deps.transcript.appendEvent(sessionId, why);
+          deps.transcript.endSession(sessionId, 'error');
+          return { report: why, filesWritten: [], outcome: 'error', sessionId, toolCalls: 0 };
+        }
+        const run = await spawnPi(deps.bin, { configDir, workspace, model, key: token.token }, system, task, ctx, emit, record);
         const report = run.report.trim();
         if (report) deps.transcript.append(sessionId, { role: 'assistant', content: report });
         if (run.note) deps.transcript.appendEvent(sessionId, run.note);
@@ -157,7 +186,8 @@ export function piHarness(deps: PiHarnessDeps): Harness {
         };
       } finally {
         if (task.member) deps.onBusy?.(false);
-        await rm(configDir, { recursive: true, force: true });
+        if (token) deps.door.tokens.revoke(token.id, ADMIN_USER);
+        if (configDir) await rm(configDir, { recursive: true, force: true });
       }
     },
   };
@@ -178,12 +208,12 @@ interface PiRun {
  * `error` outcome with the reason in the report, the same as a gateway failure is for the loop.
  */
 function spawnPi(
-  bin: string, configDir: string, system: string,
-  task: HarnessTask, ctx: HarnessContext, emit: (e: TurnEvent) => void,
+  bin: string, setup: { configDir: string; workspace: string; model: string; key: string }, system: string,
+  task: HarnessTask, ctx: HarnessContext, emit: (e: TurnEvent) => void, record: (line: string) => void,
 ): Promise<PiRun> {
   const args = [
     '-p', '--mode', 'json',
-    '--model', `${PROVIDER}/${task.endpoint!.model}`,
+    '--model', `${PROVIDER}/${setup.model}`,
     '--append-system-prompt', system,
     // Thinking is off for workers (decision 0008), and the host's own pi extensions, skills and
     // prompt templates must not leak into a project's run.
@@ -192,16 +222,18 @@ function spawnPi(
     '--tools', TOOLS[task.tools],
     task.task,
   ];
-  // The endpoint's bearer is the one credential added back to the stripped environment, under the
+  // The run's door token is the one credential added back to the stripped environment, under the
   // name the per-run models.json points at — never on the command line, where it would be visible
   // in the workspace's own process list.
-  const key = task.endpoint!.apiKeyEnv ? process.env[task.endpoint!.apiKeyEnv] : undefined;
   const env: NodeJS.ProcessEnv = {
     ...secretsStripped(),
-    PI_CODING_AGENT_DIR: configDir,
+    PI_CODING_AGENT_DIR: setup.configDir,
     PI_OFFLINE: '1',
-    ...(key ? { [API_KEY_ENV]: key } : {}),
+    [API_KEY_ENV]: setup.key,
   };
+  // Only a concrete cloud model can be priced here; for the worker tier the door alone knows what
+  // served each call, and its ledger row is the priced record.
+  const price = task.route?.model && task.route.provider ? priceFor(task.route.provider, task.route.model) : null;
 
   return new Promise<PiRun>((settle) => {
     // detached: true makes pi its own process-group leader, so an abort can take down the whole
@@ -281,9 +313,9 @@ function spawnPi(
           summary: clip(text, EVENT_SUMMARY_LIMIT), ms: started ? Date.now() - started.at : 0,
         });
         if (!e.isError && WRITING_TOOLS.has(tool)) {
-          const rel = insideWorkspace(task.workspace, started?.args.path);
+          const rel = insideWorkspace(setup.workspace, started?.args.path);
           if (rel) { if (!filesWritten.includes(rel)) filesWritten.push(rel); }
-          else if (started) ctx.log(`pi wrote outside the workspace: ${String(started.args.path)}`);
+          else if (started) record(`pi wrote outside the workspace: ${clip(String(started.args.path), STDERR_LINE_LIMIT)}`);
         }
         return;
       }
@@ -300,17 +332,17 @@ function spawnPi(
         if (usage) {
           emit({
             kind: 'usage', who: ctx.who,
-            usd: costUsd(priceFor(task.endpoint!.provider, task.endpoint!.model), usage),
+            usd: costUsd(price, usage),
             tokens: usage.promptTokens + usage.completionTokens,
           });
         }
       }
     };
 
-    const lines = jsonLines(onEvent, (bad) => ctx.log(`pi: unparsable event line: ${clip(bad, 200)}`));
+    const lines = jsonLines(onEvent, (bad) => record(`pi: unparsable event line: ${clip(bad, STDERR_LINE_LIMIT)}`));
     child.stdout.on('data', (chunk: Buffer) => lines.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line.trim()) ctx.log(`pi: ${line.trim()}`);
+      for (const line of chunk.toString().split('\n')) if (line.trim()) record(`pi: ${clip(line.trim(), STDERR_LINE_LIMIT)}`);
     });
 
     const finish = (outcome: SessionOutcome, fallbackReport = ''): void => {

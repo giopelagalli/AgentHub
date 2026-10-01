@@ -5,6 +5,7 @@ import type { ModelGateway } from '../gateway.js';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
 import type { AgentLoop } from '../agents/loop.js';
+import type { HarnessDoor } from '../agents/harness/index.js';
 import type { Transcript } from '../agents/transcript.js';
 import type { Tool } from '../agents/tools.js';
 import type { LeaseManager } from '../browser/lease.js';
@@ -41,6 +42,8 @@ export interface ProjectServiceDeps {
   browser?: BrowserProxy;
   /** The configured external tools (grok/gemini/search), minus anything outward. */
   external?: Tool[];
+  /** The hub's own door, which an employee on an external harness (pi) calls models through. */
+  door?: HarnessDoor;
   /** Notified with (slug, memberId, busy) whenever a project's delegated subagent run starts or ends. */
   onBusy?: (slug: string, memberId: string, busy: boolean) => void;
   /** Receives every live event of every project's turns, keyed by slug and orchestrator session. */
@@ -455,9 +458,10 @@ export class ProjectService {
   private async orchestratorFor(slug: string): Promise<ProjectOrchestrator> {
     const cached = this.orchestrators.get(slug);
     if (cached) return cached;
-    const { loop, gateway, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent } = this.deps;
+    const { loop, gateway, queue, registry, transcript, github, leases, browser, external, onBusy, onEvent, door } = this.deps;
     const orchestrator = new ProjectOrchestrator({
       bundle: await this.get(slug), loop, gateway, queue, registry, transcript, github, leases, browser, external,
+      ...(door ? { door } : {}),
       ...(onBusy ? { onBusy: (memberId: string, busy: boolean) => onBusy(slug, memberId, busy) } : {}),
       onEvent: (sessionId, e, at) => {
         // Turns are serialized per slug, so the session a turn-start names is the one running now.

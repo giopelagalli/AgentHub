@@ -16,6 +16,8 @@ export interface BuiltinHarnessDeps {
   /** The bundle a subagent's tools are scoped to. */
   bundle?: ProjectBundle;
   onBusy?: (busy: boolean) => void;
+  /** Why this run is here rather than on the harness that was asked for; kept in its session events. */
+  note?: string;
 }
 
 /**
@@ -46,6 +48,8 @@ export function builtinHarness(deps: BuiltinHarnessDeps): Harness {
         onLog: ctx.log,
         onEvent: ctx.onEvent,
       });
+      // `ctx.log` goes nowhere in production, so the session is where a fallback's reason survives.
+      if (deps.note) deps.loop.transcript.appendEvent(res.sessionId, deps.note);
       return {
         report: res.text,
         filesWritten: written,

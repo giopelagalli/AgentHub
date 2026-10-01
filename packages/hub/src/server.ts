@@ -12,7 +12,7 @@ import { MILESTONE_STATUSES, PRIORITY_RANK, parseGithubSource, videoPayloadFrom 
 import { Auth, LoginThrottle, daemonRouteSubject, originOf, routeAccess, sameOriginWrite, type AuthOptions, type NodeSubject } from './auth.js';
 import { ControlSwitch, SwitchError, type SyncFn } from './control-switch.js';
 import { openDb, type Db } from './db.js';
-import { door, openAiError } from './door.js';
+import { ApiTokens, door, openAiError } from './door.js';
 import {
   ADMIN_USER, EnrollmentTokens, NODE_NAME_RE, hashToken, hubUrlFrom, installCommand, newNodeToken,
 } from './enrollment.js';
@@ -239,6 +239,11 @@ export interface HubOptions {
    * wants and what a hub that was never configured gets.
    */
   preview?: { port?: number; host?: string; publicBase?: string };
+  /**
+   * The base an external harness reaches this hub's door at (`http://127.0.0.1:<port>`). Omitted, it
+   * is read off the listening server; a test that never listens injects one (decision 0050).
+   */
+  selfBase?: string;
   /** Omitted, the hub is open — every route answers unauthenticated, as it did before Phase 6. */
   auth?: AuthOptions;
   /** Keys for the three sanctioned external tools; each one missing simply removes its tool. */
@@ -439,9 +444,21 @@ export function createHub(opts: HubOptions = {}): Hub {
     ...githubSeams,
     ...(githubChain.length ? { credentials: new ChainedCredentials(githubChain) } : {}),
   });
+  // The door an employee on pi calls models through (0050): loopback to this hub's own listener, so
+  // pi's calls take the same gateway, ledger and cloud cap as everything else. Read at run time,
+  // since the port is only known once `listen` has bound it.
+  const selfBase = (): string | null => {
+    if (opts.selfBase) return opts.selfBase;
+    const address = app.server.address();
+    if (!address || typeof address !== 'object' || !address.port) return null;
+    const wildcard = address.address === '0.0.0.0' || address.address === '::';
+    const host = wildcard ? '127.0.0.1' : address.family === 'IPv6' ? `[${address.address}]` : address.address;
+    return `http://${host}:${address.port}`;
+  };
   const projects = new ProjectService({
     root: opts.projectsRoot ?? 'data/projects',
     loop, gateway, queue, registry, transcript, github, leases, browser, external: projectExternal,
+    door: { base: selfBase, tokens: new ApiTokens(db) },
     // `broadcast` isn't assigned until `registerWs` runs further down, but this only ever fires from
     // an orchestrator turn — always well after that — so the late-bound closure is safe.
     onBusy: (slug, who, busy) => broadcast({ type: 'project-busy', slug, who, busy }),

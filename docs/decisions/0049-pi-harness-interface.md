@@ -1,4 +1,4 @@
-# 0031 — pi's programmatic interface, verified; a `Harness` interface with pi behind an opt-in
+# 0049 — pi's programmatic interface, verified; a `Harness` interface with pi behind an opt-in
 Date: 2026-09-24
 Decided by: senior-coder
 Status: accepted
@@ -64,9 +64,9 @@ Everything below was observed, not read off a README:
 
 ## Options
 - A — do not adopt pi: the spike says it can be driven, so there is no reason to.
-- B — adopt pi as the default for every employee now: its file tools are uncontained and its
-  cost is invisible to the ledger; making it the default before the hub's own door exists would
-  quietly widen both. Why not.
+- B — adopt pi as the default for every employee now: its file tools are uncontained and (until
+  0050 put it behind the hub's door) its cost was invisible to the ledger; making it the default
+  would quietly widen both. Why not.
 - C (chosen) — a `Harness` interface with `builtin` unchanged as the default, `pi` behind an
   explicit per-employee (or per-project) opt-in, and every reason the opt-in cannot be honoured
   falling back to `builtin` with a line in the job log.

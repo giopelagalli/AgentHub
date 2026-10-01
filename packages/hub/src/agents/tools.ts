@@ -13,6 +13,7 @@ import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
 import { HARNESS_WALL_CLOCK_MS, SUBAGENT_TOOL_CALLS } from './budgets.js';
+import type { HarnessDoor } from './harness/index.js';
 import { selectHarness } from './harness/select.js';
 import { clip, type AgentLoop, type AgentRunResult } from './loop.js';
 import { routeFor } from '../gateway.js';
@@ -852,6 +853,8 @@ export interface SubagentDeps {
   modelPolicy?: ModelPolicy;
   /** Notified with (memberId, busy) whenever a subagent run for a roster member starts or ends. */
   onBusy?: (memberId: string, busy: boolean) => void;
+  /** The hub's own door, which an external harness calls models through; absent, pi is refused. */
+  door?: HarnessDoor;
 }
 
 export interface SubagentRun {
@@ -889,7 +892,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
   const route = routeFor(member?.model ?? deps.modelPolicy, 'worker');
   // Which runtime executes the task (FR-G1). `builtin` is this function's own behaviour, unchanged;
   // anything else runs the same assignment elsewhere and reports back through the same events.
-  const { harness, endpoint } = await selectHarness({
+  const { harness } = await selectHarness({
     loop: deps.loop,
     extras: run.extras ?? [],
     pinnedTools: !!run.tools,
@@ -898,6 +901,7 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
     ...(ctx.bundle ? { bundle: ctx.bundle } : {}),
     ...(member ? { member, onBusy: (busy: boolean) => deps.onBusy?.(member.id, busy) } : {}),
     ...(route ? { route } : {}),
+    ...(deps.door ? { door: deps.door } : {}),
   });
   const res = await harness.run({
     workspace: ctx.bundle?.workspace ?? process.cwd(),
@@ -910,7 +914,6 @@ export async function runSubagent(deps: SubagentDeps, ctx: ToolContext, run: Sub
     ...(member?.instructions ? { instructions: member.instructions } : {}),
     ...(member ? { member } : {}),
     ...(route ? { route } : {}),
-    ...(endpoint ? { endpoint } : {}),
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   }, { who, subject: deps.subject, log: ctx.log, ...(ctx.onEvent ? { onEvent: ctx.onEvent } : {}) });
   ctx.onEvent?.({ kind: 'subagent-end', who, outcome: res.outcome, ms: Date.now() - startedAt });

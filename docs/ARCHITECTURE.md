@@ -36,20 +36,30 @@ and the mocks, and the hub already depends on both.
 on a control node), heartbeats, claims jobs, runs them. Retries registration at startup;
 exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN` (0016).
 
-**`packages/ui`** — Vite + vanilla TypeScript, no framework. A store fed by `/api/state` and
-the socket; pages (projects, computer, cluster, allocation, help); sheets for the PRD, roadmap,
-docs, activity, code, the terminal and the preview; a drawer per agent with a live *Now* feed and a
-chat. Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`, `code/model.ts`, and the
-terminal's frame helpers) are separated from DOM code so they are testable without a browser — the
-UI's tests run in node, and nothing that needs a DOM is tested at all. No framework, but no longer
-no runtime dependencies: CodeMirror is the Code sheet's and is loaded only when that sheet opens
-(0043); `@xterm/xterm` and `@xterm/addon-fit` are the terminal's, and they are imported eagerly,
-which is what makes the bundle 460 kB rather than 123 kB (0041, and the lazy-load follow-up on
-ROADMAP).
+**`packages/ui`** — Vite + vanilla TypeScript, no framework (redesign: 0048, 0053). A store fed by
+`/api/state` and the socket, and a window of three places: a navigation-only sidebar (`rail.ts`:
+projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
+(`toolbar.ts`: title, centred segmented control, actions). The **project page**
+(`pages/projects.ts`) holds five tabs — Overview (`pages/project/overview.ts`), Plan (the PRD and
+roadmap views), Docs, Code (Files · Terminal · Preview) and Activity — mounted into its body; a
+document's chat opens in a pane beside it, a team member's drawer (`panels/chat.ts`) floats over
+it, and the project's levers live in a settings sheet (`pages/project/settings.ts`, controls in
+`pages/project/controls.ts`). **Machines** (`pages/machines.ts`) is Nodes, Browser, Queue and
+Access over the old `cluster`/`computer`/`allocation` mounts, which keep their page ids so the
+store and the browser subscription are unchanged. Styles are a token file (`styles/tokens.css`,
+light and dark, `data-theme` override) and one stylesheet per area in `styles/`, over `app.css`
+— the component styles that predate the redesign, written against token aliases. Icons are an
+inline SVG set (`icons.ts`). Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`,
+`overview.ts`, `autorun.ts`, `code/model.ts`, and the terminal's frame helpers) are separated
+from DOM code and tested in node; the docs shell is the one DOM-tested part (happy-dom, 0052).
+CodeMirror is the Code tab's and is loaded only when Files opens (0043); its chrome uses the
+tokens and its syntax palette follows the scheme. `@xterm/xterm` and `@xterm/addon-fit` are the
+terminal's and are imported eagerly (0041, and the lazy-load follow-up on ROADMAP). Bundle after
+the redesign: 535 kB JS (157 kB gzip) and 84 kB CSS (17 kB gzip), plus the 565 kB editor chunk.
 
 **`packages/ui/src/panels/docshell.ts`** — the docs shell (0047): one three-column documentation
 layout (grouped, filterable page rail; breadcrumb, title and pager; *On this page*), used by the
-Docs sheet, the PRD sheet and the Help page. `mountDocShell(host, options)` returns a
+Docs tab, the PRD in Plan, and the Help page. `mountDocShell(host, options)` returns a
 `DocShellHandle` (`root`, `update`, `navigate`, `destroy`). In `page` mode the pages are separate
 documents and the rail swaps between them (Docs, the PRD read section by section); in `scroll`
 mode they are the `##` sections of one document on screen at once, and the rail scrolls to them

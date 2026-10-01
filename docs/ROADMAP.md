@@ -61,6 +61,12 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   the hub's own door with a per-run token, so its spend is in the ledger (FR-G1, G2, G4; 0049,
   0050).
 
+- The UI redesign (0048, 0053; brief in `docs/design/redesign-2026-10.md`): light and dark
+  themes from one token set, a navigation-only sidebar, a toolbar per page with one primary,
+  five project tabs (Overview · Plan · Docs · Code · Activity), a settings sheet for the project's
+  levers, Machines (Nodes · Browser · Queue · Access) in place of Cluster/Computer/Allocation, a
+  three-choice New project sheet, and the docs shell (0047, 0052) for the PRD, Docs and Help.
+
 ## In progress
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.

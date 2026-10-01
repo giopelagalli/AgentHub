@@ -372,7 +372,9 @@ export function mountCode(host: HTMLElement, ctx: ViewContext): () => void {
   renderMap();
   loadTree();
   loadMap();
-  openGuide();
+  // Beside the files where there is room for both; on a narrow window the pane would cover them,
+  // so there it waits to be asked for.
+  if (window.matchMedia?.('(min-width: 1001px)').matches ?? true) openGuide();
 
   return () => {
     alive = false;

@@ -68,3 +68,28 @@ simple Apple UI feel that is intuitive … new and modern." Decision record: 004
 ## Non-goals
 
 No feature removed. No framework. No new runtime dependency for the redesign itself.
+
+## Addendum — where the build departs from this brief (designer, 2026-10-01; decision 0053)
+
+- **Plan** shows the PRD (*Requirements*) and the **Roadmap** one at a time under a sub-switch,
+  not stacked: the docs shell needs the width. The PRD's audit shows only the sections that need
+  work, as one line.
+- **Settings** is reached from `⋯ → Settings…` (with a gear icon there) rather than a separate gear
+  in the toolbar, which keeps the toolbar to Chat, the primary and `⋯`. It is one grouped column,
+  not a two-pane window; on a phone it is a bottom sheet.
+- **The Overview** adds two things the brief does not list: an *In this project* list (the old
+  cards' one-line state for Requirements, Roadmap, Docs, Code and Preview, each a way into its tab,
+  plus the 24-hour cost), and an *Above the team* line for the Assistant and the Master — they were
+  in the org chart and had no other home. A running turn leads the page with who is doing what.
+- **New project** asks the name and short name together on one step, then the content — two steps
+  after the choice, not one field per step.
+- **Status dots** add a fifth state: a hollow ring for *paused*. Amber is `blocked`; red is "the
+  last turn failed", known for any project whose turns have reached the browser.
+- **Machines** has four sections: *Nodes* (with the cloud spend under the heading), *Browser*,
+  *Queue* (the running order with each project's priority, then the jobs) and *Access* (API tokens
+  and GitHub).
+- **The terminal** stays dark in the light theme.
+- **Code → Files** opens the Guide beside the files only where there is room (over 1000px); on a
+  narrow window it waits for *Ask the guide*.
+- **Deep links**: none existed before the redesign and none were added; the tab and sub-tab you
+  were on are remembered for the session, across projects.

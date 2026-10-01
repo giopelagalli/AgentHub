@@ -16,7 +16,10 @@ import { note, type ViewContext } from './parts.js';
  */
 
 /** Shown in the sheet when xterm's chunk did not load — there is no shell to open without it. */
-const TERMINAL_MISSING = 'The terminal could not be loaded. Reload the page and try again.';
+export const TERMINAL_MISSING = 'The terminal could not be loaded. Reload the page and try again.';
+
+/** Shown when the chunk loaded but the terminal could not start. */
+const TERMINAL_FAILED = 'The terminal could not be started. Reload the page and try again.';
 
 /** The project's terminal socket, from the page's own origin so the session cookie goes with it. */
 export function terminalUrl(loc: { protocol: string; host: string }, slug: string): string {
@@ -82,14 +85,22 @@ export function mountTerminal(host: HTMLElement, ctx: ViewContext): () => void {
   loading.appendChild(note('Loading the terminal…'));
   host.appendChild(loading);
 
-  void import('./terminal-mount.js').then((module) => {
+  /** A mount that throws leaves no half-built `.term` root: the loading box goes back, saying so. */
+  const onLoaded = (module: typeof import('./terminal-mount.js')): void => {
     if (!alive) return;
     loading.remove();
-    dispose = module.mountTerminalScreen(host, ctx);
-  }).catch(() => {
+    try {
+      dispose = module.mountTerminalScreen(host, ctx);
+    } catch {
+      host.replaceChildren(loading);
+      loading.replaceChildren(note(TERMINAL_FAILED, 'error'));
+    }
+  };
+  const onFailed = (): void => {
     if (!alive) return;
     loading.replaceChildren(note(TERMINAL_MISSING, 'error'));
-  });
+  };
+  void import('./terminal-mount.js').then(onLoaded, onFailed);
 
   return () => {
     alive = false;

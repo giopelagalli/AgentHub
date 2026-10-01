@@ -56,9 +56,13 @@ export function mountPrd(host: HTMLElement, ctx: ViewContext, seeded: string[] =
    * more — it sits beside the title, where the shell puts a badge.
    */
   const completeness = (strip: AuditStrip): HTMLElement | null => {
-    if (!strip.chips.length) return null;
+    // The sections the audit is happy with are already the shell's sidebar; only the ones it is
+    // not happy with earn a line of their own.
+    const short = strip.chips.filter((chip) => chip.state !== 'filled');
+    if (!short.length) return null;
     const row = el('div', 'chips');
-    for (const chip of strip.chips) {
+    row.appendChild(el('span', 'chips__label', short.length === 1 ? 'One section needs work:' : `${short.length} sections need work:`));
+    for (const chip of short) {
       const node = button(chip.heading, chip.className);
       node.title = chip.hint;
       node.addEventListener('click', () => {

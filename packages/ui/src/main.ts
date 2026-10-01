@@ -4,6 +4,8 @@ import './app.css';
 import './styles/shell.css';
 import './styles/project.css';
 import './styles/sheets.css';
+import './styles/docs.css';
+import './styles/workspace.css';
 import { githubReturn, withoutGithubParam } from './github.js';
 import { connect } from './net.js';
 import { mountHelp } from './pages/help.js';

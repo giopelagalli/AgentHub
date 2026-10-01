@@ -8,6 +8,14 @@
 export const MILESTONE_STATUSES = ['planned', 'in-progress', 'done', 'blocked'] as const;
 export type MilestoneStatus = (typeof MILESTONE_STATUSES)[number];
 
+/** A status as the roadmap's checklist names it. */
+export const STATUS_WORDS: Record<MilestoneStatus, string> = {
+  planned: 'Planned',
+  'in-progress': 'In progress',
+  done: 'Done',
+  blocked: 'Blocked',
+};
+
 /** What the last turn that touched a milestone found when it checked the work. */
 export interface MilestoneVerification {
   tests: 'pass' | 'fail' | 'skipped';

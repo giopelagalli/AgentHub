@@ -53,6 +53,7 @@
 
 /* --- the bar under the toolbar ---------------------------------------------------------------- */
 
+/* Sticky offsets count from the scroller's padding edge, which already sits under the toolbar. */
 .subbar {
   position: sticky;
   top: 0;
@@ -97,11 +98,6 @@
   min-height: 22px;
   padding: 2px 12px;
   font-size: var(--fs-sm);
-}
-
-/* In a scrolling body the bar sticks just under the toolbar. */
-.view__body:not(.view__body--fill) > .subbar {
-  top: 0;
 }
 
 /* --- fill sections: the ones that manage their own scrolling ---------------------------------- */

@@ -38,7 +38,8 @@ exits on a 410. Authenticates with a per-node token or the admin's `DAEMON_TOKEN
 `video-gen.ts` is its ComfyUI client for both media job types: fill a template's `{{…}}`
 placeholders, `/prompt`, poll `/history`, download from `/view`, upload to the hub. Templates come
 per job type from `video.workflows.{image,video}` (`workflowPaths`; the legacy single
-`video.workflow` still serves video), placeholders in `deploy/amd/comfy/` until exported from the
+`video.workflow` still serves video; no image template configured means `image-gen` is not
+offered — `offeredJobTypes`), placeholders in `deploy/amd/comfy/` until exported from the
 real ComfyUI.
 
 **`packages/ui`** — Vite + vanilla TypeScript, no framework (redesign: 0048, 0053). A store fed by

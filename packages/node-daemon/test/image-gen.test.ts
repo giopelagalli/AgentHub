@@ -6,7 +6,7 @@ import type { ImagePayload, Job, VideoPayload } from '@agenthub/shared';
 import { createComfyMock, type MockComfy } from '../../mocks/src/comfy-mock.js';
 import { createHub, type Hub } from '../../hub/src/server.js';
 import { JobRunner } from '../src/job-runner.js';
-import { workflowPaths } from '../src/config.js';
+import { offeredJobTypes, workflowPaths } from '../src/config.js';
 import { fillWorkflow, parseImagePayload, runImageGen } from '../src/video-gen.js';
 
 const IMAGE_TEMPLATE = readFileSync(join(process.cwd(), 'deploy/amd/comfy/qwen-image-t2i.json'), 'utf8');
@@ -104,12 +104,22 @@ describe('workflowPaths', () => {
   it('keeps the legacy single video.workflow working', () => {
     const paths = workflowPaths({ comfyUrl: 'x', workflow: '/old.json' });
     expect(paths.video).toBe('/old.json');
-    expect(paths.image).toMatch(/deploy\/amd\/comfy\/qwen-image-t2i\.json$/);
+    expect(paths.image).toBeUndefined(); // never the TODO-verify placeholder
     expect(workflowPaths({ comfyUrl: 'x', workflow: '/old.json', workflows: { video: '/new.json' } }).video).toBe('/new.json');
   });
 
-  it('falls back to the repo templates when the config names none', () => {
+  it('falls back to the repo video template when the config names none', () => {
     expect(workflowPaths({ comfyUrl: 'x' }).video).toMatch(/deploy\/spark\/minimax-h3-t2v\.json$/);
+  });
+});
+
+describe('offeredJobTypes', () => {
+  it('does not offer image-gen without a configured image template', () => {
+    const jobTypes = ['image-gen', 'video-gen', 'shell-task'] as const;
+    expect(offeredJobTypes({ jobTypes: [...jobTypes], video: { comfyUrl: 'x' } })).toEqual(['video-gen', 'shell-task']);
+    expect(offeredJobTypes({ jobTypes: [...jobTypes] })).toEqual(['video-gen', 'shell-task']);
+    expect(offeredJobTypes({ jobTypes: [...jobTypes], video: { comfyUrl: 'x', workflows: { image: '/i.json' } } })).toEqual([...jobTypes]);
+    expect(offeredJobTypes({})).toEqual([]);
   });
 });
 

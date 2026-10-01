@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { dataStamp } from '@agenthub/shared/data-stamp';
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { NodeRegistration } from '@agenthub/shared';
-import { workflowPaths, type BrowserConfig, type DaemonConfig, type VideoConfig } from './config.js';
+import { offeredJobTypes, workflowPaths, type BrowserConfig, type DaemonConfig, type VideoConfig } from './config.js';
 import type { BrowserDriver } from './browser/driver.js';
 import { createBrowserServer } from './browser/server.js';
 import { createPlaywrightDriver } from './browser/playwright-driver.js';
@@ -101,7 +101,7 @@ export class Daemon {
     return {
       name: this.cfg.node.name, arch: this.cfg.node.arch,
       endpoints: (this.cfg.serving ?? []).map((s) => ({ tier: s.tier, url: `http://${host}:${s.port}`, model: s.model, maxStreams: s.maxStreams, ...(s.priority != null ? { priority: s.priority } : {}), ...(s.requestExtras ? { requestExtras: s.requestExtras } : {}) })),
-      jobTypes: this.cfg.jobTypes ?? [],
+      jobTypes: offeredJobTypes(this.cfg),
       ...(this.cfg.browser?.enabled ? { browser: { url: `http://${host}:${this.browserPort ?? this.cfg.browser.port ?? DEFAULT_BROWSER_PORT}` } } : {}),
       profiles: Object.keys(this.cfg.profiles ?? {}),
       video: this.cfg.video !== undefined,
@@ -223,9 +223,13 @@ export class Daemon {
    * Reads the ComfyUI workflow templates once at start-up (a missing or unreadable file should stop
    * the daemon, not surface one job at a time); `workflowPaths` picks which file per job type.
    */
-  private loadWorkflowTemplates(video: VideoConfig): { comfyUrl: string; workflowTemplate: string; imageTemplate: string } {
+  private loadWorkflowTemplates(video: VideoConfig): { comfyUrl: string; workflowTemplate: string; imageTemplate?: string } {
     const paths = workflowPaths(video);
-    return { comfyUrl: video.comfyUrl, workflowTemplate: readFileSync(paths.video, 'utf8'), imageTemplate: readFileSync(paths.image, 'utf8') };
+    return {
+      comfyUrl: video.comfyUrl,
+      workflowTemplate: readFileSync(paths.video, 'utf8'),
+      ...(paths.image ? { imageTemplate: readFileSync(paths.image, 'utf8') } : {}),
+    };
   }
 
   /** One registration attempt: ok, or a failure carrying both a short reason (for the retry log) and the error to throw if this was the last try. */
@@ -287,7 +291,10 @@ export class Daemon {
         .catch(() => { this.noteHubFailure(); });
     }, interval);
 
-    const jobTypes = this.cfg.jobTypes ?? [];
+    const jobTypes = offeredJobTypes(this.cfg);
+    if ((this.cfg.jobTypes ?? []).includes('image-gen') && !jobTypes.includes('image-gen')) {
+      console.warn('[daemon] image-gen listed but video.workflows.image is not set; not offering it (deploy/amd/comfy/README.md)');
+    }
     if (jobTypes.length > 0) {
       this.runner = new JobRunner({
         hub: this.hubUrl,

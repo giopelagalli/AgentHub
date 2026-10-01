@@ -455,7 +455,8 @@ clips). What the PC needs:
        video: /opt/agenthub/deploy/amd/comfy/wan22-t2v.json
    ```
 
-   An older config with a single `video.workflow` keeps working for clips.
+   An older config with a single `video.workflow` keeps working for clips. Without
+   `workflows.image` the node does not offer `image-gen` at all, even if `jobTypes` lists it.
 
 One render at a time per machine: a still or a clip parks the machine's worker model while it runs
 and hands it back after (decision 0061). In the simulation, `sim-media` renders against a mock

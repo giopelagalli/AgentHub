@@ -35,7 +35,8 @@ video:
     video: /opt/agenthub/deploy/amd/comfy/wan22-t2v.json
 ```
 
-Without `workflows.image` the daemon uses `qwen-image-t2i.json` from this directory. Without
+Without `workflows.image` the daemon does **not** offer `image-gen` (it logs why, and the hub's
+Media view says no machine can render images) — the placeholder here is never used by default. Without
 `workflows.video` it falls back to the older single `video.workflow`, and without that to
 `deploy/spark/minimax-h3-t2v.json` (decision 0018 keeps H3 out; the fallback exists only so old
 configs keep starting). An LTX-2 template is the same exercise with LTX-2's example workflow.

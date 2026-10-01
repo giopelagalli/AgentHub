@@ -70,6 +70,22 @@ describe('browserTools — direct tool calls', () => {
     expect(await call('subagent', inProject('beta', 3))).toBe('queued: position 1');
   });
 
+  it("a subagent's release_browser leaves its orchestrator's lease standing", async () => {
+    const alpha = (sessionId: number): ToolContext =>
+      ({ ...ctxFor(sessionId), bundle: { dir: '/projects/alpha' } as unknown as ToolContext['bundle'] });
+    const orchTools = browserTools(deps, 'orchestrator');
+    const subTools = browserTools(deps, 'subagent');
+    const call = (tools: typeof orchTools, name: string, ctx: ToolContext, args = '{}') =>
+      runToolCall(tools, { id: '1', name, arguments: args }, ctx);
+
+    expect(await call(orchTools, 'acquire_browser', alpha(1))).toBe('browser lease granted');
+    expect(await call(subTools, 'acquire_browser', alpha(2))).toBe('browser lease granted');
+    expect(await call(subTools, 'release_browser', alpha(2))).toBe('browser lease released (project keeps it)');
+    expect(await call(orchTools, 'browser_navigate', alpha(1), '{"url":"https://start.test/"}')).toBe('page: Start (https://start.test/)');
+    // The subagent let go: it has to ask again before driving.
+    expect(await call(subTools, 'browser_read', alpha(2))).toBe('error: no browser lease — call acquire_browser first');
+  });
+
   it('rejects every browser_* tool until acquire_browser has run', async () => {
     const tools = browserTools(deps, 'orchestrator');
     const ctx = ctxFor(1);
@@ -109,7 +125,7 @@ describe('browserTools — direct tool calls', () => {
     leases.acquire({ kind: 'owner', id: 'owner' });
 
     expect(await runToolCall(tools, { id: '2', name: 'browser_navigate', arguments: '{"url":"https://start.test/"}' }, ctx))
-      .toBe('error: lease lost — owner took control');
+      .toBe('error: lease lost — call acquire_browser again');
     // The session never held a lease again, so later calls report the "no lease" error, not another loss.
     expect(await runToolCall(tools, { id: '3', name: 'browser_read', arguments: '{}' }, ctx))
       .toBe('error: no browser lease — call acquire_browser first');

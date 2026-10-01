@@ -128,6 +128,7 @@ describe('the assistant scope', () => {
       { method: 'PUT' as const, url: '/api/projects/demo/code/file', payload: { path: 'a.txt', content: 'x' } },
       { method: 'GET' as const, url: '/api/projects/demo' },
       { method: 'POST' as const, url: '/api/projects/demo/archive', payload: {} },
+      { method: 'POST' as const, url: '/api/projects/demo/harness', payload: { harness: 'builtin' } },
     ];
     for (const r of refused) {
       const res = await h.hub.app.inject({ ...r, headers: bearer(h.jd) });
@@ -156,6 +157,19 @@ describe('the assistant scope', () => {
       socket.setTimeout(5000, () => { socket.destroy(); reject(new Error('handshake timed out')); });
     });
     expect(status).toContain('401');
+  });
+
+  it("keeps the project's harness the owner's, from the hub's own origin only", async () => {
+    const h = await harness();
+    const set = (headers: Record<string, string>) => h.hub.app.inject({
+      method: 'POST', url: '/api/projects/demo/harness', headers: { host: 'hub.local:4000', ...headers }, payload: { harness: 'builtin' },
+    });
+    expect((await set({ cookie: h.cookie, origin: 'http://hub.local:4000' })).statusCode).toBe(200);
+    expect((await set({ cookie: h.cookie, origin: 'http://hub.local:4010' })).statusCode).toBe(403);
+    expect((await set({})).statusCode).toBe(401);
+    // Not on the assistant's allow-list: its token is no credential here, the same 401 as none.
+    expect((await set(bearer(h.jd))).statusCode).toBe(401);
+    expect((await set(bearer(h.agent))).statusCode).toBe(401);
   });
 
   it('answers a bad bearer 401 and locks the address out on the door’s counter', async () => {

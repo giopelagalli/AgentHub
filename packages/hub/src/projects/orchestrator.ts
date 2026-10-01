@@ -112,7 +112,7 @@ export class ProjectOrchestrator {
         spawnSubagentTool({ ...delegation, browser: browserDeps, external, media }),
         completeMilestoneTool(delegation, github),
       ],
-      ctx: { bundle, hub: { queue, nodes: registry } },
+      ctx: { bundle, hub: { queue, nodes: registry }, ...(opts.requestedBy ? { requestedBy: opts.requestedBy } : {}) },
       ...(orchestratorRoute ? { route: orchestratorRoute } : {}),
       maxToolCalls: ORCHESTRATOR_TOOL_CALLS,
       signal: opts.signal,

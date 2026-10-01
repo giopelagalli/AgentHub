@@ -26,9 +26,11 @@ an `assistant` token passes, an `agent` token gets 403, a bad one 401 and then 4
 
 The bearer check moves out of the door plugin into `TokenGate` (`door.ts`) — the token store plus
 one lockout counter — which both `/v1` and the hook use, so a guesser cannot double its tries by
-alternating between the two. A request with no `Authorization` header at all is a plain 401 and is
-not counted: it is the owner's UI with a lapsed session, and counting it would lock JD out of the
-owner's own address. A cookie-less bearer request never reaches the CSRF guard, as before.
+alternating between the two. Only an `Authorization: Bearer …` header is a token attempt: no header
+(the owner's UI with a lapsed session) or another scheme (the edge's basic auth, which rides every
+same-origin request) is a plain 401 and is not counted, or it would lock JD out of the owner's own
+address. `POST /api/projects` with a `source` (a GitHub import, cloned with the hub's credentials)
+is 403 for a token: importing stays the owner's. A cookie-less bearer request never reaches the CSRF guard, as before.
 
 ## Consequences
 Every new route is the owner's until someone adds it to the list on purpose. The list is the whole

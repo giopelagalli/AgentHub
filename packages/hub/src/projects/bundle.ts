@@ -181,7 +181,11 @@ async function findNestedRepos(dir: string, acc: string[] = []): Promise<string[
  * The suffix a commit message carries when an API client, not the owner, asked for the write —
  * ` (by JD)`, from the token's label (0067). Empty for the owner and for the hub's own work.
  */
-export const byline = (by?: string): string => (by ? ` (by ${by})` : '');
+export const byline = (by?: string): string => {
+  // A label may hold newlines or runs of spaces; a commit subject must stay one line.
+  const label = by?.replace(/\s+/g, ' ').trim();
+  return label ? ` (by ${label})` : '';
+};
 
 export class ProjectBundle {
   readonly workspace: string;

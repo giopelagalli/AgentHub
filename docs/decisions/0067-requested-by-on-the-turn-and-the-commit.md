@@ -18,12 +18,14 @@ owner's and the scheduler's; and every write an API token makes should say who m
 ## Decision
 C. `ProjectService.runTurn(slug, instruction, { signal, requestedBy })` → the orchestrator emits
 `{ kind: 'turn-start', who: 'manager', requestedBy }` → `TurnRecord.requestedBy`. Commits made on
-a token's behalf append ` (by <label>)` (`byline()` in `bundle.ts`): scaffold/import, priority,
-pause/resume, PRD draft, roadmap, and the turn's synthesized-briefing commit. `since` filters on
+a token's behalf append ` (by <label>)` (`byline()` in `bundle.ts`, whitespace collapsed so the
+subject stays one line): scaffold, priority, pause/resume, PRD draft, roadmap, and both of a
+turn's briefing commits — the synthesized one and `publish_briefing`'s, which learns the label
+from the tool context (`ToolContext.requestedBy`). `since` filters on
 `endedAt`, because JD polls for turns that *landed*; one still running is in `running`.
 
 ## Consequences
-Persisted with the transcript, so it survives restarts and shows in history. A briefing the model
-publishes itself (`publish_briefing`) commits without the byline — the turn's `turn-start` is the
-record of who asked. `/turns` still returns at most the last 20 turns, so a client polling less
+Persisted with the transcript, so it survives restarts and shows in history. Other commits a
+token's turn makes along the way (task board, docs, code) are not signed — the turn's
+`turn-start` is the record of who asked. `/turns` still returns at most the last 20 turns, so a client polling less
 often than that could miss one.

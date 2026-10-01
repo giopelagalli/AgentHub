@@ -8,6 +8,7 @@ import type { TurnRecord } from '@agenthub/shared';
 import { PRD_SECTIONS } from '@agenthub/shared';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { LOGIN_MAX_FAILURES } from '../src/auth.js';
+import { byline } from '../src/projects/bundle.js';
 import type { MintedApiToken, TokenKind } from '../src/door.js';
 import { createHub, type Hub } from '../src/server.js';
 
@@ -179,10 +180,51 @@ describe('the assistant scope', () => {
     expect((await h.hub.app.inject({ method: 'GET', url: '/api/state', headers: bearer(h.jd) })).statusCode).toBe(200);
   });
 
+  it('answers another auth scheme a plain 401 and never counts it', async () => {
+    const h = await harness();
+    // The edge's basic auth rides every same-origin request; it is not a token guess.
+    const basic = { authorization: `Basic ${Buffer.from('owner:pw').toString('base64')}` };
+    for (let i = 0; i < LOGIN_MAX_FAILURES + 2; i++) {
+      const res = await h.hub.app.inject({ method: 'GET', url: '/api/state', headers: basic });
+      expect(res.statusCode).toBe(401);
+      expect(res.json()).toEqual({ error: 'unauthorized' });
+    }
+    // Not locked out: the first bad bearer after all that is a 401, not a 429.
+    expect((await h.hub.app.inject({ method: 'GET', url: '/api/state', headers: bearer('ah_wrong') })).statusCode).toBe(401);
+  });
+
+  it('keeps importing a repository the owner’s', async () => {
+    const h = await harness();
+    const res = await h.hub.app.inject({
+      method: 'POST', url: '/api/projects', headers: bearer(h.jd),
+      payload: { slug: 'imported', title: 'Imported', intent: 'x', source: { url: 'octo/repo' } },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: 'importing a repository is the owner\'s' });
+    expect((await h.hub.app.inject({ method: 'GET', url: '/api/projects', headers: bearer(h.jd) })).json()
+      .map((p: { slug: string }) => p.slug)).toEqual(['demo']);
+  });
+
+  it('keeps a byline on one line', () => {
+    expect(byline('JD\n  the\tassistant ')).toBe(' (by JD the assistant)');
+    expect(byline('   ')).toBe('');
+    expect(byline(undefined)).toBe('');
+  });
+
   it('marks a turn a token started with requestedBy, and filters turns by when they ended', async () => {
     const h = await harness([
       { content: 'owner turn, nothing to report' },
-      { content: 'jd turn, nothing to report' },
+      // JD's turn publishes its own briefing, whose commit is signed too.
+      {
+        toolCalls: [{
+          name: 'publish_briefing',
+          arguments: {
+            title: 'Demo', status: 'active', priority: 'project', summary: 'jd turn, wired the frobnicator',
+            progress: { done: 1, total: 3 }, blockers: [], nextSteps: ['ship it'],
+          },
+        }],
+      },
+      { content: 'done' },
     ]);
     const owner = await h.hub.app.inject({ method: 'POST', url: '/api/projects/demo/turn', headers: { cookie: h.cookie }, payload: {} });
     expect(owner.statusCode).toBe(200);
@@ -204,10 +246,11 @@ describe('the assistant scope', () => {
 
     const log = await simpleGit(join(h.root, 'demo')).log();
     const subjects = log.all.map((c) => c.message);
-    expect(subjects.filter((m) => m.startsWith('agent: turn'))).toEqual([
-      expect.stringMatching(/^agent: turn \d+ — .*\(by JD\)$/),
-      expect.not.stringContaining('(by '),
+    expect(subjects.filter((m) => m.startsWith('agent: turn') || m.startsWith('agent: publish briefing'))).toEqual([
+      'agent: publish briefing (by JD)',
+      expect.stringMatching(/^agent: turn \d+ — owner turn/),
     ]);
+    expect(subjects.find((m) => m.startsWith('agent: turn'))).not.toContain('(by ');
   });
 
   it('attributes a token’s writes in the project’s commits', async () => {

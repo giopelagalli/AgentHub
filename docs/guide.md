@@ -401,7 +401,7 @@ turns. Bad tokens share the door's lockout (five tries per address, then 429).
 | `GET /api/briefings` | every project's latest briefing |
 | `GET /api/projects` | every project's manifest |
 | `GET /api/projects/:slug/turns?since=<ms>` | recent turns; with `since`, only those that ended at or after it |
-| `POST /api/projects` | create — `{slug, title, intent, idea?, priority?}` |
+| `POST /api/projects` | create — `{slug, title, intent, idea?, priority?}`; importing a repo (`source`) stays yours (403) |
 | `POST /api/projects/:slug/prd/draft?wait=1` | draft the PRD from the idea; `wait=1` answers JSON instead of a stream |
 | `POST /api/projects/:slug/roadmap/generate?wait=1` | turn the PRD into milestones, same `wait=1` |
 | `POST /api/projects/:slug/turn` | run one turn — `{instruction?}`; answers with the briefing when it lands |
@@ -424,7 +424,8 @@ curl -sX POST $HUB/api/projects/tide-clock/turn -H "$H" -H "$J" -d '{"instructio
 curl -s "$HUB/api/projects/tide-clock/turns?since=$since" -H "$H"   # → turns[0].summary when it lands
 ```
 
-A hanging-up client does stop a `?wait=1` draft (as a closed stream does), but not a turn. On a
+A hanging-up client does stop a `?wait=1` draft (as a closed stream does), but not a turn; the hub
+gives up on a `?wait=1` run itself after 10 minutes (504). On a
 hub started without a password (the dev sim) nothing is checked and nothing is signed.
 
 ## Preview (seeing the app)

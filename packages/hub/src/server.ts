@@ -112,6 +112,8 @@ const TEAM_WORKING_WINDOW_MS = 30 * 60_000;
 const TEAM_LAST_MESSAGE_LIMIT = 200;
 /** How many past orchestrator turns `/turns` replays. */
 const TURNS_LIMIT = 20;
+/** The hub's own bound on a `?wait=1` PRD draft or roadmap run (0066). */
+const WAIT_PLAN_TIMEOUT_MS = 10 * 60_000;
 /** The trailing window the cloud spend cap — and every "today" cost the UI shows — is measured over. */
 export const CLOUD_SPEND_WINDOW_MS = 24 * 60 * 60_000;
 /** What a project's auto-run starts as when the owner enables it without saying more. */
@@ -634,9 +636,10 @@ export function createHub(opts: HubOptions = {}): Hub {
         return;
       }
       if (access === 'assistant') {
-        // No bearer at all is an owner whose session lapsed (the UI polling `/api/state`), not a
-        // guess: it is a plain 401 and must not run up the token lockout for the owner's address.
-        if (req.headers.authorization !== undefined) {
+        // Only a `Bearer` is a token attempt. No header (the UI after its session lapsed) or another
+        // scheme (the edge's basic auth rides every same-origin request) is not a guess: a plain
+        // 401, never counted, or it would run up the token lockout for the owner's own address.
+        if (req.headers.authorization?.startsWith('Bearer ')) {
           const verdict = tokenGate.check(req.ip, req.headers.authorization);
           if ('status' in verdict) {
             return reply.code(verdict.status).send({ error: verdict.status === 429 ? 'too many bad tokens; try again later' : 'invalid api token' });
@@ -1567,6 +1570,10 @@ export function createHub(opts: HubOptions = {}): Hub {
       }
       source = { ref, ...(typeof branch === 'string' && branch ? { branch } : {}) };
     }
+    // Importing clones a repository with the hub's GitHub credentials — the owner's call, not a token's.
+    if (body.source !== undefined && requestedBy(req)) {
+      return reply.code(403).send({ error: 'importing a repository is the owner\'s' });
+    }
     const duplicate = await projects.get(body.slug).then(() => true, () => false);
     if (duplicate) return reply.code(409).send({ error: 'project already exists' });
     // The idea (or a pasted PRD) is kept on the manifest and drafted from afterwards, by an explicit
@@ -1974,7 +1981,8 @@ export function createHub(opts: HubOptions = {}): Hub {
   /**
    * `?wait=1`: the same run without the stream, for an API client (JD, 0066) — the reply is the
    * stream's closing `done` frame as one JSON body, or a 502 carrying the error. It is aborted the
-   * same way, when the client hangs up before the run is over.
+   * same way, when the client hangs up before the run is over — and, since nobody is watching a
+   * stream to give up on it, by the hub itself after `WAIT_PLAN_TIMEOUT_MS` (504).
    */
   const waitPlan = async (
     reply: FastifyReply, slug: string, who: 'prd' | 'roadmap',
@@ -1982,13 +1990,15 @@ export function createHub(opts: HubOptions = {}): Hub {
   ): Promise<FastifyReply> => {
     const ac = new AbortController();
     reply.raw.on('close', () => ac.abort());
+    const deadline = AbortSignal.timeout(WAIT_PLAN_TIMEOUT_MS);
     broadcast({ type: 'project-busy', slug, who, busy: true });
     let full = '';
     try {
-      const done = await run({ onToken: (token) => { full += token; }, signal: ac.signal });
+      const done = await run({ onToken: (token) => { full += token; }, signal: AbortSignal.any([ac.signal, deadline]) });
       await refreshProjects();
       return reply.code(200).send({ done: true, full, ...done });
     } catch (err) {
+      if (deadline.aborted) return reply.code(504).send({ error: `${who} run took longer than ${WAIT_PLAN_TIMEOUT_MS / 60_000} minutes` });
       return reply.code(502).send({ error: String(err) });
     } finally {
       broadcast({ type: 'project-busy', slug, who, busy: false });

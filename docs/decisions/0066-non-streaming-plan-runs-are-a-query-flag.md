@@ -18,7 +18,10 @@ layer (one request, one JSON answer) cannot use well.
 ## Decision
 C. Same handler, same run, same busy broadcasts and abort-on-hang-up; the reply is the stream's
 closing `done` frame as one JSON body (`{ done, full, questions, audit }` for the draft,
-`{ done, full, milestones }` for the roadmap), or 502 `{ error }` if the run failed. JD calls
+`{ done, full, milestones }` for the roadmap), or 502 `{ error }` if the run failed. Since no
+watcher of a stream is there to give up on it, the hub bounds a waiting run itself: the run's
+signal is `AbortSignal.any([client hang-up, AbortSignal.timeout(10 min)])`, and the deadline
+answers 504. JD calls
 create, then `prd/draft?wait=1`, then `roadmap/generate?wait=1`.
 
 ## Consequences

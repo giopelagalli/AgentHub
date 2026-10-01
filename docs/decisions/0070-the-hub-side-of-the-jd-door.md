@@ -26,7 +26,18 @@ notes (it will not play an `<audio>` whose server cannot answer a byte range).
 ## Decision
 E. Also: the door opens only on a hub with a password, as the terminal does (0041) — it speaks to
 JD as the owner, and an open hub has no owner; `/api/jd/status` answers either way so the page can
-say what is missing. The stream's upgrade checks `Origin` itself, like the terminal's, and a
+say what is missing. Status carries a `reason` when JD cannot be talked to — `no-password`
+(`JD_URL` set, no `HUB_PASSWORD`), `token` (JD answered 401/403 to the hub's bearer) or
+`unreachable` — and the page shows the matching sentence instead of the setup screen or an endless
+"Reconnecting…"; the stream's close reason (`JD refused the hub’s token`, `JD is not reachable`,
+`JD is not configured`) drives the same choice mid-conversation.
+
+Hardening from review: every door answer carries `X-Content-Type-Options: nosniff`, and
+`/audio/:id` passes only an `audio/*` type (anything else goes as `application/octet-stream`) — JD's
+bytes are served on the hub's origin, where the owner's session can open a shell, so none of them
+may be sniffed or labelled into a page. In-flight requests to JD share one `AbortController`
+aborted in `preClose` (with the timeout, via `AbortSignal.any`), so a hung JD never holds the hub's
+shutdown for 120 s. The stream's upgrade checks `Origin` itself, like the terminal's, and a
 refused upgrade on `/api/jd/stream` (or `/api/jd/*` when unconfigured) is hung up by hand in the
 auth hook. `JD_WEB_TOKEN` joins `HUB_SECRET_ENV`, so no agent shell ever sees it.
 

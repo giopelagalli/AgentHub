@@ -666,9 +666,15 @@ To connect it, once, on the Spark:
 3. In the hub's `hub.env`, also: `JD_URL=http://127.0.0.1:8891`.
 4. Restart both: JD, and the hub (`systemctl --user restart agenthub-hub`).
 
-Until then the JD page shows those two lines and nothing else. If it says JD isn't answering, JD
-is not running or is on another port. If a message comes back "JD refused the hub's token", the
-two `JD_WEB_TOKEN`s differ. Changing the token later is the same two edits and two restarts. Voice notes need the hub over HTTPS (the public site); over plain HTTP
+Until then the JD page shows those two lines and nothing else. Otherwise it tells you what is wrong:
+
+- **Set a hub password first** — `JD_URL` is set but the hub has no `HUB_PASSWORD`; the door to JD
+  stays shut on a hub anyone could reach.
+- **The token doesn't match** — JD is running but refused the hub's token: the two `JD_WEB_TOKEN`s
+  differ.
+- **JD isn't answering** — JD is not running or is on another port. In the middle of a
+  conversation this shows as "Not answering — retrying…" under JD's name, and it reconnects by
+  itself. Changing the token later is the same two edits and two restarts. Voice notes need the hub over HTTPS (the public site); over plain HTTP
 on the tailnet the mic says so instead.
 
 ## Operating the hub (on the Spark)

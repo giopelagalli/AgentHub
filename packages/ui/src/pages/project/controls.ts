@@ -176,24 +176,19 @@ export function fillHarnessField(
     item.value = harness.kind;
     select.appendChild(item);
   }
-  const current = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
-  select.value = current;
-  const hint = el('p', 'drawer__fieldhint', 'pi is not confined to the workspace.');
-  const showHint = (): void => { hint.hidden = select.value !== 'pi'; };
+  let saved = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
+  select.value = saved;
   select.addEventListener('change', () => {
-    showHint();
     const next = select.value ? (select.value as HarnessKind) : null;
     void sendJson(`/api/projects/${slug}/team/${member.id}`, { harness: next }, 'PATCH')
-      .then(() => toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`))
+      .then(() => { saved = select.value; toast(`${member.name} now runs on ${next ? HARNESS_LABELS[next] : 'the project default'}.`); })
       .catch((error: unknown) => {
         toast(`Could not set ${member.name}'s harness: ${String(error)}`, 'error');
-        select.value = current;
-        showHint();
+        select.value = saved;
       });
   });
   field.appendChild(select);
-  showHint();
-  slot.append(field, hint);
+  slot.append(field);
 }
 
 /**
@@ -223,15 +218,15 @@ export function projectHarnessPicker(
     }
     select.appendChild(item);
   }
-  const current = projectHarness(manifest);
-  select.value = current;
+  let saved: string = projectHarness(manifest);
+  select.value = saved;
   select.addEventListener('change', () => {
     const next = select.value as HarnessKind;
     void sendJson(`/api/projects/${slug}/harness`, { harness: next })
-      .then(() => toast(`Employees now run on ${HARNESS_LABELS[next]} unless given their own.`))
+      .then(() => { saved = next; toast(`Employees now run on ${HARNESS_LABELS[next]} unless given their own.`); })
       .catch((error: unknown) => {
         toast(`Could not set the harness: ${String(error)}`, 'error');
-        select.value = current;
+        select.value = saved;
       });
   });
   return { select, reasons };

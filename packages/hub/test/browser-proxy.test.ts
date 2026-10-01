@@ -87,7 +87,8 @@ describe('browser routes', () => {
     const shot = await (await post('/api/browser/act', { leaseId, op: 'screenshot' })).json();
     expect(shot).toEqual({ seq: 3, path: join(recordings, leaseId, '3.jpg') });
 
-    expect(driver.calls.map((c) => c.op)).toEqual(['navigate', 'screenshot', 'read', 'screenshot', 'screenshot']);
+    // The hub has never seen this slot used, so the first action starts it over in a fresh session.
+    expect(driver.calls.map((c) => c.op)).toEqual(['reset', 'navigate', 'screenshot', 'read', 'screenshot', 'screenshot']);
 
     const timeline = await (await fetch(`${base}/api/browser/recordings/${leaseId}`)).json();
     expect(timeline.actions.map((a: { op: string; frame: string }) => [a.op, a.frame])).toEqual([

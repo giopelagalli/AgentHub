@@ -47,14 +47,16 @@ Behaviour that changed from the single browser:
   its lease through a heartbeat gap until its TTL or a failed renew; its free slots are not shown.
   **Removal** or re-registering with fewer slots drops the leases on the slots that went away.
 - **Slot reset**: the hub remembers each slot's last project; a lease granted to a different
-  project resets the slot (`POST /browser/reset?slot=N`, a fresh context) before its first action.
-  The owner taking a slot neither resets it nor counts as its last project.
+  project — or on a slot whose last project it doesn't know (new to this hub, or the hub
+  restarted) — resets the slot (`POST /browser/reset?slot=N`, a fresh context) before its first
+  action. The owner taking a slot neither resets it nor counts as its last project.
 - **Browser crash**: an unexpected Chromium disconnect exits the daemon non-zero so its service
   manager restarts it with a fresh browser.
 
 ## Consequences
 A Chromium crash takes every slot on that node at once; a context isolates state, not process.
-Within a project the orchestrator and its subagents share one page. A slot's last project survives
-only in hub memory, so after a hub restart the first grant of a slot never resets it — the daemon's
-contexts outlive the hub. Pausing models does not touch browsers. A per-project limit above one
+Within a project the orchestrator and its subagents share one page. A slot's last project lives
+only in hub memory, so after a hub restart every slot's first grant resets it — one extra reset per
+slot rather than a session leaking across projects, since the daemon's contexts outlive the hub.
+Pausing models does not touch browsers. A per-project limit above one
 (F) would be a new requester key and a slot argument on the tools, not a new shape.

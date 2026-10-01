@@ -328,6 +328,6 @@ describe('browserTools — through the AgentLoop', () => {
 
     const timeline = await new Recorder({ root: recordings }).list(leaseId!);
     expect(timeline.map((a) => [a.op, a.frame])).toEqual([['navigate', '1.jpg'], ['read', '2.jpg']]);
-    expect(driver.calls.map((c) => c.op)).toEqual(['navigate', 'screenshot', 'read', 'screenshot']);
+    expect(driver.calls.map((c) => c.op)).toEqual(['reset', 'navigate', 'screenshot', 'read', 'screenshot']);
   });
 });

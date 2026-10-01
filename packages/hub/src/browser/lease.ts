@@ -59,7 +59,7 @@ export class LeaseManager {
   private held = new Map<string, Lease>();
   /** Who last held each slot (by slot key) — a project, or a project-less requester; never the owner. */
   private lastTenant = new Map<string, string>();
-  /** Leases granted on a slot another tenant used last, whose session must be reset before first use. */
+  /** Leases granted on a slot another (or an unknown) tenant used last, whose session must be reset before first use. */
   private dirty = new Set<string>();
   private waiting: Waiter[] = [];
   private listeners: ((status: LeaseStatus) => void)[] = [];
@@ -151,7 +151,8 @@ export class LeaseManager {
   }
 
   /**
-   * True — once — when `leaseId` was granted on a slot a different project used last, so its session
+   * True — once — when `leaseId` was granted on a slot a different project used last, or one whose
+   * last project this hub doesn't know (it is new, or the hub restarted), so its session
    * must be reset before the new holder's first action. The caller that takes it does the reset, and
    * hands it back with `flagReset` if the reset failed.
    */
@@ -311,7 +312,9 @@ export class LeaseManager {
     const tenant = tenantOf(r);
     if (tenant !== null) {
       const last = this.lastTenant.get(k);
-      if (last !== undefined && last !== tenant) this.dirty.add(lease.leaseId);
+      // An unknown last tenant — a slot new to this hub, or one from before a hub restart — may hold
+      // anybody's session (the daemon's contexts outlive the hub), so it is reset too.
+      if (last !== tenant) this.dirty.add(lease.leaseId);
       this.lastTenant.set(k, tenant);
     }
     return lease;

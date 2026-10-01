@@ -151,9 +151,6 @@ export function projectHarness(manifest: Pick<ProjectManifest, 'harness'> | null
   return kind && HARNESS_KINDS.includes(kind) ? kind : 'builtin';
 }
 
-const harnessOptionText = (harness: HarnessInfo): string =>
-  `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`;
-
 /**
  * The employee's Harness select, beside their Model one (FR-G4), filled into `slot` — which the
  * drawer already shows, so a harness list that lands after the drawer opened still appears in it.
@@ -175,7 +172,7 @@ export function fillHarnessField(
   fallback.value = '';
   select.appendChild(fallback);
   for (const harness of offered) {
-    const item = el('option', undefined, harnessOptionText(harness));
+    const item = el('option', undefined, `${HARNESS_LABELS[harness.kind]}${harness.version ? ` ${harness.version}` : ''}`);
     item.value = harness.kind;
     select.appendChild(item);
   }
@@ -214,7 +211,7 @@ export function projectHarnessPicker(
   select.setAttribute('aria-label', 'Harness');
   const reasons: string[] = [];
   for (const harness of harnesses) {
-    const item = el('option', undefined, harnessOptionText(harness));
+    const item = el('option', undefined, HARNESS_LABELS[harness.kind]);
     item.value = harness.kind;
     const reason = !harness.available
       ? harness.reason ?? `${harness.kind} is not installed on this hub`

@@ -95,6 +95,10 @@ async function claudeCode(
   if (opts.pinnedTools) return builtin();
   if (opts.extras.length) return fallback(`claude-code has no ${opts.extras.map((t) => t.def.name).join('/')}`);
   if (!opts.bundle) return builtin();
+  // A local-only project's work never leaves the cluster; claude-code would send it to Anthropic.
+  if (opts.route?.prefer === 'local') {
+    return fallback("the project's model policy is local-only and claude-code sends the workspace to Anthropic");
+  }
   const status = await claudeCodeStatus();
   if (!status.available) return fallback(status.reason);
   if (status.note) opts.log(`claude-code: ${status.note}`);

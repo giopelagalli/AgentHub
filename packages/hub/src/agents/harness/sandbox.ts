@@ -50,6 +50,12 @@ export type SandboxedCommand =
   | { unavailable: string };
 
 export const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
+/**
+ * Why the `https` network has no Linux form yet (decision 0064): bwrap can only share the host's
+ * whole network namespace — loopback included, so the hub, ComfyUI, CDP ports and abstract unix
+ * sockets — or none of it. It needs a filtered egress (a proxy or a filtered namespace) first.
+ */
+export const HTTPS_ON_LINUX = "claude-code's network sandbox is not yet available on Linux";
 export const BWRAP = 'bwrap';
 
 /** The door named by a base URL (`http://127.0.0.1:4000`), brackets off an IPv6 host. */
@@ -173,8 +179,6 @@ server.listen(Number(port), host, () => {
 });
 `;
 
-const RESOLVED_DIR = '/run/systemd/resolve';
-
 /** The bubblewrap line, without the command. */
 function bwrapArgs(o: SandboxOptions): string[] {
   const mounts = layers(o).flatMap((l) => {
@@ -190,13 +194,9 @@ function bwrapArgs(o: SandboxOptions): string[] {
     // A read-only bind still lets a process connect() to a socket on it: docker.sock, D-Bus and
     // ssh-agent live here, so it is replaced rather than bound read-only.
     '--tmpfs', '/run',
-    // systemd-resolved's stub, which /etc/resolv.conf points into on Ubuntu, is the one part of /run
-    // a process with the network shared needs back (unverified on the Spark, decision 0064).
-    ...('https' in o && existsSync(RESOLVED_DIR) ? ['--ro-bind', RESOLVED_DIR, RESOLVED_DIR] : []),
     ...mounts,
     '--chdir', o.workspace,
     '--unshare-all',
-    ...('https' in o ? ['--share-net'] : []),
     '--die-with-parent',
     '--new-session',
   ];
@@ -214,8 +214,7 @@ export function sandboxedCommand(platform: NodeJS.Platform, o: SandboxOptions): 
     return { cmd: SANDBOX_EXEC, args: ['-p', profile, ...params, ...o.argv] };
   }
   if (platform === 'linux') {
-    // With the network shared there is no namespace loopback to bridge, and no door to reach.
-    if ('https' in o) return { cmd: BWRAP, args: [...bwrapArgs(o), '--', ...o.argv] };
+    if ('https' in o) return { unavailable: HTTPS_ON_LINUX };
     const doorSocket = join(o.tmpDir, 'door.sock');
     return {
       cmd: BWRAP,
@@ -338,6 +337,7 @@ export async function sandboxStatus(
   if (platform !== 'darwin' && platform !== 'linux') {
     return { available: false, reason: `an external harness is only sandboxed on macOS and Linux, not ${platform}` };
   }
+  if (https && platform === 'linux') return { available: false, reason: HTTPS_ON_LINUX };
   const problem = doorBase ? doorProblem(doorOf(doorBase)) : null;
   if (problem) return { available: false, reason: problem };
   const cached = run === hostRunner;

@@ -12,9 +12,10 @@ import { AgentLoop, type LoopUsage } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { UsageStore } from '../src/usage.js';
 import { claudeCodeHarness, SUBSCRIPTION_PROVIDER } from '../src/agents/harness/claude-code.js';
-import { claudeCodeStatus, harnessStatus } from '../src/agents/harness/detect.js';
+import { claudeCodeStatus, forgetClaudeCodeStatus, harnessStatus } from '../src/agents/harness/detect.js';
 import { selectHarness } from '../src/agents/harness/select.js';
 import type { HarnessTask } from '../src/agents/harness/index.js';
+import type { Route } from '../src/gateway.js';
 import type { SandboxOptions, SandboxStatus } from '../src/agents/harness/sandbox.js';
 import { FAKE_CLAUDE } from './fake-claude.js';
 
@@ -62,6 +63,7 @@ beforeEach(async () => {
   // A key in the hub's environment must never reach the CLI: it would turn the run into API billing.
   process.env.ANTHROPIC_API_KEY = 'sk-ant-hub-key';
   sandbox.status = { available: true };
+  forgetClaudeCodeStatus();
   sandbox.asked = [];
   sandbox.wrapped = [];
 
@@ -201,6 +203,14 @@ describe('the claude-code harness', () => {
     expect(alive()).toBe(false);
   });
 
+  it('scans the workspace for written files only when the run used Bash', async () => {
+    process.env.FAKE_CLAUDE_MODE = 'sidewrite';
+    const { res } = await run();
+    expect(res.outcome).toBe('stop');
+    expect(existsSync(join(workspace, 'side.txt'))).toBe(true);
+    expect(res.filesWritten).toEqual([]);
+  });
+
   it("reports a CLI that is not signed in as an error carrying the CLI's own message", async () => {
     process.env.FAKE_CLAUDE_MODE = 'signed-out';
     const { res } = await run();
@@ -211,9 +221,9 @@ describe('the claude-code harness', () => {
 });
 
 describe('claude-code detection and selection', () => {
-  const select = (over: { member?: TeamMember; pinnedTools?: boolean } = {}) => selectHarness({
+  const select = (over: { member?: TeamMember; pinnedTools?: boolean; route?: Route; log?: (l: string) => void } = {}) => selectHarness({
     loop, bundle, member: over.member ?? member, extras: [], pinnedTools: over.pinnedTools ?? false,
-    tools: () => [], log: () => {},
+    tools: () => [], log: over.log ?? (() => {}), ...(over.route ? { route: over.route } : {}),
   });
 
   it('is available when the CLI is signed in to a subscription and the host can sandbox it with HTTPS', async () => {
@@ -253,6 +263,23 @@ describe('claude-code detection and selection', () => {
     sandbox.status = { available: false, reason: 'bubblewrap is not installed (sudo apt install bubblewrap)' };
     expect(await claudeCodeStatus()).toMatchObject({ available: false, reason: expect.stringContaining('claude-code cannot be sandboxed') });
     expect((await select()).harness.kind).toBe('builtin');
+  });
+
+  it("never runs a local-only project's work, saying why", async () => {
+    const logs: string[] = [];
+    expect((await select({ route: { prefer: 'local' }, log: (l) => logs.push(l) })).harness.kind).toBe('builtin');
+    expect(logs.join('\n')).toContain("the project's model policy is local-only and claude-code sends the workspace to Anthropic");
+    expect((await select({ route: { prefer: 'auto' } })).harness.kind).toBe('claude-code');
+  });
+
+  it('believes a success for a minute, and asks again after a failure', async () => {
+    expect(await claudeCodeStatus()).toMatchObject({ available: true });
+    process.env.FAKE_CLAUDE_AUTH = 'signed-out';
+    expect(await claudeCodeStatus()).toMatchObject({ available: true });
+    forgetClaudeCodeStatus();
+    expect(await claudeCodeStatus()).toMatchObject({ available: false });
+    process.env.FAKE_CLAUDE_AUTH = 'subscription';
+    expect(await claudeCodeStatus()).toMatchObject({ available: true });
   });
 
   it('never runs the milestone reviewer', async () => {

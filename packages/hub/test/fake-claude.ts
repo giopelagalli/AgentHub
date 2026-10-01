@@ -70,6 +70,12 @@ if (mode === 'write') {
   answer('t3', '<tool_use_error>Error: No such tool available: Write.</tool_use_error>', true);
   say({ type: 'text', text: 'Wrote src/app.js.' });
   result('Wrote src/app.js and built dist/out.js.');
+} else if (mode === 'sidewrite') {
+  // Something besides the run writes the workspace while it reads: no Bash call, so no scan.
+  say({ type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: resolve('a.txt') } });
+  writeFileSync(resolve('side.txt'), 'x');
+  answer('r1', 'a');
+  result('Read a.txt.');
 } else if (mode === 'signed-out') {
   say({ type: 'text', text: 'Not logged in · Please run /login' });
   result('Not logged in · Please run /login', { is_error: true, usage: undefined, modelUsage: {} });

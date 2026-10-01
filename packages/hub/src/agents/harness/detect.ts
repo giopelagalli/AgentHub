@@ -67,13 +67,32 @@ export async function claudeLogin(bin: string): Promise<{ ok: true; note?: strin
   return { ok: true };
 }
 
+export type ClaudeCodeStatus =
+  | { available: true; bin: string; version: string; note?: string }
+  | { available: false; version?: string; reason: string };
+
+/** How long a found-available claude-code is believed without asking the CLI again (~1 s a check). */
+const CLAUDE_STATUS_TTL_MS = 60_000;
+let claudeAvailable: { at: number; status: ClaudeCodeStatus } | undefined;
+
+/** Drops the cached answer, so the next `claudeCodeStatus` asks the CLI. For tests. */
+export function forgetClaudeCodeStatus(): void { claudeAvailable = undefined; }
+
 /**
  * Whether claude-code can run here, and why not: the CLI on PATH, signed in to a subscription, and
- * a host that can sandbox it with outbound HTTPS (decision 0064).
+ * a host that can sandbox it with outbound HTTPS (decision 0064). A success holds for a minute,
+ * because `auth status` takes about a second and the Harness list asks on every load; a failure is
+ * asked again next time, so signing in on the host shows up at once.
  */
-export async function claudeCodeStatus(): Promise<
-  { available: true; bin: string; version: string; note?: string } | { available: false; version?: string; reason: string }
-> {
+export async function claudeCodeStatus(): Promise<ClaudeCodeStatus> {
+  if (claudeAvailable && Date.now() - claudeAvailable.at < CLAUDE_STATUS_TTL_MS) return claudeAvailable.status;
+  claudeAvailable = undefined;
+  const status = await probeClaudeCode();
+  if (status.available) claudeAvailable = { at: Date.now(), status };
+  return status;
+}
+
+async function probeClaudeCode(): Promise<ClaudeCodeStatus> {
   const bin = await claudeBinary();
   if (!bin) return { available: false, reason: 'claude is not installed on this host' };
   const login = await claudeLogin(bin.path);

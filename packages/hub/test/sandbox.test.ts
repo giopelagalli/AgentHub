@@ -6,7 +6,7 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  DOOR_BRIDGE_SOURCE, SANDBOX_EXEC, hiddenPaths, sandboxedCommand, sandboxStatus, serveDoorSocket,
+  DOOR_BRIDGE_SOURCE, HTTPS_ON_LINUX, SANDBOX_EXEC, hiddenPaths, sandboxedCommand, sandboxStatus, serveDoorSocket,
   type ProbeRunner, type SandboxOptions,
 } from '../src/agents/harness/sandbox.js';
 
@@ -151,22 +151,21 @@ describe('the https network (claude-code, decision 0064)', () => {
     }
   });
 
-  it('on Linux shares the network namespace instead of bridging a door', () => {
-    const c = sandboxedCommand('linux', https());
-    if ('unavailable' in c) throw new Error(c.unavailable);
-    expect(c.cmd).toBe('bwrap');
-    expect(c.doorSocket).toBeUndefined();
-    expect(hasRun(c.args, '--unshare-all', '--share-net')).toBe(true);
-    expect(hasRun(c.args, '--bind', '/data/projects/demo/workspace', '/data/projects/demo/workspace')).toBe(true);
-    expect(c.args).not.toContain(DOOR_BRIDGE_SOURCE);
-    expect(c.args.slice(c.args.indexOf('--') + 1)).toEqual(['claude', '-p', '--', 'task']);
-  });
-
-  it('probes the https sandbox separately from the door one', async () => {
+  it('is unavailable on Linux, where bwrap could only share the whole host network, loopback included', async () => {
+    expect(sandboxedCommand('linux', https())).toEqual({ unavailable: HTTPS_ON_LINUX });
     const asked: string[][] = [];
     const run: ProbeRunner = async (_cmd, args) => { asked.push(args); return { ok: true }; };
-    expect(await sandboxStatus({ https: true, platform: 'linux', run })).toEqual({ available: true });
-    expect(asked[0]).toContain('--share-net');
+    expect(await sandboxStatus({ https: true, platform: 'linux', run })).toEqual({ available: false, reason: HTTPS_ON_LINUX });
+    expect(asked).toEqual([]);
+    // pi's door sandbox on Linux is unaffected.
+    expect(await sandboxStatus({ platform: 'linux', run })).toEqual({ available: true });
+  });
+
+  it('probes the https sandbox on macOS with the network rule it will run with', async () => {
+    const asked: string[][] = [];
+    const run: ProbeRunner = async (_cmd, args) => { asked.push(args); return { ok: true }; };
+    expect(await sandboxStatus({ https: true, platform: 'darwin', run })).toEqual({ available: true });
+    expect(resolvedProfile(asked[0])).toContain('(allow network-outbound (remote tcp "*:443"))');
   });
 });
 

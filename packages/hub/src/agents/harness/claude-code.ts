@@ -224,6 +224,7 @@ async function spawnClaude(
   let text = '';
   let toolCalls = 0;
   let lastTool: string | undefined;
+  let usedBash = false;
   let initModel: string | undefined;
   let result: ClaudeEvent | undefined;
   /** Per-message usage, for a run killed before its `result` event: one entry per message id. */
@@ -247,6 +248,7 @@ async function spawnClaude(
         pending.set(b.id ?? '', { tool, input, at: Date.now() });
         toolCalls++;
         lastTool = tool;
+        if (tool === 'Bash') usedBash = true;
         emit({ kind: 'tool-call', who: ctx.who, tool, args: clip(JSON.stringify(input), EVENT_SUMMARY_LIMIT) });
         // Claude Code's own `--max-turns` counts model turns, not calls, so the budget is enforced
         // the way pi's is: the run is stopped at the first call past it.
@@ -280,9 +282,14 @@ async function spawnClaude(
     record,
   });
 
-  // Edit/Write inputs name what the model wrote with its file tools; a `bash` command that wrote a
-  // file names nothing, so the workspace is also scanned for files changed since the run started.
-  for (const rel of await changedSince(setup.workspace, startedAt)) if (!filesWritten.includes(rel)) filesWritten.push(rel);
+  // Edit/Write inputs name what the model wrote with its file tools; a `Bash` command that wrote a
+  // file names nothing, so a run that used Bash also has the workspace scanned for files changed
+  // since it started. Anything else writing the workspace meanwhile would be counted too (0064).
+  if (usedBash) {
+    const scan = await changedSince(setup.workspace, startedAt);
+    if (scan.truncated) record(`claude: the written-files scan stopped after ${SCAN_LIMIT} entries; the list may be incomplete`);
+    for (const rel of scan.files) if (!filesWritten.includes(rel)) filesWritten.push(rel);
+  }
 
   const usage = usageRows(result, messages, initModel);
   for (const u of usage) emit({ kind: 'usage', who: ctx.who, usd: null, tokens: u.promptTokens + u.completionTokens });
@@ -349,11 +356,12 @@ function usageRows(
 }
 
 /**
- * Workspace-relative paths of files modified at or after `since`, sorted. A filesystem scan rather
+ * Workspace-relative paths of files modified at or after `since`, sorted; `truncated` when the walk
+ * stopped at `SCAN_LIMIT` entries. A filesystem scan rather
  * than a before/after `git status`: git in a workspace the agent could write runs whatever that
  * workspace's config says (`core.fsmonitor`, clean filters) — here, outside the sandbox.
  */
-async function changedSince(workspace: string, since: number): Promise<string[]> {
+async function changedSince(workspace: string, since: number): Promise<{ files: string[]; truncated: boolean }> {
   const found: string[] = [];
   let seen = 0;
   const walk = async (dir: string, rel: string): Promise<void> => {
@@ -371,5 +379,5 @@ async function changedSince(workspace: string, since: number): Promise<string[]>
     }
   };
   await walk(workspace, '');
-  return found.sort();
+  return { files: found.sort(), truncated: seen > SCAN_LIMIT };
 }

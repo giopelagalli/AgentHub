@@ -6,7 +6,7 @@ import { icon, type IconName } from './icons.js';
 import { openProjectWizard } from './panels/wizard.js';
 import { turnsOf, type Store, type UiState } from './store.js';
 import { toast } from './toast.js';
-import { SIDEBAR_EVENT, iconButton } from './toolbar.js';
+import { SIDEBAR_EVENT, SIDEBAR_ID, iconButton, setSidebarExpanded } from './toolbar.js';
 import { runningTurn } from './turns.js';
 
 /**
@@ -192,11 +192,13 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   const narrow = typeof matchMedia === 'function' ? matchMedia(NARROW) : null;
 
   host.setAttribute('aria-label', 'Sidebar');
+  host.id = SIDEBAR_ID;
 
   const head = el('div', 'sidebar__head');
   const brand = el('div', 'sidebar__brand', 'AgentHub');
   const create = iconButton('plus', 'New project');
   const hide = iconButton('sidebar', 'Hide the sidebar ([)');
+  hide.setAttribute('aria-controls', SIDEBAR_ID);
   head.append(brand, create, hide);
 
   const searchBox = el('label', 'sidebar__search');
@@ -284,8 +286,15 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
 
   const layout = (): void => {
     const isNarrow = narrow?.matches ?? false;
-    host.inert = isNarrow ? !drawerOpen : collapsed;
+    const shown = isNarrow ? drawerOpen : !collapsed;
+    // Keyboard focus never stays inside a sidebar that is going away: it moves to the page's own
+    // sidebar button, which is what brings it back.
+    const hadFocus = !shown && host.contains(document.activeElement);
+    host.inert = !shown;
     options.onLayout({ collapsed, drawerOpen: isNarrow && drawerOpen });
+    hide.setAttribute('aria-expanded', String(shown));
+    setSidebarExpanded(shown);
+    if (hadFocus) document.querySelector<HTMLElement>('.page .toolbar__sidebar')?.focus();
   };
 
   function closeDrawer(): void {
@@ -339,8 +348,9 @@ export function mountRail(host: HTMLElement, store: Store, options: RailOptions)
   };
 
   const onKey = (event: KeyboardEvent): void => {
-    if (typing() || event.metaKey || event.ctrlKey || event.altKey) return;
+    // Escape closes the phone drawer even from its own search box.
     if (event.key === 'Escape' && drawerOpen) { closeDrawer(); return; }
+    if (typing() || event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === '[') {
       event.preventDefault();
       toggle();

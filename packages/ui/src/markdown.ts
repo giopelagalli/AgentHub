@@ -147,7 +147,17 @@ function takeList(lines: string[], at: number): { html: string; next: number } {
       break;
     }
     const match = LIST_ITEM.exec(lines[index]);
-    if (!match) break;
+    if (!match) {
+      // A hard-wrapped item: a line that starts no block of its own continues the item above it
+      // (its last sub-item, when it has some), the way every markdown reader treats it.
+      if (!items.length || startsBlock(lines[index], lines[index + 1])) break;
+      const last = items[items.length - 1];
+      const line = lines[index].trim();
+      if (last.sub.length) last.sub[last.sub.length - 1] += ` ${line}`;
+      else last.text += ` ${line}`;
+      index++;
+      continue;
+    }
     const indent = match[1].length;
     const itemKind = ordered(match[2]);
     if (indent <= base) {

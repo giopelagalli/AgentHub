@@ -52,6 +52,8 @@ export function openMenu(anchor: HTMLElement, entries: MenuEntry[]): () => void 
     if (entry.hint) node.appendChild(el('span', 'menu__hint', entry.hint));
     node.addEventListener('click', () => {
       close();
+      // Focus goes back to the button first, so a sheet the choice opens returns it there on close.
+      anchor.focus();
       entry.onSelect?.();
     });
     menu.appendChild(node);

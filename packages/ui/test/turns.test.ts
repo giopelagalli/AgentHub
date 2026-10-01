@@ -340,6 +340,17 @@ describe('who and doing', () => {
     expect(toolPhrase('bash', 'x'.repeat(100))).toHaveLength(60);
   });
 
+  it('reads arguments that arrive as JSON text as plain words, never raw braces', () => {
+    expect(toolPhrase('read_file', '{"path":"src/session-log.mjs"}')).toBe('reading src/session-log.mjs');
+    expect(toolPhrase('write_file', '{"path":"test/a.test.mjs","content":"import x"}')).toBe('writing test/a.test.mjs');
+    expect(toolPhrase('run_shell', '{"cmd":["npm","test"]}')).toBe('running npm test');
+    expect(toolPhrase('run_shell', { cmd: ['node', '--test'] })).toBe('running node --test');
+    expect(toolPhrase('list_dir', '{"path":"src/"}')).toBe('listing src/');
+    expect(toolPhrase('list_dir', '{}')).toBe('listing');
+    expect(toolPhrase('complete_milestone', '{"id":3}')).toBe('using complete_milestone');
+    expect(toolPhrase('read_file', '{not json')).toBe('reading {not json');
+  });
+
   it('reads the latest tool call or text by who, held to sixty characters', () => {
     const turn = play([], 1, SCRIPT.slice(0, 9))[0];
     expect(doingCaption(turn, 'coder-1')).toBe('running npm test');

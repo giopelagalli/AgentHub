@@ -87,3 +87,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
 6. Media on the 7900 XTX (FR-E1–E4).
 7. Browser pool (FR-D8).
 8. Accounts, grants, per-member JD, the public site (FR-F1–F6).
+9. A hub branch for two things the redesign wants from the API (0053): each project's last turn
+   outcome in `/api/state`, so every sidebar dot can be red after a failure and not only for
+   projects whose turns the browser has loaded; and a move-to-index roadmap route, so a drag is
+   one request rather than one per step.

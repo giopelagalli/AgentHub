@@ -35,6 +35,23 @@ C. Smaller decisions inside it:
 - The sidebar hides completely rather than collapsing to an icon strip, and is a drawer under 760px.
 - A project's dot: green while a turn runs, amber when `blocked`, red when its last turn failed,
   a ring while paused, grey otherwise.
+- `menu.ts` is a hand-rolled pop-up menu (positioned under its button, arrow keys, Escape and
+  outside-click to close), with one module-level `closeOpen` so only one menu is ever open. Rejected:
+  a native `<select>` (no icons, no separators, no links, and it cannot be a button's menu) and a
+  menu/popover library (a dependency for ~150 lines; the brief rules out new runtime dependencies).
+- `panels/modal.ts` is one shared dialog — scrim, focus trap, Escape, return focus — that the
+  settings sheet and New project both fill; it replaces `panels/sheet.ts` and the wizard's own copy
+  of the same trap. Rejected: the native `<dialog>` element (its top layer sits above the menus and
+  toasts the sheets open, and its backdrop and focus return differ across browsers) and keeping one
+  trap per sheet (three copies of the same keyboard rules).
+- `icons.ts` is an inline SVG set (~30 glyphs on one 24-unit grid, `currentColor` strokes).
+  Rejected: an icon package or font (a dependency, and a font cannot follow the theme's stroke
+  weight), and image files (they cannot take the text colour in both themes).
+- The full-screen artifact sheet is gone: a document's chat is a **pane** beside the tab
+  (`openChat` into the page's own column, toggled by the same button), and a team member's panel
+  is a **floating drawer** over the page. Rejected: keeping the sheet over the tabs (a second
+  window over the first, which is what the owner found cluttered) and a modal chat (the document
+  and the conversation about it have to be usable at once).
 
 ## Consequences
 Every view still works on its own (the sheet era's tests and behaviour hold), at the cost of two

@@ -49,7 +49,8 @@ Access over the old `cluster`/`computer`/`allocation` mounts, which keep their p
 store and the browser subscription are unchanged. Styles are a token file (`styles/tokens.css`,
 light and dark, `data-theme` override) and one stylesheet per area in `styles/`, over `app.css`
 — the component styles that predate the redesign, written against token aliases. Icons are an
-inline SVG set (`icons.ts`). Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`,
+inline SVG set (`icons.ts`); the floating parts are shared: `menu.ts` (the `⋯` and status
+menus), `panels/modal.ts` (the dialog the settings and New project sheets fill) and `toast.ts`. Pure model functions (`turns.ts`, `models.ts`, `org.ts`, `rail.ts`,
 `overview.ts`, `autorun.ts`, `code/model.ts`, and the terminal's frame helpers) are separated
 from DOM code and tested in node; the docs shell is the one DOM-tested part (happy-dom, 0052).
 CodeMirror is the Code tab's and is loaded only when Files opens (0043); its chrome uses the

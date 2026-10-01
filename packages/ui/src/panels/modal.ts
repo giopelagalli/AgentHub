@@ -47,8 +47,8 @@ export function openModal(host: HTMLElement, options: ModalOptions): ModalHandle
   // page behind the scrim — and so a chat drawer's own Escape, on window, never fires under this.
   const onKey = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
-      // A menu open inside the box closes first.
-      if (box.querySelector('.menu')) return;
+      // A menu open over the sheet (menus live on the body) closes first, on its own Escape.
+      if (document.querySelector('body > .menu')) return;
       event.preventDefault();
       event.stopPropagation();
       close();

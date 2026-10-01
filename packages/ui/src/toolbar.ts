@@ -13,6 +13,18 @@ import { icon, type IconName } from './icons.js';
 
 export const SIDEBAR_EVENT = 'agenthub:toggle-sidebar';
 
+/** The sidebar's element id, which every sidebar button `aria-controls`. */
+export const SIDEBAR_ID = 'sidebar';
+
+/** Whether the sidebar shows right now; the sidebar keeps it current, every toolbar reads it. */
+let sidebarExpanded = true;
+
+/** Told by the sidebar whenever it shows or hides, so each toolbar's button says so. */
+export function setSidebarExpanded(expanded: boolean): void {
+  sidebarExpanded = expanded;
+  for (const node of document.querySelectorAll('.toolbar__sidebar')) node.setAttribute('aria-expanded', String(expanded));
+}
+
 export interface Toolbar {
   root: HTMLElement;
   /** After the sidebar button: the title, and anything that belongs to it. */
@@ -30,6 +42,8 @@ export function toolbar(): Toolbar {
   const trailing = el('div', 'toolbar__trailing');
 
   const sidebar = iconButton('sidebar', 'Show the sidebar ([)', 'toolbar__sidebar');
+  sidebar.setAttribute('aria-controls', SIDEBAR_ID);
+  sidebar.setAttribute('aria-expanded', String(sidebarExpanded));
   sidebar.addEventListener('click', () => window.dispatchEvent(new CustomEvent(SIDEBAR_EVENT)));
   leading.appendChild(sidebar);
 

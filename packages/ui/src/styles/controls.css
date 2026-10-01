@@ -77,7 +77,7 @@
 
 .btn--icon:active:not(:disabled),
 .btn--icon[aria-pressed='true'],
-.btn--icon[aria-expanded='true'] {
+.btn--icon[aria-haspopup][aria-expanded='true'] {
   color: var(--label);
   background: var(--press);
 }

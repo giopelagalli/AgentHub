@@ -514,10 +514,21 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     if (parts && current) lead.appendChild(segmented(parts, current, onPick, label).root);
     const actions = el('div', 'subbar__actions');
     root.append(lead, actions);
+    // Arrowing through the old switch remounted the section under it: the new switch takes the
+    // keyboard back, on its selected option, once it is in the document.
+    if (refocusSubbar) {
+      refocusSubbar = false;
+      queueMicrotask(() => lead.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+    }
     return { root, actions };
   };
 
+  /** Set while a section remounts from under a focused sub-switch. */
+  let refocusSubbar = false;
+
   function mountSection(): void {
+    const active = document.activeElement;
+    refocusSubbar = active instanceof HTMLElement && body.contains(active) && !!active.closest('.subbar .seg');
     mounted?.dispose();
     mounted = null;
     overviewHost = null;

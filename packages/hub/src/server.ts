@@ -19,7 +19,7 @@ import {
 import { NodeRegistry } from './node-registry.js';
 import { JobQueue } from './queue.js';
 import { JobLogs } from './job-logs.js';
-import { ModelGateway, isCloudEndpoint } from './gateway.js';
+import { CLOUD_PROVIDERS, ModelGateway, isCloudEndpoint } from './gateway.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { DEFAULT_ORCHESTRATOR_MODEL, DEFAULT_WORKER_MODEL, type AnthropicLike } from './providers/anthropic.js';
 import {
@@ -88,7 +88,6 @@ const TIERS: Tier[] = ['orchestrator', 'worker', 'vision', 'video-gen'];
 const JOB_TYPES: JobType[] = ['llm-session', 'video-gen', 'shell-task', 'browser-lease'];
 const PRIORITIES: Priority[] = Object.keys(PRIORITY_RANK) as Priority[];
 const PREFERENCES: ModelPolicy['prefer'][] = ['local', 'cloud', 'auto'];
-const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'fireworks'];
 const PLANNER_LISTS: PlannerList[] = ['goals', 'todo', 'backlog'];
 const REQUESTER_KINDS: BrowserRequesterKind[] = ['owner', 'orchestrator', 'subagent'];
 const DEFAULT_RECORDINGS_ROOT = 'data/media/browser';

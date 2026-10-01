@@ -86,7 +86,8 @@ On the gaps:
   That is why pi is opt-in rather than the default. Real containment needs a sandboxed user or a
   container, for both harnesses at once.
 - **Tool budget** is enforced by the adapter: it counts `tool_execution_start` events and kills
-  the process group at `SUBAGENT_TOOL_CALLS`, with `HARNESS_WALL_CLOCK_MS` (20 min) as the
+  the process group at the first call past `SUBAGENT_TOOL_CALLS`, so every call within the budget
+  runs as it does on the built-in loop, with `HARNESS_WALL_CLOCK_MS` (20 min) as the
   backstop for a run that stalls without calling anything.
 - **Files written** come from pi's own `write`/`edit` reporting, not a workspace scan: exact, free,
   and the same fidelity class as the built-in path. A file created only by `bash` is not reported —

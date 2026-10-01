@@ -6,6 +6,7 @@ import type { TokenUsage, TurnEvent } from '@agenthub/shared';
 import { secretsStripped } from '@agenthub/shared/shell';
 import { harnessTokenLabel, type ApiTokens, type MintedApiToken } from '../../door.js';
 import { ADMIN_USER } from '../../enrollment.js';
+import type { Route } from '../../gateway.js';
 import { costUsd, priceFor } from '../../providers/fireworks.js';
 import { piSubagentPrompt } from '../../projects/prompts.js';
 import { clip } from '../loop.js';
@@ -26,6 +27,19 @@ const PROVIDER = 'agenthub';
 const API_KEY_ENV = 'AGENTHUB_HARNESS_KEY';
 /** The door's tier name for the worker: routing stays the gateway's call, as for any door client. */
 const WORKER_MODEL = 'agenthub/worker';
+/**
+ * The model pi asks the door for, carrying the run's route the way `gateway.chat` would have honoured
+ * it (decision 0050). `local` is `@local` whatever model is named, because the gateway only ever
+ * applies a named model to a cloud endpoint; `cloud` asks for the named model, else the provider,
+ * else any cloud. `auto` is the plain tier name: a named model or provider there only shapes the
+ * cloud fallback, which the door cannot express, and sending either would put the cloud first.
+ */
+export function doorModel(route: Route | undefined): string {
+  if (route?.prefer === 'local') return `${WORKER_MODEL}@local`;
+  if (route?.prefer === 'cloud') return route.model ?? `${WORKER_MODEL}@${route.provider ?? 'cloud'}`;
+  return WORKER_MODEL;
+}
+
 /** How much of one stderr line reaches the session's event log. */
 const STDERR_LINE_LIMIT = 200;
 
@@ -149,8 +163,7 @@ export function piHarness(deps: PiHarnessDeps): Harness {
         ctx.log(line);
         deps.transcript.appendEvent(sessionId, line);
       };
-      // The member's concrete model when the route names one, else the door's worker tier.
-      const model = task.route?.model ?? WORKER_MODEL;
+      const model = doorModel(task.route);
 
       let token: MintedApiToken | undefined;
       let configDir: string | undefined;
@@ -158,7 +171,7 @@ export function piHarness(deps: PiHarnessDeps): Harness {
         let workspace: string;
         try {
           // One `agent` token per run, revoked below: it is the only credential pi is given.
-          token = deps.door.tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel(ctx.subject, ctx.who));
+          token = deps.door.tokens.mint(ADMIN_USER, 'agent', harnessTokenLabel(ctx.subject, task.member?.id));
           configDir = await mkdtemp(join(tmpdir(), 'agenthub-pi-'));
           await writeFile(join(configDir, 'models.json'), modelsConfig(deps.door.base, model), 'utf8');
           // Resolved once, so a workspace behind a symlink (macOS's /var) still contains pi's paths.
@@ -229,9 +242,10 @@ function spawnPi(
     PI_OFFLINE: '1',
     [API_KEY_ENV]: setup.key,
   };
-  // Only a concrete cloud model can be priced here; for the worker tier the door alone knows what
+  // Only a concrete cloud model can be priced here; for a tier name the door alone knows what
   // served each call, and its ledger row is the priced record.
-  const price = task.route?.model && task.route.provider ? priceFor(task.route.provider, task.route.model) : null;
+  const named = task.route?.model === setup.model ? task.route : undefined;
+  const price = named?.model && named.provider ? priceFor(named.provider, named.model) : null;
 
   return new Promise<PiRun>((settle) => {
     // detached: true makes pi its own process-group leader, so an abort can take down the whole
@@ -294,9 +308,9 @@ function spawnPi(
         lastTool = tool;
         emit({ kind: 'tool-call', who: ctx.who, tool, args: clip(JSON.stringify(args), EVENT_SUMMARY_LIMIT) });
         // pi has no tool-call limit of its own, so the budget is enforced by stopping the process
-        // the moment it goes past — the call already in flight is allowed to finish.
-        if (toolCalls >= task.budget.toolCalls) {
-          stop('budget-exhausted', `pi reached its tool call budget of ${task.budget.toolCalls}`);
+        // at the first call past it: every call within the budget runs, as in the built-in loop.
+        if (toolCalls > task.budget.toolCalls) {
+          stop('budget-exhausted', `pi went past its tool call budget of ${task.budget.toolCalls}`);
         }
         return;
       }
@@ -348,6 +362,9 @@ function spawnPi(
       done = true;
       clearTimeout(timer);
       task.signal?.removeEventListener('abort', onAbort);
+      // pi has exited, but whatever its `bash` backgrounded is still in its group and must not
+      // outlive the run — whatever the outcome.
+      if (groupAlive()) terminate();
       settle({
         report: report || fallbackReport,
         filesWritten, outcome, toolCalls,

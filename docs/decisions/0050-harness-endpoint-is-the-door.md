@@ -24,11 +24,30 @@ the gateway behind it.
 ## Decision
 `selectHarness` takes a `HarnessDoor` — the hub's listen base (`http://127.0.0.1:<port>`, read off
 the listening server, or `HubOptions.selfBase` in tests) and the `ApiTokens` store. At run start the
-pi adapter mints an `agent` token (`pi:<project>/<member>`), writes `models.json` with
+pi adapter mints an `agent` token labelled `pi:<project>/<member id>` (the member part empty when
+the run has no roster member), writes `models.json` with
 `baseUrl: <base>/v1` and `apiKey: "AGENTHUB_HARNESS_KEY"` — the env-var *name*; pi resolves it from
 its own environment, where the token is the only credential added back to the stripped env — and
-asks for `agenthub/worker`, or the member's concrete model id when its route names one. The token
-is revoked in the run's `finally`. No provider key ever enters the subprocess. `endpointFor` and
+asks for a model that carries the run's route (`doorModel`):
+
+- `prefer: 'local'` → `agenthub/worker@local`, whatever model is named, since the gateway only
+  ever applies a named model to a cloud endpoint;
+- `prefer: 'cloud'` → the named model, else `agenthub/worker@<provider>`, else
+  `agenthub/worker@cloud`;
+- `auto` or no policy → plain `agenthub/worker`. A named model or provider under `auto` only
+  shapes the gateway's cloud *fallback*, which the door cannot express; sending either would put
+  the cloud first, so it is dropped and the fallback uses the endpoint's own model.
+
+The door learned those suffixes for this (0034): `@local` is `prefer: 'local'` plus the existing
+no-local-capacity 503, `@cloud` is `prefer: 'cloud'`, `@<provider>` is `prefer: 'cloud'` with
+that provider. Without them a local-only project's pi run would have been routed `auto` and could
+have been billed to the cloud. `/v1/models` still lists only the two plain names. Note `@local`
+is stricter than the built-in loop's `prefer: 'local'`, which spills into the cloud when nothing
+local is eligible at all: a pi run on a local-only project then fails at its first call instead.
+
+The token is revoked in the run's `finally`. When the run ends, for any outcome, the adapter also
+SIGTERMs pi's process group if anything in it is still alive, so a process pi's `bash`
+backgrounded cannot outlive the run. No provider key ever enters the subprocess. `endpointFor` and
 `HarnessEndpoint` are gone. When the door cannot be reached (no `HarnessDoor` wired, or the hub is
 not listening yet), pi is refused and the run falls back to `builtin` with the reason recorded in
 the run's session events.
@@ -36,8 +55,9 @@ the run's session events.
 Because every pi model call is now an ordinary door request into `gateway.chat`:
 - pi spend lands in the usage ledger and counts under `MAX_CLOUD_USD_PER_DAY`. The door reads
   the run token's label back (`harnessAttribution`): an `agent` token labelled
-  `pi:<project>/<who>` books its rows to `subject = <project>`, `member_id = <who>` (kind stays
-  `door`), so pi spend is in the project's cost exactly as the built-in loop's is;
+  `pi:<project>/<member id>` books its rows to `subject = <project>`, `member_id = <member id>`
+  (null when that part is empty; kind stays `door`), so pi spend is in the project's cost exactly
+  as the built-in loop's is;
 - each call counts toward its endpoint's `maxStreams` like any other stream;
 - pi gets the gateway's failover and health marking;
 - pi's calls carry the `agent` priority (10), so the owner's assistant still goes first.
@@ -51,10 +71,12 @@ pi can now be served by anything the gateway can, Anthropic included, since the 
 The spike's "spend is invisible to the usage page" caveat is closed, which removes one of the two
 reasons pi is not yet the default — containment (0049) is the one left. A token minted for a run
 shows in the owner's token list while that run is live. A run cannot survive a restart, so at
-startup the hub revokes every live `agent` token labelled `pi:` — a crash leaves no token open past
-the next boot. The label is the attribution: an owner who mints an `agent` token named
-`pi:<project>/…` by hand books its spend to that project, which is the owner's own choice to make.
+startup the hub revokes every live `agent` token whose label starts with `pi:` (an exact
+`substr` match) — a crash leaves no token open past the next boot. The prefix is reserved:
+`POST /api/tokens` refuses a label starting with `pi:` (400), so only a pi run holds one, and
+neither the attribution nor the sweep can be steered by a hand-minted token.
 The member's live cost chip sums the turn's `usage` events, where pi's `usd` is null, so it shows
-pi's tokens but not its dollars; the dollars are in the project's ledger total. A concrete model id must be one the door can resolve
+pi's tokens but not its dollars; the dollars are in the project's ledger total. A concrete model
+id must be one the door can resolve
 (an endpoint currently serving it); a member override naming any other model fails the run at
 pi's first call rather than silently substituting.

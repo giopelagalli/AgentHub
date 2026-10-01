@@ -341,6 +341,8 @@ curl https://rosenroot.com/v1/chat/completions \
 Both are *tiers*, not models: the hub picks the node, exactly as it does for a project's turns,
 and the response's `model` field says what actually served it. A concrete model id that is
 serving right now also works — a cloud id routes to that provider, a local id stays local.
+A tier name also takes a route suffix: `agenthub/worker@local` (local only — a 503 rather than a
+cloud bill when nothing local is serving), `@cloud`, or a provider such as `@fireworks`.
 
 Streaming and non-streaming both work, as do `tools` and `tool_calls`; ask for
 `stream_options: {"include_usage": true}` and the last chunk carries the token counts. Fields the

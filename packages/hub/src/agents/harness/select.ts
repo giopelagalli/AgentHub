@@ -56,6 +56,7 @@ export async function selectHarness(opts: HarnessSelectOptions): Promise<Harness
   // The manifest is hand-editable YAML, so its value is checked rather than trusted.
   const asked: unknown = opts.member?.harness ?? (await opts.bundle?.manifest())?.harness;
   const wanted: HarnessKind = HARNESS_KINDS.includes(asked as HarnessKind) ? (asked as HarnessKind) : 'builtin';
+  if (wanted === 'claude-code') return fallback('claude-code is not implemented yet');
   if (wanted !== 'pi') return builtin();
   // FR-G4: the reviewer judges a milestone with read-only tools, and until a harness is verified to
   // be restrictable *and* contained it keeps running on the loop that already guarantees both.

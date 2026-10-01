@@ -50,11 +50,13 @@ about so a node token cannot act for another node (0016). Login throttling per I
 **`door.ts`** — the OpenAI-compatible door (FR-D6) and the user API tokens that open it. `ApiTokens`
 stores only sha256 of a token, handing the plaintext back once at mint; `POST /api/tokens` (owner)
 mints, `GET` lists, `DELETE` revokes. `GET /v1/models` names the two tiers (`agenthub/orchestrator`,
-`agenthub/worker`) and `POST /v1/chat/completions` turns the OpenAI wire shape into
+`agenthub/worker`; each also takes a route suffix, `@local`/`@cloud`/`@<provider>`, 0050) and
+`POST /v1/chat/completions` turns the OpenAI wire shape into
 `ChatMessage[]`/`ToolDef[]`, hands it to the gateway, and turns the `ChatResult` back — streaming
 (SSE, with usage in the final chunk on request) or not. The token's `kind` picks the vLLM priority
 (0020, 0035) and its label becomes the ledger's subject, so an outside client costs and caps like a
-project turn (0034). Bad bearers meet login's throttle. It is registered in `server.ts` with one
+project turn (0034); a pi run's token (label prefix `pi:`, reserved) books to its project and member
+instead, and any left live is revoked at startup (0050). Bad bearers meet login's throttle. It is registered in `server.ts` with one
 line and is the only route family outside `/api/` that is guarded.
 
 **`gateway.ts`** — picks an endpoint for a tier under a project's route (`local` / `cloud` /
@@ -101,8 +103,8 @@ so the Activity feed and the employee drawer look the same whichever runtime pro
 files its `write`/`edit` calls named, enforces the tool-call budget pi has no limit of its own for,
 and kills the process group on abort (0049). pi reaches models only through the hub's own door
 (`door.ts`): its per-run `models.json` points at `<selfBase>/v1` with an `agent` API token minted at
-run start and revoked in `finally`, so failover, the ledger, the cloud cap and `maxStreams` apply
-(0050). `select.ts` picks the harness — the member's, else the project's, else `builtin` — given a
+run start and revoked in `finally`, asking for a model that carries the run's route
+(`doorModel`), so failover, the ledger, the cloud cap and `maxStreams` apply (0050). `select.ts` picks the harness — the member's, else the project's, else `builtin` — given a
 `HarnessDoor` (the hub's listen base and its `ApiTokens`) plumbed from `createHub` through
 `ProjectService` and the orchestrator; every reason a choice cannot be honoured falls back to
 `builtin` with the reason in the run's session events. `detect.ts` is

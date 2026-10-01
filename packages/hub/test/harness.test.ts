@@ -227,6 +227,16 @@ describe('the pi harness', () => {
     expect(githubToken).toBeNull();
   });
 
+  it("carries the project's route through the door: a local-only project asks for @local", async () => {
+    await runSubagent({ loop, subject: 'demo', door, modelPolicy: { prefer: 'local' } }, context().ctx, {
+      role: 'coder', member: member(), task: 'Fix boot()',
+    });
+
+    const { argv, models } = await invocation();
+    expect(argv[argv.indexOf('--model') + 1]).toBe('agenthub/agenthub/worker@local');
+    expect(models.providers.agenthub.models.map((m) => m.id)).toEqual(['agenthub/worker@local']);
+  });
+
   it("carries the role and the member's standing instructions into pi's system prompt", async () => {
     await runSubagent({ loop, subject: 'demo', door }, context().ctx, {
       role: 'coder', member: member({ instructions: 'Always run the linter.' }), task: 'Fix boot()',
@@ -350,6 +360,13 @@ describe('choosing a harness', () => {
       expect(run.logs.join('\n')).toContain("the hub's door is not available to pi");
       expect(sessionEvents()).toContain("the hub's door is not available to pi; running on the built-in loop");
     }
+  });
+
+  it('runs claude-code on the built-in loop, saying it is not implemented yet', async () => {
+    await setProjectHarness('claude-code');
+    await runFor(member({ harness: undefined }));
+    expect(existsSync(logPath)).toBe(false);
+    expect(sessionEvents()).toContain('claude-code is not implemented yet; running on the built-in loop');
   });
 
   it('runs on the built-in loop when the manifest names a harness that does not exist', async () => {

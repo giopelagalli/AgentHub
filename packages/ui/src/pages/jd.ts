@@ -97,9 +97,9 @@ export function mountJd(host: HTMLElement, store: Store, deps: JdPageDeps = {}):
     const how = el('p', 'jd__noticeline jd__noticeline--small');
     how.append(
       'The token is the same value as ', el('code', '', 'JD_WEB_TOKEN'), ' in JD’s own ', el('code', '', '.env'),
-      ' — make it once on the Spark with ', el('code', '', 'openssl rand -hex 32'), '. Help → Talking to JD has the steps.',
+      ' — make it once on the Spark with ', el('code', '', 'openssl rand -hex 32'), '. Help → Talking to JD in the hub has the steps.',
     );
-    notice('Connect JD', ['Add two lines to the hub’s .env, then restart the hub and JD:', code, how]);
+    notice('Connect JD', ['Add two lines to the hub’s hub.env, then restart the hub and JD:', code, how]);
   };
 
   const showUnreachable = (): void => {

@@ -55,8 +55,8 @@ menus), `panels/modal.ts` (the dialog the settings and New project sheets fill) 
 from DOM code and tested in node; the docs shell is the one DOM-tested part (happy-dom, 0052).
 CodeMirror is the Code tab's and is loaded only when Files opens (0043); its chrome uses the
 tokens and its syntax palette follows the scheme. `@xterm/xterm` and `@xterm/addon-fit` are the
-terminal's and are imported eagerly (0041, and the lazy-load follow-up on ROADMAP). Bundle after
-the redesign: 535 kB JS (157 kB gzip) and 84 kB CSS (17 kB gzip), plus the 565 kB editor chunk.
+terminal's and load only when the Terminal opens, with their CSS (0041). Bundle: 200 kB JS (72 kB
+gzip) and 79 kB CSS (15 kB gzip), plus the 565 kB editor chunk and the 336 kB terminal chunk.
 
 **`packages/ui/src/panels/docshell.ts`** — the docs shell (0047): one three-column documentation
 layout (grouped, filterable page rail; breadcrumb, title and pager; *On this page*), used by the
@@ -199,8 +199,9 @@ at shutdown the groups are killed outright, since the hub will not be there to r
 It is registered only when the hub has a password, and refuses an upgrade whose `Origin` names any
 host:port but its own — a WebSocket handshake is not same-origin-policed and carries cookies. The socket is paused until the pty and its
 listeners are wired, because the handshake completes before the handler runs and xterm's first frame
-is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (xterm.js, the fit
-addon, reconnect with a banner — a reconnect is a *new* shell and says so).
+is already on its way. The browser end is `packages/ui/src/views/terminal.ts` (the frame helpers and
+a lazy `mountTerminal`) and `terminal-mount.ts` (xterm.js, the fit addon, reconnect with a banner —
+a reconnect is a *new* shell and says so), the only module that imports xterm.
 
 **`projects/preview.ts`** — the preview (FR-B1). `PreviewSupervisor` runs at most one dev server
 per project, spawned detached in `workspace/` with `secretsStripped()` plus `PORT` and

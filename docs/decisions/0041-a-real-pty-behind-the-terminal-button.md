@@ -37,11 +37,12 @@ where there is no credential to hold. The hub's process is no longer purely requ
 children that outlive a request — so `app.close()` has to kill them, and it does, outright. A second
 native dependency joins `better-sqlite3` in the install story.
 
-**xterm is loaded eagerly, and that is temporary.** `views/terminal.ts` imports xterm at the top of
-the module, so it lands in the main chunk: the UI bundle goes from 123.50 kB to 460.53 kB (gzip
-43.95 → 129.90), a 3.7× cost paid on every page load for a button most sessions never press. It is
-this way because it is the smallest thing that works, and it stays this way no longer than the
-next round: the follow-up is a dynamic `import()` inside `mountTerminal`, which Vite emits as its
-own chunk, plus the load-race handling a lazy mount needs (a dispose that lands before the import
-resolves). ROADMAP carries it under *Next*. Preview and Code will want the same treatment, so the
-lazy-mount shape should be settled once and shared rather than invented three times.
+**xterm is loaded lazily.** It first landed in the main chunk (123.50 → 460.53 kB, gzip 43.95 →
+129.90 — paid on every page load for a button most sessions never press). `mountTerminal` in
+`views/terminal.ts` now `import()`s `views/terminal-mount.ts`, the only module that imports xterm,
+its addon and its CSS, so Vite emits them as a chunk of their own: the main JS is 200.43 kB
+(gzip 71.71), the main CSS 79.18 kB, and the terminal chunk 336.12 kB (gzip 85.56) plus 5.24 kB of
+CSS, fetched when the Terminal tab is opened. The mount shows a loading line, says so if the chunk
+fails, and its dispose is safe before the import resolves — the same shape the Code view uses for
+CodeMirror (0043). Preview still mounts eagerly; it can take the same shape if it ever grows a
+heavy dependency.

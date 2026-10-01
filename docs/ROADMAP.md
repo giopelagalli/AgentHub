@@ -53,7 +53,7 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   with `path:line` links that open a file at that line (0043–0046).
 - The **simulation** (`npm run sim` / `sim:ui`, password `sim`): a local hub with scripted mock
   models, two nodes and three seeded projects, so the UI can be seen and driven with no Spark,
-  login or keys (0047).
+  login or keys (0051).
 
 ## In progress
 

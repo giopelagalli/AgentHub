@@ -1,4 +1,4 @@
-# 0047 — The simulation lives in the hub package and scripts agents from their own prompts
+# 0051 — The simulation lives in the hub package and scripts agents from their own prompts
 Date: 2026-10-01
 Decided by: senior-coder
 Status: accepted

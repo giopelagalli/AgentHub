@@ -23,7 +23,7 @@ bundle, the WebSocket, the queue, the gateway, the projects, the assistant, Tele
 enrollment and usage. Everything else talks to it; it talks to nodes only through what they
 register (0003).
 
-**`packages/hub/sim`** — the simulation behind `npm run sim` / `sim:ui` (0047): `startSim()` runs
+**`packages/hub/sim`** — the simulation behind `npm run sim` / `sim:ui` (0051): `startSim()` runs
 the hub in-process with auth on, the strict OpenAI mock answering through `agent-script.ts` (a
 stateless responder that reads each request's system prompt and history to play the manager,
 coder, reviewer, PRD and roadmap leads and the chats), a mock node plus one left to go stale, and

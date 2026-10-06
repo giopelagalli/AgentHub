@@ -3,7 +3,8 @@ import { findMediaByJob, MEDIA_DIR, mediaFileFor, type MediaDesk } from '../proj
 import type { Tool, ToolContext } from './tools.js';
 
 /**
- * FR-E3 — a designer's `generate_image` / `generate_video`. Each queues a render attributed to the
+ * FR-E3 — an employee's `generate_image` / `generate_video`, one per media ability they have
+ * (decision 0073). Each queues a render attributed to the
  * project through the same `MediaDesk` as the owner's prompt box, waits for the file to land in the
  * bundle's `media/`, and returns its path. The wait is bounded by the turn's own signal, and a job
  * no machine has picked up after ten minutes is left queued with the path it will land at; either
@@ -54,9 +55,13 @@ async function generate(desk: MediaDesk, kind: MediaKind, args: unknown, ctx: To
   }
 }
 
-export function mediaTools(desk: MediaDesk, opts: { pollMs?: number; queuedCapMs?: number } = {}): Tool[] {
+/** The render tools for `kinds` (both when omitted), in `generate_image`, `generate_video` order. */
+export function mediaTools(
+  desk: MediaDesk, opts: { pollMs?: number; queuedCapMs?: number; kinds?: readonly MediaKind[] } = {},
+): Tool[] {
   const timing = { pollMs: opts.pollMs ?? POLL_MS, queuedCapMs: opts.queuedCapMs ?? QUEUED_CAP_MS };
-  return [
+  const kinds = opts.kinds ?? ['image', 'video'];
+  const tools: (Tool & { kind: MediaKind })[] = [
     {
       def: {
         type: 'tool', name: 'generate_image',
@@ -64,6 +69,7 @@ export function mediaTools(desk: MediaDesk, opts: { pollMs?: number; queuedCapMs
         parameters: { type: 'object', properties: PROPS, required: ['prompt'] },
       },
       run: (args, ctx) => generate(desk, 'image', args, ctx, timing),
+      kind: 'image',
     },
     {
       def: {
@@ -80,6 +86,8 @@ export function mediaTools(desk: MediaDesk, opts: { pollMs?: number; queuedCapMs
         },
       },
       run: (args, ctx) => generate(desk, 'video', args, ctx, timing),
+      kind: 'video',
     },
   ];
+  return tools.filter((t) => kinds.includes(t.kind)).map(({ def, run }) => ({ def, run }));
 }

@@ -1,7 +1,7 @@
 import { readdir, readFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { JobResult, JobType, MilestoneStatus, ModelPolicy, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
-import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
+import { memberAbilities, MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask, secretsStripped, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -964,13 +964,15 @@ export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDe
       if (memberId && !member) return `error: unknown team member: ${memberId}`;
       const role = member?.role ?? wantedRole;
       if (role === 'browser-operator' && !deps.browser) return 'error: browser-operator is not available in this session';
-      // browser-operator additionally gets the shared browser toolset, a researcher gets the
-      // configured external tools, and a designer the media renders — every other role stays scoped
-      // to the workspace, as before.
-      const extras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
+      // browser-operator additionally gets the shared browser toolset and a researcher the
+      // configured external tools; every other role stays scoped to the workspace, as before. On top
+      // of the role, an employee gets a render tool per media ability (decision 0073) — a designer
+      // with no `abilities` set still gets both.
+      const roleExtras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
         : role === 'researcher' ? (deps.external ?? [])
-        : role === 'designer' && deps.media ? mediaTools(deps.media)
         : [];
+      const kinds = memberAbilities(member ?? { role });
+      const extras = deps.media && kinds.length ? [...roleExtras, ...mediaTools(deps.media, { kinds })] : roleExtras;
       const res = await runSubagent(deps, ctx, { role, member, task, extras });
       const text = res.text.trim();
       const report = text ? truncateResult(text, SUBAGENT_RESULT_LIMIT)

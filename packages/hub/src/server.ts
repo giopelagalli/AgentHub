@@ -50,7 +50,7 @@ import { GithubInstallations } from './projects/github-installations.js';
 import type { ProjectBundle } from './projects/bundle.js';
 import { auditPrd, isPrdScaffold, PrdDrafter } from './projects/prd.js';
 import { currentMilestoneId, moveMilestone, moveMilestoneTo, patchMilestone } from './projects/roadmap.js';
-import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE, type Briefing } from './projects/schema.js';
+import { DOC_SLUG_RE, InvalidSlugError, SLUG_RE, validateAbilities, type Briefing } from './projects/schema.js';
 import { LeaseManager } from './browser/lease.js';
 import { BrowserProxy, poolSlots } from './browser/proxy.js';
 import { Recorder } from './browser/recorder.js';
@@ -1848,6 +1848,7 @@ export function createHub(opts: HubOptions = {}): Hub {
         status: teamStatus(latestManager, now),
         ...(latestManager ? { currentSession: teamSessionView(latestManager) } : {}),
       },
+      renderers: media.renderers(),
     } satisfies TeamRoster;
   });
 
@@ -1879,16 +1880,22 @@ export function createHub(opts: HubOptions = {}): Hub {
 
   /**
    * A per-employee override of the project's defaults: `model` (the model policy, via
-   * `validateModelPolicy`) and `harness` (which runtime runs their tasks). Either may be sent
-   * alone; `null` clears that one back to the project default. A harness this host cannot run is
-   * refused here rather than silently falling back at turn time.
+   * `validateModelPolicy`), `harness` (which runtime runs their tasks) and `abilities` (what they
+   * can render, decision 0073). Any may be sent alone; `null` clears that one back to the default
+   * (for abilities, the role's). A harness this host cannot run is refused here rather than
+   * silently falling back at turn time. Abilities are stored whether or not a machine can render
+   * yet — the roster's `renderers` says that.
    */
   app.patch('/api/projects/:slug/team/:id', async (req, reply) => {
     const { slug, id } = req.params as { slug: string; id: string };
-    const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null; harness: HarnessKind | null }>;
-    if (body.model === undefined && body.harness === undefined) return reply.code(400).send({ error: 'invalid model' });
+    const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null; harness: HarnessKind | null; abilities: unknown }>;
+    if (body.model === undefined && body.harness === undefined && body.abilities === undefined) {
+      return reply.code(400).send({ error: 'invalid model' });
+    }
     const validated = body.model === undefined || body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
     if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });
+    const abilities = body.abilities === undefined || body.abilities === null ? null : validateAbilities(body.abilities);
+    if (body.abilities !== undefined && body.abilities !== null && !abilities) return reply.code(400).send({ error: 'invalid abilities' });
     const bundle = await resolveProject(slug, reply);
     if (!bundle) return reply;
     if (body.harness !== undefined && body.harness !== null) {
@@ -1911,8 +1918,14 @@ export function createHub(opts: HubOptions = {}): Hub {
       if (body.harness) updated.harness = body.harness;
       else delete updated.harness;
     }
+    if (body.abilities !== undefined) {
+      if (abilities) updated.abilities = abilities;
+      else delete updated.abilities;
+    }
     await bundle.writeTeam(members.map((m) => (m.id === id ? updated : m)));
-    await bundle.commit(`owner: set ${member.name}'s ${body.harness !== undefined ? 'harness' : 'model'}`);
+    const what = [body.model !== undefined && 'model', body.harness !== undefined && 'harness', body.abilities !== undefined && 'abilities']
+      .filter(Boolean).join(' and ');
+    await bundle.commit(`owner: set ${member.name}'s ${what}`);
     await refreshProjects();
     return updated;
   });

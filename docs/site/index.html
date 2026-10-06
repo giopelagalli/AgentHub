@@ -508,7 +508,7 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
     <div class="nav-group"><a class="nav-link top-level" href="#lessons" data-page="lessons"><svg><use href="#i-warn"/></svg>What didn't work</a></div>
     <div class="nav-group"><a class="nav-link top-level" href="#roadmap" data-page="roadmap"><svg><use href="#i-map"/></svg>Roadmap</a></div>
     <!-- ==== SECTION: records-date ==== -->
-    <p class="side-foot">A view over <code>docs/</code>. Records as of <b class="num">2026-10-06</b>, last decision <b class="num">0073</b>.</p>
+    <p class="side-foot">A view over <code>docs/</code>. Records as of <b class="num">2026-10-06</b>, last decision <b class="num">0075</b>.</p>
     <!-- ==== /SECTION ==== -->
   </nav>
   <div class="scrim" id="scrim"></div>
@@ -583,8 +583,8 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
   <div class="tbl"><table>
     <thead><tr><th>Machine</th><th>What it does</th><th>Records</th></tr></thead>
     <tbody>
-      <tr><td>DGX Spark</td><td>The control node: hub and node daemon under systemd, the shared vLLM, and JD. One box to keep alive. The local model is paused for AgentHub work for now, so Auto projects run on Fireworks.</td><td><span class="refs"><a href="#d-0003-spark-is-the-control-node">0003</a><a href="#d-0005-attach-mode-serving">0005</a><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a></span></td></tr>
-      <tr><td>rosenroot.com</td><td>A DigitalOcean droplet running Caddy. Forwards to the Spark over Tailscale, basic auth on the UI paths only, an offline page and a watchdog when the hub is down. A second site serves previews.</td><td><span class="refs"><a href="#d-0025-public-site-on-the-apex">0025</a><a href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a><a href="#d-0040-previews-get-their-own-origin-and-a-capability">0040</a></span></td></tr>
+      <tr><td>DGX Spark</td><td>The control node: hub and node daemon under systemd, the shared vLLM, and JD. One box to keep alive. By the owner's call the local model is to be paused for AgentHub work, so Auto projects run on Fireworks; the Pause models switch is the owner's to turn on.</td><td><span class="refs"><a href="#d-0003-spark-is-the-control-node">0003</a><a href="#d-0005-attach-mode-serving">0005</a><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a><a href="#d-0074-generation-on-fireworks-not-the-local-model">0074</a></span></td></tr>
+      <tr><td>rosenroot.com</td><td>A DigitalOcean droplet running Caddy. Forwards to the Spark over Tailscale, basic auth on the UI paths only, an offline page and a watchdog when the hub is down. A second site serves previews. The owner chose a droplet over a Cloudflare Tunnel.</td><td><span class="refs"><a href="#d-0025-public-site-on-the-apex">0025</a><a href="#d-0075-the-public-edge-is-a-droplet-not-cloudflare">0075</a><a href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a><a href="#d-0040-previews-get-their-own-origin-and-a-capability">0040</a></span></td></tr>
       <tr><td>MacBook</td><td>Joined with the one-line installer; the first machine enrolled end to end.</td><td><span class="refs"><a href="#d-0016-enrollment-and-self-serving-hub">0016</a><a href="#d-0017-tsx-runtime-dependency">0017</a></span></td></tr>
       <tr><td>PC, 7900 XTX</td><td>Media renders through ComfyUI; stills and clips share its one GPU slot. Built against a mock; the real hardware test is next.</td><td><span class="refs"><a href="#d-0018-h3-out-media-on-amd">0018</a><a href="#d-0061-stills-share-the-media-slot">0061</a></span></td></tr>
       <tr><td>Mac mini</td><td>The browser node: one Chromium with an isolated context per slot.</td><td><span class="refs"><a href="#d-0003-spark-is-the-control-node">0003</a><a href="#d-0059-browser-pool-contexts-in-one-browser">0059</a></span></td></tr>
@@ -669,7 +669,7 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
       <div><dt>Cap</dt><dd><code>MAX_CLOUD_USD_PER_DAY</code> parks cloud endpoints; local work keeps running.</dd></div>
       <div><dt>Pause models</dt><dd>A per-node flag. Auto falls through to cloud; Local fails with a clear reason.</dd></div>
     </dl>
-    <p class="mod-refs">Records <span class="refs"><a href="#d-0002-curated-fireworks-tiers">0002</a><a href="#d-0006-vllm-priority-agents-yield-to-jd">0006</a><a href="#d-0008-thinking-off-for-workers">0008</a><a href="#d-0019-cost-accounting-dollar-cap">0019</a><a href="#d-0020-shared-node-one-model-priority-tiers">0020</a><a href="#d-0022-usage-recorded-in-the-agent-loop">0022</a><a href="#d-0023-turn-cost-summed-from-usage-events">0023</a><a href="#d-0024-cloud-spend-cap-parks-cloud-endpoints">0024</a><a href="#d-0026-price-table-location">0026</a><a href="#d-0035-the-tokens-kind-sets-the-requests-priority">0035</a><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a></span></p>
+    <p class="mod-refs">Records <span class="refs"><a href="#d-0002-curated-fireworks-tiers">0002</a><a href="#d-0006-vllm-priority-agents-yield-to-jd">0006</a><a href="#d-0008-thinking-off-for-workers">0008</a><a href="#d-0019-cost-accounting-dollar-cap">0019</a><a href="#d-0020-shared-node-one-model-priority-tiers">0020</a><a href="#d-0022-usage-recorded-in-the-agent-loop">0022</a><a href="#d-0023-turn-cost-summed-from-usage-events">0023</a><a href="#d-0024-cloud-spend-cap-parks-cloud-endpoints">0024</a><a href="#d-0026-price-table-location">0026</a><a href="#d-0035-the-tokens-kind-sets-the-requests-priority">0035</a><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a><a href="#d-0074-generation-on-fireworks-not-the-local-model">0074</a></span></p>
   </div>
   <!-- ==== /SECTION ==== -->
 
@@ -933,7 +933,7 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
       <figcaption>Nodes never need repository access: the hub serves its own source. Admission is trust, so only enroll machines you would hand your workspace to.</figcaption>
     </figure>
     <p>The edge is Caddy on the droplet. When the Spark is off, it answers with an offline page and its own watchdog alerts Telegram on each transition, using a separate bot so it works when everything on the Spark is down.</p>
-    <p class="mod-refs">Records <span class="refs"><a href="#d-0005-attach-mode-serving">0005</a><a href="#d-0014-installer-before-workbench">0014</a><a href="#d-0016-enrollment-and-self-serving-hub">0016</a><a href="#d-0017-tsx-runtime-dependency">0017</a><a href="#d-0025-public-site-on-the-apex">0025</a><a href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a></span></p>
+    <p class="mod-refs">Records <span class="refs"><a href="#d-0005-attach-mode-serving">0005</a><a href="#d-0014-installer-before-workbench">0014</a><a href="#d-0016-enrollment-and-self-serving-hub">0016</a><a href="#d-0017-tsx-runtime-dependency">0017</a><a href="#d-0025-public-site-on-the-apex">0025</a><a href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a><a href="#d-0075-the-public-edge-is-a-droplet-not-cloudflare">0075</a></span></p>
   </div>
   <!-- ==== /SECTION ==== -->
 
@@ -965,12 +965,13 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
   </div>
 
   <!-- ==== SECTION: record-gaps (remove an item once its record exists) ==== -->
-  <details class="gaps" id="dec-gaps"><summary><svg><use href="#i-warn"/></svg>Gaps in the records <span class="n">4</span></summary>
+  <details class="gaps" id="dec-gaps"><summary><svg><use href="#i-warn"/></svg>Gaps in the records <span class="n">5</span></summary>
     <ul>
       <li>Two files are numbered 0034 (Connect GitHub, and the OpenAI door), and there is no 0036.</li>
-      <li>0031, 0032, 0033 and the Connect GitHub 0034 have no <code>Status:</code> line.</li>
-      <li>The owner's choice to run AgentHub on Fireworks instead of the local model (since 2026-10-01) has no owner decision; only the Pause models flag it led to is recorded (<a class="ref" href="#d-0054-pause-models-is-its-own-node-flag">0054</a>).</li>
-      <li>The droplet as the public edge rather than Cloudflare has no record of the alternative; <a class="ref" href="#d-0025-public-site-on-the-apex">0025</a> and <a class="ref" href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a> cover only the droplet.</li>
+      <li>The Connect GitHub 0034 still describes the status line on the "Cluster" page, which the redesign renamed Machines (<a class="ref" href="#d-0048-ui-redesign-apple-simplicity">0048</a>).</li>
+      <li>The PRD names <code>@fastify/http-proxy</code> for the preview listener; <a class="ref" href="#d-0038-preview-listener-is-hand-rolled">0038</a> rejected it and hand-rolled the listener.</li>
+      <li>0048 is dated 2026-10-01 but sits between 0047 and 0049, both dated 2026-09-24, so the numbers and dates run out of order.</li>
+      <li>The claude-code harness is macOS-only (<a class="ref" href="#d-0064-claude-code-harness-on-the-subscription">0064</a>), while the production hub is the Linux Spark. Until Linux is supported (ROADMAP Next 2) it cannot run on the machine that hosts production.</li>
     </ul>
   </details>
   <!-- ==== /SECTION ==== -->
@@ -1152,7 +1153,7 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 <p><code>PATCH /api/projects/:slug/team/:id { model | null }</code> validated by the same helper as the project route; <code>runSubagent</code> resolves <code>routeFor(member.model ?? policy, &#x27;worker&#x27;)</code>.</p>
 </section>
 <section class="dec-sec sec-consequences"><h4>Consequences</h4>
-<p>The manager keeps the project's orchestrator model. The roster is now where per-agent behaviour lives (harness follows, <a class="dref" href="#d-0011-paged-file-reads">0011</a>).</p>
+<p>The manager keeps the project's orchestrator model. The roster is now where per-agent behaviour lives (harness follows, <a class="dref" href="#d-0013-pi-default-harness">0013</a>).</p>
 </section>
 <p class="dec-src">Record: <code>docs/decisions/0007-per-employee-model-override.md</code></p>
 </div>
@@ -1730,11 +1731,11 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 </details>
 
 <!-- ======== DECISION 0031 ======== -->
-<details class="dec" id="d-0031-installation-tokens-not-user-tokens" data-num="0031" data-by="senior-coder" data-status="missing" data-area="github security" data-date="2026-09-24">
+<details class="dec" id="d-0031-installation-tokens-not-user-tokens" data-num="0031" data-by="senior-coder" data-status="accepted" data-area="github security" data-date="2026-09-24">
 <summary>
 <span class="dec-num">0031</span>
 <span class="dec-main"><span class="dec-title">The App works with installation tokens; the user token is used once and dropped</span><span class="dec-why">The hub keeps no GitHub credential. Installation tokens are minted per repository and last an hour.</span></span>
-<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-missing" title="This record has no Status line">No status line</span></span>
+<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-accepted">Accepted</span></span>
 </summary>
 <div class="dec-body">
 <section class="dec-sec sec-context"><h4>Context</h4>
@@ -1756,11 +1757,11 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 </details>
 
 <!-- ======== DECISION 0032 ======== -->
-<details class="dec" id="d-0032-connect-state-is-a-signed-nonce-with-nothing-stored" data-num="0032" data-by="senior-coder" data-status="missing" data-area="github security" data-date="2026-09-24">
+<details class="dec" id="d-0032-connect-state-is-a-signed-nonce-with-nothing-stored" data-num="0032" data-by="senior-coder" data-status="accepted" data-area="github security" data-date="2026-09-24">
 <summary>
 <span class="dec-num">0032</span>
 <span class="dec-main"><span class="dec-title">The connect round trip carries a signed nonce; nothing is stored</span><span class="dec-why">The connect round trip carries a signed, expiring nonce, and nothing is stored. Review made the check unconditional.</span></span>
-<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-missing" title="This record has no Status line">No status line</span><span class="pill pill-fix" title="A review found the record wrong; see the Correction section">Corrected after review</span></span>
+<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-accepted">Accepted</span><span class="pill pill-fix" title="A review found the record wrong; see the Correction section">Corrected after review</span></span>
 </summary>
 <div class="dec-body">
 <section class="dec-sec sec-context"><h4>Context</h4>
@@ -1786,11 +1787,11 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 </details>
 
 <!-- ======== DECISION 0033 ======== -->
-<details class="dec" id="d-0033-credential-precedence-app-then-token" data-num="0033" data-by="senior-coder" data-status="missing" data-area="github" data-date="2026-09-24">
+<details class="dec" id="d-0033-credential-precedence-app-then-token" data-num="0033" data-by="senior-coder" data-status="accepted" data-area="github" data-date="2026-09-24">
 <summary>
 <span class="dec-num">0033</span>
 <span class="dec-main"><span class="dec-title">Credentials are tried in order: the App, then the personal access token</span><span class="dec-why">Try the App first, because its token is narrower, then fall back to the personal access token.</span></span>
-<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-missing" title="This record has no Status line">No status line</span></span>
+<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-accepted">Accepted</span></span>
 </summary>
 <div class="dec-body">
 <section class="dec-sec sec-context"><h4>Context</h4>
@@ -1812,11 +1813,11 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 </details>
 
 <!-- ======== DECISION 0034 ======== -->
-<details class="dec" id="d-0034-connect-github-where-the-need-arises" data-num="0034" data-by="senior-coder" data-status="missing" data-area="github ui" data-date="2026-09-24">
+<details class="dec" id="d-0034-connect-github-where-the-need-arises" data-num="0034" data-by="senior-coder" data-status="accepted" data-area="github ui" data-date="2026-09-24">
 <summary>
 <span class="dec-num">0034</span>
 <span class="dec-main"><span class="dec-title">Connect GitHub sits in the import tab, with a status line on Cluster</span><span class="dec-why">The Connect GitHub button sits where the need arises: the import tab of New project.</span></span>
-<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-missing" title="This record has no Status line">No status line</span></span>
+<span class="dec-meta"><time datetime="2026-09-24">2026-09-24</time><span class="pill pill-agent" title="Decided by: senior-coder">Senior-coder</span><span class="pill pill-accepted">Accepted</span></span>
 </summary>
 <div class="dec-body">
 <section class="dec-sec sec-context"><h4>Context</h4>
@@ -2379,7 +2380,7 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 </summary>
 <div class="dec-body">
 <section class="dec-sec sec-context"><h4>Context</h4>
-<p>Decision <a class="dref" href="#d-0049-pi-harness-interface">0049</a> verified that pi has no workspace containment: its file tools take absolute paths and its <code>bash</code> reaches anything the hub's OS user can. That is what keeps pi opt-in, keeps the milestone reviewer on <code>builtin</code>, and blocks pi from becoming the default (<a class="dref" href="#d-0013-pi-default-harness">0013</a>, ROADMAP Next 4). pi itself has no setting for it, so the containment has to come from the OS, around the process. The hub runs on two kinds of host: the DGX Spark (Ubuntu, arm64) and dev Macs.</p>
+<p>Decision <a class="dref" href="#d-0049-pi-harness-interface">0049</a> verified that pi has no workspace containment: its file tools take absolute paths and its <code>bash</code> reaches anything the hub's OS user can. That is what keeps pi opt-in, keeps the milestone reviewer on <code>builtin</code>, and blocks pi from becoming the default (<a class="dref" href="#d-0013-pi-default-harness">0013</a>, ROADMAP Next 2). pi itself has no setting for it, so the containment has to come from the OS, around the process. The hub runs on two kinds of host: the DGX Spark (Ubuntu, arm64) and dev Macs.</p>
 </section>
 <section class="dec-sec sec-extra"><h4>What was verified, and where</h4>
 <p><strong>macOS — verified on this Mac (macOS 26.5, arm64, node 22, pi 0.84.1).</strong> <code>/usr/bin/sandbox-exec</code> is deprecated in its man page but present and working, and it is what Codex CLI and Claude Code's sandbox runtime use on macOS. A deny-default profile was run around <code>sh</code>, <code>node</code>, the real <code>pi --version</code>, <code>git</code> and <code>npm</code>:</p>
@@ -2872,6 +2873,54 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 <p class="dec-src">Record: <code>docs/decisions/0073-media-is-a-per-employee-ability.md</code></p>
 </div>
 </details>
+
+<!-- ======== DECISION 0074 ======== -->
+<details class="dec is-owner" id="d-0074-generation-on-fireworks-not-the-local-model" data-num="0074" data-by="owner" data-status="accepted" data-area="models cost" data-date="2026-10-01">
+<summary>
+<span class="dec-num">0074</span>
+<span class="dec-main"><span class="dec-title">AgentHub generates on Fireworks for now; the Spark's local model is paused for it</span><span class="dec-why">The owner asked that everything AgentHub generates use the Fireworks API, with the local model paused. JD still calls the local model directly.</span></span>
+<span class="dec-meta"><time datetime="2026-10-01">2026-10-01</time><span class="pill pill-owner" title="Decided by: owner">Owner</span><span class="pill pill-accepted">Accepted</span></span>
+</summary>
+<div class="dec-body">
+<section class="dec-sec sec-context"><h4>Context</h4>
+<p>Until now projects on <strong>Auto</strong> preferred the Spark's local vLLM model and fell back to Fireworks. On 2026-10-01 the owner asked that everything AgentHub generates use the Fireworks API instead, with the local model's use paused ("rn lets just use fireworks api if you generate anything not the local"). JD keeps calling the local model directly; this is about the hub's own work.</p>
+</section>
+<section class="dec-sec sec-options"><h4>Options</h4>
+<ul class="opts"><li class="opt-other">A — keep local-first routing: the owner's call was to stop using it for now.</li><li class="opt-other">B — stop the Spark's node daemon: works at once (Auto falls back to cloud) but also takes the node's other jobs offline; the stopgap used on the day.</li><li class="opt-chosen">C (chosen) — a per-node <strong>Pause models</strong> switch (<a class="dref" href="#d-0054-pause-models-is-its-own-node-flag">0054</a>) that takes the node's models out of routing while the node stays online; the owner turns it on for the Spark (until then, stopping the daemon does the same).</li></ul>
+</section>
+<section class="dec-sec sec-decision"><h4>Decision</h4>
+<p>Generation runs on Fireworks' cheap tier (glm-5p3-flash, deepseek-v4p1-flash; hard models stay off, <a class="dref" href="#d-0002-curated-fireworks-tiers">0002</a>) by pausing the Spark's models. Local-only projects are refused rather than sent to the cloud (<a class="dref" href="#d-0054-pause-models-is-its-own-node-flag">0054</a>), so privacy holds.</p>
+</section>
+<section class="dec-sec sec-consequences"><h4>Consequences</h4>
+<ul><li>Every turn costs money, bounded by <code>MAX_CLOUD_USD_PER_DAY</code>.</li><li>Local-only projects cannot run while the pause is on.</li><li>Lifting it is one switch on the Machines page, when the owner says local is back.</li></ul>
+</section>
+<p class="dec-src">Record: <code>docs/decisions/0074-generation-on-fireworks-not-the-local-model.md</code></p>
+</div>
+</details>
+
+<!-- ======== DECISION 0075 ======== -->
+<details class="dec is-owner" id="d-0075-the-public-edge-is-a-droplet-not-cloudflare" data-num="0075" data-by="owner" data-status="accepted" data-area="infra security" data-date="2026-09-23">
+<summary>
+<span class="dec-num">0075</span>
+<span class="dec-main"><span class="dec-title">rosenroot.com reaches the hub through a droplet, not a Cloudflare Tunnel</span><span class="dec-why">The hub is at home on the Spark. The public site reaches it through a small droplet the owner controls, not through Cloudflare.</span></span>
+<span class="dec-meta"><time datetime="2026-09-23">2026-09-23</time><span class="pill pill-owner" title="Decided by: owner">Owner</span><span class="pill pill-accepted">Accepted</span></span>
+</summary>
+<div class="dec-body">
+<section class="dec-sec sec-context"><h4>Context</h4>
+<p>The hub lives on the Spark at home; rosenroot.com has to reach it without exposing the house. After asking "why do we need a droplet here?", the owner was offered three shapes and chose the recommended one. <a class="dref" href="#d-0025-public-site-on-the-apex">0025</a> and <a class="dref" href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a> record how the site works; this records the choice of edge.</p>
+</section>
+<section class="dec-sec sec-options"><h4>Options</h4>
+<ul class="opts"><li class="opt-other">A — Cloudflare Tunnel: free, no droplet, Cloudflare Access login; but the nameservers move to Cloudflare and Cloudflare decrypts all traffic in the middle.</li><li class="opt-other">B — no public site, Tailscale on every device: no edge at all, but a friend without Tailscale can't use it.</li><li class="opt-chosen">C (chosen, recommended) — a $6/month DigitalOcean droplet (the old JD droplet) running Caddy, joined to the tailnet and proxying to the Spark.</li></ul>
+</section>
+<section class="dec-sec sec-decision"><h4>Decision</h4>
+<p>The droplet: TLS ends on a machine the owner controls, the Spark and the home network stay unreachable from the internet, and DNS stays at Porkbun.</p>
+</section>
+<section class="dec-sec sec-consequences"><h4>Consequences</h4>
+<ul><li>One more machine to keep alive (Caddy, Tailscale, the offline page and watchdog).</li><li>The droplet is stateless and rebuildable from <code>deploy/do/README.md</code>; projects live on the Spark.</li></ul>
+</section>
+<p class="dec-src">Record: <code>docs/decisions/0075-the-public-edge-is-a-droplet-not-cloudflare.md</code></p>
+</div>
+</details>
 <!-- ==== /SECTION ==== -->
   </div>
   <p class="empty" id="decEmpty" hidden>No decision matches. Clear the filter or pick another area.</p>
@@ -2908,10 +2957,10 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 
     <li class="tl-day"><div class="tl-date" id="t-2026-10-01">10-01<small>Thu · 2026</small></div>
       <ol class="tl-items">
-        <li class="tl-item big" data-kind="turn"><h3>Fireworks, not the local model, for now <span class="pill pill-owner">Owner</span> <span class="pill pill-missing">Record missing</span></h3>
-          <p>The owner stopped generating on the Spark's local model for AgentHub work. Pause models became its own per-node flag, so the machine keeps running jobs while Auto projects fall through to the cloud.</p>
+        <li class="tl-item big" data-kind="turn"><h3>Fireworks, not the local model, for now <span class="pill pill-owner">Owner</span></h3>
+          <p>The owner stopped generating on the Spark's local model for AgentHub work. Pause models became its own per-node flag, so the machine keeps running jobs while Auto projects fall through to the cloud. JD still calls the local model directly.</p>
           <div class="from-to"><s>local first</s> → <b>Fireworks, capped</b></div>
-          <div class="refs"><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a></div></li>
+          <div class="refs"><a href="#d-0054-pause-models-is-its-own-node-flag">0054</a><a href="#d-0074-generation-on-fireworks-not-the-local-model">0074</a></div></li>
         <li class="tl-item big" data-kind="owner"><h3>Redesign the UI around one primary action <span class="pill pill-owner">Owner</span></h3>
           <p>The owner judged the UI cluttered and dated. Apple-simple: a navigation-only sidebar, five tabs, settings in a sheet, light and dark.</p>
           <div class="refs"><a href="#d-0048-ui-redesign-apple-simplicity">0048</a><a href="#d-0053-redesign-implementation-shape">0053</a></div></li>
@@ -2958,6 +3007,10 @@ ul.opts li.opt-chosen::before { border-color: var(--green-dot); background: var(
 
     <li class="tl-day"><div class="tl-date" id="t-2026-09-23">09-23<small>Wed · 2026</small></div>
       <ol class="tl-items">
+        <li class="tl-item big" data-kind="owner"><h3>A droplet, not Cloudflare, for the public edge <span class="pill pill-owner">Owner</span></h3>
+          <p>The owner asked why a droplet was needed, then chose from three shapes: a Cloudflare Tunnel, no public site, or a $6 droplet. The droplet keeps TLS on a machine the owner controls and the home network off the internet.</p>
+          <div class="from-to"><s>Cloudflare Tunnel</s> → <b>a droplet running Caddy</b></div>
+          <div class="refs"><a href="#d-0025-public-site-on-the-apex">0025</a><a href="#d-0027-droplet-answers-when-the-hub-is-down">0027</a><a href="#d-0075-the-public-edge-is-a-droplet-not-cloudflare">0075</a></div></li>
         <li class="tl-item big" data-kind="owner"><h3>Every member gets their own JD <span class="pill pill-owner">Owner</span> <span class="pill pill-override">Override</span></h3>
           <p>The plan offered other members the hub's built-in assistant. The owner wants JD itself to be the product's assistant, one per member on a machine they own.</p>
           <div class="from-to"><s>hub-hosted assistant</s> → <b>a JD per member</b></div>

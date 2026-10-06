@@ -194,8 +194,12 @@ export async function startSim(opts: SimOptions = {}): Promise<Sim> {
       name: 'sim-mini', arch: 'arm64', jobTypes: [], endpoints: [],
       browser: { url: `http://127.0.0.1:${(b.server.address() as { port: number }).port}`, slots: BROWSER_SLOTS },
     } satisfies NodeRegistration);
-    const browse = (): Promise<unknown> => Promise.all(BROWSING_PROJECTS.map((project) =>
-      call('POST', '/api/browser/lease', { kind: 'orchestrator', id: `project:${project}`, project })));
+    // One at a time, so each project lands in the same slot on every run.
+    const browse = async (): Promise<void> => {
+      for (const project of BROWSING_PROJECTS) {
+        await call('POST', '/api/browser/lease', { kind: 'orchestrator', id: `project:${project}`, project });
+      }
+    };
     await browse();
 
     heartbeat = setInterval(() => {

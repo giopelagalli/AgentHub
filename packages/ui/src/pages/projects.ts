@@ -30,7 +30,7 @@ import { mountPreview } from '../views/preview.js';
 import { mountProjectBrowser, projectBrowserView } from '../views/browser.js';
 import { mountRoadmap } from '../views/roadmap.js';
 import { mountTerminal } from '../views/terminal.js';
-import { fillHarnessField, memberModelField, projectHarness } from './project/controls.js';
+import { fillHarnessField, memberAbilitiesField, memberModelField, projectHarness } from './project/controls.js';
 import { renderOverview, tickOverview, type Held, type OverviewData } from './project/overview.js';
 import { openProjectSettings, type SettingsHandle, type SettingsSection } from './project/settings.js';
 
@@ -300,7 +300,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       onClose: onDrawerClosed,
       ...(card.avatar ? { avatar: card.avatar } : {}),
       ...(activity ? { activity } : {}),
-      ...(member ? { modelField: memberModelField(slug, member, catalog), harnessField: slot } : {}),
+      ...(member ? {
+        modelField: memberModelField(slug, member, catalog),
+        harnessField: slot,
+        abilitiesField: memberAbilitiesField(slug, member, roster?.renderers),
+      } : {}),
     }));
     if (member) harnessSlot = { slot, slug, memberId: member.id };
   };

@@ -79,6 +79,9 @@ export async function seedProjects(call: HubCall, hub: Hub, opts: { previewAppPo
     prompt: 'App icon for Pomodoro CLI: a flat tomato with a clock face, rounded square, warm red on cream',
   });
   await mediaLanded(call, pomodoro, icon.id);
+  // Media is a per-employee ability, not a role (decision 0073): Ada makes stills, Sol clips.
+  await call('PATCH', `/api/projects/${pomodoro}/team/coder-1`, { abilities: ['image'] });
+  await call('PATCH', `/api/projects/${pomodoro}/team/researcher-1`, { abilities: ['video'] });
 
   // habit-tracker -----------------------------------------------------------------------------
   const habit = 'habit-tracker';
@@ -96,7 +99,7 @@ export async function seedProjects(call: HubCall, hub: Hub, opts: { previewAppPo
   });
 
   return [
-    `${pomodoro}   PRD, 9 milestones (m1–m3 done + verified), 2 turns, docs, code map, workspace, preview, an app icon (Docs → Media)`,
+    `${pomodoro}   PRD, 9 milestones (m1–m3 done + verified), 2 turns, docs, code map, workspace, preview, an app icon (Docs → Media), Ada makes images, Sol videos`,
     `${habit}  PRD drafted, roadmap generated, nothing built`,
     `scratch        just created (scaffold PRD)`,
   ];

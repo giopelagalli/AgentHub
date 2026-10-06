@@ -54,7 +54,9 @@ repository links of an imported project).
 - **Plan** — the PRD (*Requirements*) and the **Roadmap**, side by side under a small switch. Each
   has an **Ask the …** button that opens a chat beside the document with the agent that edits it
   ("move milestone 4 before 2", "add a section on backups"); it changes the document in place.
-- **Docs**, **Code** (*Files · Terminal · Preview · Browser*) and **Activity** — see their sections below.
+- **Docs** (*Pages · Media · How the code works*), **Code** (*Files · Terminal · Preview · Browser*) and
+  **Activity** — see their sections below. The toolbar's chat button is the Manager, except on Code,
+  where it is the Guide.
 
 **Settings** (from **⋯**) is a sheet grouped like macOS Settings: **Models**, **Schedule**,
 **Priority**, **Team** (add or remove employees) and **Pause**. Everything applies as you change it.
@@ -589,21 +591,26 @@ are stripped out of its environment, the same way they are for anything an agent
 
 ## Code
 
-**Code → Files** is the project's workspace: the file tree on the left, the file you picked in the
-middle, and the **Guide** docked on the right (on a narrow window, **Ask the guide** opens it). *In
-this project* on the Overview says how many files the workspace has and how long ago the map was
-refreshed.
+**Code → Files** is the project's workspace: the file tree on the left and the file you picked
+beside it — nothing else. The toolbar's chat button (or `c`) is the **Guide** on the Code tab: it
+docks on the right and the button stays lit while it is open; on every other tab the same button is
+the Manager. *In this project* on the Overview says how many files the workspace has and how long ago
+the map was refreshed. The map and its tour are not here: they are in **Docs → How the code works**
+(below).
 
 **Files.** Click a folder to fold it open or shut, a file to read it. Arrow keys walk the tree and
 Enter opens what is selected. Binary files and anything over 2 MB are listed but say *not text* —
 they are there so you know they exist, not to be opened. Dependencies, build output and `.git` are
 never listed at all.
 
-**Editing.** The file is editable as it stands. **Save** (or `Cmd`/`Ctrl`-`S`) writes it and commits
+**Editing.** The file is editable as it stands. Until you open one the editor is a single line,
+*Choose a file to open it*; once one is open its path sits above it, and **Save** appears beside it
+only while there are unsaved changes. **Save** (or `Cmd`/`Ctrl`-`S`) writes it and commits
 it as `Owner edit: <path>` — to the project's own repository if it was imported from GitHub, to the
 bundle otherwise. That commit is the point: the next turn reads the workspace, so an edit nobody
 recorded is an edit the agents overwrite. A dot beside the filename means unsaved changes, and
-leaving the file asks before discarding them.
+leaving the file — for another file, another part of Code or another tab — asks before discarding
+them.
 
 Two kinds of file save but are not committed, and the toast says so: a `.env`, `.pem` or `.key`
 (never committed, so a secret can't ride a milestone push to your GitHub repository) and anything
@@ -615,19 +622,27 @@ gets from the UI to the database, or why something is the way it is. It answers 
 project actually recorded — a decision-log entry, a PRD requirement number — and says so plainly
 when nothing recorded a reason, rather than making one up. It can read anything and change nothing:
 if something needs fixing, it says so and you either fix it yourself here or run a turn. Its replies
-cite files as `` `path:line` `` — click one and it opens here, the same as a link in the Map.
+cite files as `` `path:line` `` — click one and it opens in Files, the same as a link in the Map,
+with the Guide still open beside it.
 
-**Map.** The second tab is `docs/code-map.md`: chapters from the entry points down, each item a
-`` `path:line` `` link. Click one and the file opens at that line. The Manager refreshes the map
-when a milestone lands; **Refresh map** does it on demand, which takes a model call or two.
+### How the code works (Docs)
 
-**Tour.** **Start tour** on the Map walks the codebase one map link at a time, in the map's order.
+**Docs → How the code works** is for *understanding* the code rather than editing it: the Map, then
+the Tour. Any file link in either opens the file in **Code → Files** at that line.
+
+**Map.** `docs/code-map.md`: chapters from the entry points down, each item a `` `path:line` ``
+link. The Manager refreshes the map when a milestone lands; **Refresh map** does it on demand, which
+takes a model call or two. The map lives only here — it is not repeated in the Pages list.
+
+**Tour.** **Start tour** beside the Map walks the codebase one map link at a time, in the map's order.
 Each step shows the code on the left — the whole file, read-only, with the step's lines tinted — and
 the Guide's explanation on the right: what the lines do, a few at a time, and why they were done
 that way, citing the decision-log entry or PRD requirement when one says, and *no recorded reason*
 when none does. **Back** and **Next** move between steps (*Step 3 of 14*); **Open in editor** takes
 you to the file in Files to change it; **Ask about this** opens the Guide with the lines already
-named in its message box. The third tab, **Tour**, brings you back to the step you left.
+named in its message box. **Back to the map** returns to the Map, whose button then reads **Resume
+tour** and brings you back to the step you left. Leaving for the editor (**Open in editor**, or any
+file link) and coming back to Docs → How the code works finds the tour on the same step.
 
 A step's lines run from the linked line to the end of that block, judged by indentation and capped
 at 60 lines. The first time anyone opens a step the Guide writes its explanation (a few seconds of
@@ -818,7 +833,7 @@ DATA_ROOT/
     project.md  tasks.yaml  the manager's board
     team.yaml               employees
     decisions.log.md        the why
-    docs/                   the team's pages (code-map.md is the Code screen's Map tab)
+    docs/                   the team's pages (code-map.md is Docs → How the code works)
     media/                  rendered images and clips, each with a .json of how it was made
     briefings/              one per turn
     workspace/              the code — its own git repo when the team inits one

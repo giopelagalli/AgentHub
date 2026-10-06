@@ -106,6 +106,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   `generate_image` / `generate_video` to any role (a designer with none set keeps both), set from
   a **Can make** row of switches in the employee drawer via the member PATCH; the roster carries
   `renderers` so the drawer says when nothing can render yet.
+- A simpler Code tab (0072, the owner's "too complicated"): one control (Files · Terminal ·
+  Preview · Browser); the Map and the Tour moved to **Docs → How the code works**; the toolbar's
+  chat is the Guide on Code (no *Ask the guide*, no auto-opened pane); the editor shows no header
+  until a file is open and Save only while there are unsaved changes.
 
 ## In progress
 

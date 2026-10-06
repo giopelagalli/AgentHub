@@ -14,7 +14,7 @@ vi.mock('../src/api.js', () => ({
   getJson: () => new Promise(() => {}),
   sendJson: () => new Promise(() => {}),
 }));
-vi.mock('../src/views/code.js', () => ({ mountCode: () => () => {} }));
+vi.mock('../src/views/code.js', () => ({ mountCode: () => ({ dispose: () => {}, reveal: () => {}, mayLeave: () => true }) }));
 
 afterEach(() => { document.body.replaceChildren(); });
 

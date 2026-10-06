@@ -56,8 +56,10 @@ simple Apple UI feel that is intuitive … new and modern." Decision record: 004
   lines with "See all".
 - **Plan** — the PRD in the docs shell; the roadmap as a clean checklist (done ✓, current ●,
   planned ○) with drag-or-arrow reorder; the editor chat is a toggleable right pane.
-- **Docs** — the docs shell (sidebar, breadcrumb, on-this-page, callouts).
-- **Code** — Files (tree + editor + Guide pane) · Terminal · Preview.
+- **Docs** — the docs shell (sidebar, breadcrumb, on-this-page, callouts). Since 0072 also Media
+  and *How the code works* (the code map and its tour).
+- **Code** — Files (tree + editor) · Terminal · Preview · Browser; the toolbar's chat is the Guide
+  here (0072, which replaced the Guide pane and the Files · Map · Tour switch).
 - **Activity** — the turn timeline, unchanged in substance, restyled.
 - **Machines** (system) — Nodes (with Drain/Remove/Add machine), Browser sessions, Queue, API
   tokens, GitHub connection, Cloud spend.
@@ -89,7 +91,7 @@ No feature removed. No framework. No new runtime dependency for the redesign its
   *Queue* (the running order with each project's priority, then the jobs) and *Access* (API tokens
   and GitHub).
 - **The terminal** stays dark in the light theme.
-- **Code → Files** opens the Guide beside the files only where there is room (over 1000px); on a
-  narrow window it waits for *Ask the guide*.
+- **Code → Files** no longer opens the Guide by itself (0072): the toolbar's chat button opens
+  it, at any width. The look after 0072: `code-tab-2026-10.png`.
 - **Deep links**: none existed before the redesign and none were added; the tab and sub-tab you
   were on are remembered for the session, across projects.

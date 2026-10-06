@@ -20,9 +20,12 @@ export const TAB_LABELS: Record<ProjectTab, string> = {
   activity: 'Activity',
 };
 
-/** Plan's two halves, Docs' two and Code's four, each a sub-segmented control under the toolbar. */
+/**
+ * Plan's two halves, Docs' three and Code's four, each a sub-segmented control under the toolbar.
+ * Docs' `how` is "How the code works": the code map and its tour (decision 0072).
+ */
 export type PlanPart = 'prd' | 'roadmap';
-export type DocsPart = 'pages' | 'media';
+export type DocsPart = 'pages' | 'media' | 'how';
 export type CodePart = 'files' | 'terminal' | 'preview' | 'browser';
 
 export interface OverviewNow {

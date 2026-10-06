@@ -1,6 +1,6 @@
-/* The workspace sections — Code (Files · Terminal · Preview) and Activity. Each fills the space
-   under the toolbar and scrolls inside itself, so these set heights and hairlines rather than
-   margins. */
+/* The workspace sections — Code (Files · Terminal · Preview · Browser), Docs' How the code works
+   (the map and its tour) and Activity. Each fills the space under the toolbar and scrolls inside
+   itself, so these set heights and hairlines rather than margins. */
 
 .fill {
   display: flex;
@@ -24,44 +24,6 @@
 /* `hidden` has to win over the display rules below, or a hidden pane still lays out. */
 .code [hidden] {
   display: none;
-}
-
-.code__bar {
-  display: flex;
-  gap: var(--sp-3);
-  align-items: center;
-}
-
-/* Files / Map: a small segmented control, the Code section's own. */
-.code__tabs {
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--fill);
-  border-radius: 7px;
-}
-
-.code__tab {
-  min-height: 20px;
-  padding: 1px 10px;
-  font: inherit;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  color: var(--label-2);
-  background: none;
-  border: 0;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.code__tab:hover {
-  color: var(--label);
-}
-
-.code__tab[aria-current='true'] {
-  color: var(--label);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-control);
 }
 
 .code__panes {
@@ -201,9 +163,9 @@
   overflow: auto;
 }
 
-/* A `path:line` citation. The renderer marks every one, but only the two places that can actually
-   open a file — the Map and the guide's replies — look clickable; the same span in the PRD or a
-   docs page is left reading as the code span it is. */
+/* A `path:line` citation. The renderer marks every one, but only the places that can actually
+   open a file — the Map, the tour and the Guide's replies — look clickable; the same span in the
+   PRD or a docs page is left reading as the code span it is. */
 .code__map .md__ref,
 .project__pane .chat__said .md__ref {
   cursor: pointer;

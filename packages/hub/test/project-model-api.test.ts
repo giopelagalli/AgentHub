@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { simpleGit } from 'simple-git';
 import { createMockOpenAI, type MockOpenAI, type ScriptStep } from '@agenthub/mocks';
 import { createHub, type Hub } from '../src/server.js';
+import { routeAccess } from '../src/auth.js';
 
 const KEY_ENV = 'FIREWORKS_API_KEY';
 const GLM = 'accounts/fireworks/models/glm-5p3';
@@ -190,6 +191,60 @@ describe('PATCH /api/projects/:slug/team/:id', () => {
 
     const badMember = await patchMember('ghost-9', { model: null });
     expect(badMember.statusCode).toBe(404);
+  });
+});
+
+describe('an employee\'s media abilities (decision 0073)', () => {
+  const memberOf = async (id: string) =>
+    (await app().inject({ method: 'GET', url: '/api/projects/demo/team' })).json().members.find((m: { id: string }) => m.id === id);
+
+  it('stores a deduplicated subset in a fixed order, keeps [] as set, and null clears it', async () => {
+    await setup();
+    const res = await patchMember('researcher-1', { abilities: ['video', 'image', 'video'] });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().abilities).toEqual(['image', 'video']);
+    expect((await memberOf('researcher-1')).abilities).toEqual(['image', 'video']);
+    const log = await simpleGit(join(root!, 'demo')).log();
+    expect(log.latest?.message).toMatch(/^owner: set Sol's abilities/);
+
+    expect((await patchMember('researcher-1', { abilities: [] })).json().abilities).toEqual([]);
+    expect((await memberOf('researcher-1')).abilities).toEqual([]);
+
+    expect((await patchMember('researcher-1', { abilities: null })).json().abilities).toBeUndefined();
+    expect((await memberOf('researcher-1')).abilities).toBeUndefined();
+  });
+
+  it('refuses anything but a list of image/video, leaving the roster untouched', async () => {
+    await setup();
+    for (const abilities of ['image', ['audio'], [1], { image: true }]) {
+      const res = await patchMember('coder-1', { abilities });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toBe('invalid abilities');
+    }
+    expect((await memberOf('coder-1')).abilities).toBeUndefined();
+  });
+
+  it('is accepted with no machine able to render, and the roster says nothing can render yet', async () => {
+    await setup();
+    expect((await patchMember('coder-1', { abilities: ['image'] })).statusCode).toBe(200);
+    const roster = (await app().inject({ method: 'GET', url: '/api/projects/demo/team' })).json();
+    expect(roster.renderers).toEqual({ image: false, video: false });
+  });
+
+  it('can be set when hiring, and is owner-only like the rest of the roster', async () => {
+    await setup();
+    const hired = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team',
+      payload: { name: 'Iris', role: 'coder', avatar: 'robot-green', abilities: ['video'] },
+    });
+    expect(hired.statusCode).toBe(201);
+    expect(hired.json().abilities).toEqual(['video']);
+    const bad = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team',
+      payload: { name: 'Otto', role: 'coder', avatar: 'robot-green', abilities: ['audio'] },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(routeAccess('PATCH', '/api/projects/:slug/team/:id')).toBe('owner');
   });
 });
 

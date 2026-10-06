@@ -123,6 +123,16 @@ describe('complete_milestone', () => {
     expect(names).not.toContain('run_shell');
   });
 
+  it('never gives the reviewer render tools, whatever abilities the member has (decision 0073)', async () => {
+    await bundle.writeTeam((await bundle.team()).map((m) => (m.role === 'reviewer' ? { ...m, abilities: ['image', 'video'] } : m)));
+    const { complete, worker } = await setup([APPROVE]);
+
+    await complete('m1');
+
+    const names = ((worker.lastRequest().tools ?? []) as { function: { name: string } }[]).map((t) => t.function.name);
+    expect(names.filter((n) => n.startsWith('generate_'))).toEqual([]);
+  });
+
   it('runs npm test when package.json declares a test script', async () => {
     await writeFile(join(bundle.workspace, 'package.json'), JSON.stringify({ name: 'demo', scripts: { test: 'exit 0' } }), 'utf8');
     const { complete } = await setup([APPROVE]);

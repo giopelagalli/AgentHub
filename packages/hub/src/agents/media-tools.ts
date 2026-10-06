@@ -1,4 +1,4 @@
-import type { MediaKind } from '@agenthub/shared';
+import { memberAbilities, type MediaKind, type TeamMember } from '@agenthub/shared';
 import { findMediaByJob, MEDIA_DIR, mediaFileFor, type MediaDesk } from '../projects/media.js';
 import type { Tool, ToolContext } from './tools.js';
 
@@ -90,4 +90,14 @@ export function mediaTools(
     },
   ];
   return tools.filter((t) => kinds.includes(t.kind)).map(({ def, run }) => ({ def, run }));
+}
+
+/**
+ * The render tools a delegated employee works with: one per media ability (decision 0073), none
+ * without a media desk. Only `spawn_subagent` hands these out — never the manager's own belt or
+ * the milestone reviewer's pinned one.
+ */
+export function memberMediaTools(member: Pick<TeamMember, 'role' | 'abilities'>, desk: MediaDesk | undefined): Tool[] {
+  const kinds = memberAbilities(member);
+  return desk && kinds.length ? mediaTools(desk, { kinds }) : [];
 }

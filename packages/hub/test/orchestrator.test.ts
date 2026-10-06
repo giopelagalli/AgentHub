@@ -16,6 +16,7 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { UsageStore } from '../src/usage.js';
 import { workspaceTools } from '../src/agents/tools.js';
+import { MediaDesk } from '../src/projects/media.js';
 import { ORCHESTRATOR_TOOL_CALLS, SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 
 let root: string;
@@ -57,7 +58,9 @@ interface Harness {
 }
 
 /** Two mocks — one per tier — so orchestrator and subagent scripts stay independent. */
-async function setup(brainScript: ScriptStep[], workerScript: ScriptStep[] = [], target = bundle): Promise<Harness> {
+async function setup(
+  brainScript: ScriptStep[], workerScript: ScriptStep[] = [], target = bundle, opts: { media?: MediaDesk } = {},
+): Promise<Harness> {
   const { mock: brain, url: brainUrl } = await serve(brainScript);
   const { mock: worker, url: workerUrl } = await serve(workerScript);
 
@@ -85,6 +88,7 @@ async function setup(brainScript: ScriptStep[], workerScript: ScriptStep[] = [],
   const orchestrator = new ProjectOrchestrator({
     bundle: target, loop, gateway, queue, registry, transcript,
     onEvent: (sessionId, e) => events.push({ ...e, sessionId }),
+    ...(opts.media ? { media: opts.media } : {}),
   });
   return { orchestrator, transcript, brain, worker, registry, loop, queue, usage, brainUrl, workerUrl, events };
 }
@@ -211,6 +215,28 @@ describe('ProjectOrchestrator', () => {
     expect(workerMessages[0].content).toContain('researcher');
     const offered = (worker.lastRequest().tools as { function: { name: string } }[]).map((t) => t.function.name);
     expect(offered).toEqual(workspaceTools().map((t) => t.def.name));
+  });
+
+  it('gives a delegated employee the render tool for their ability, and the manager none (decision 0073)', async () => {
+    await bundle.writeTeam((await bundle.team()).map((m) => (m.id === 'coder-1' ? { ...m, abilities: ['image'] } : m)));
+    const { orchestrator, brain, worker } = await setup(
+      [
+        { toolCalls: [{ name: 'spawn_subagent', arguments: { task: 'draw the app icon', member: 'coder-1' } }] },
+        publishStep(),
+        { content: 'delegated' },
+      ],
+      [{ content: 'icon drawn' }],
+      bundle,
+      { media: new MediaDesk({ queue: {} as never, registry: {} as never }) },
+    );
+
+    await orchestrator.turn();
+
+    const toolNames = (req: Record<string, unknown>) => (req.tools as { function: { name: string } }[]).map((t) => t.function.name);
+    expect(toolNames(worker.lastRequest())).toEqual([...workspaceTools().map((t) => t.def.name), 'generate_image']);
+    expect((worker.lastRequest().messages as { content: string }[])[0].content).toContain('You also have generate_image.');
+    expect(toolNames(brain.lastRequest()).filter((n) => n.startsWith('generate_'))).toEqual([]);
+    expect((brain.lastRequest().messages as { content: string }[])[0].content).toContain('Ada (coder, makes images)');
   });
 
   it('tells the manager a subagent\'s report was cut short when its own run is aborted', async () => {

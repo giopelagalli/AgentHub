@@ -1,7 +1,7 @@
 import { readdir, readFile, mkdir, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { JobResult, JobType, MilestoneStatus, ModelPolicy, Priority, Tier, ToolCall, ToolDef, TurnEvent } from '@agenthub/shared';
-import { memberAbilities, MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
+import { MILESTONE_STATUSES, PRD_SECTIONS, type TeamMember } from '@agenthub/shared';
 import { resolveWorkspace, runShellTask, secretsStripped, SHELL_TAIL_LENGTH } from '@agenthub/shared/shell';
 import type { JobQueue } from '../queue.js';
 import type { NodeRegistry } from '../node-registry.js';
@@ -12,7 +12,7 @@ import { normalizeMilestones, patchMilestone } from '../projects/roadmap.js';
 import { newCapability, validatePreview } from '../projects/preview.js';
 import { DOC_SLUG_RE, validateBriefing, type Briefing, type TaskItem } from '../projects/schema.js';
 import { browserOperatorTools, type BrowserToolDeps } from './browser-tools.js';
-import { mediaTools } from './media-tools.js';
+import { memberMediaTools } from './media-tools.js';
 import type { MediaDesk } from '../projects/media.js';
 import { HARNESS_WALL_CLOCK_MS, SUBAGENT_TOOL_CALLS } from './budgets.js';
 import type { HarnessDoor } from './harness/index.js';
@@ -968,11 +968,12 @@ export function spawnSubagentTool(deps: SubagentDeps & { browser?: BrowserToolDe
       // configured external tools; every other role stays scoped to the workspace, as before. On top
       // of the role, an employee gets a render tool per media ability (decision 0073) — a designer
       // with no `abilities` set still gets both.
-      const roleExtras = role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
-        : role === 'researcher' ? (deps.external ?? [])
-        : [];
-      const kinds = memberAbilities(member ?? { role });
-      const extras = deps.media && kinds.length ? [...roleExtras, ...mediaTools(deps.media, { kinds })] : roleExtras;
+      const extras = [
+        ...(role === 'browser-operator' && deps.browser ? browserOperatorTools(deps.browser)
+          : role === 'researcher' ? (deps.external ?? [])
+          : []),
+        ...memberMediaTools(member ?? { role }, deps.media),
+      ];
       const res = await runSubagent(deps, ctx, { role, member, task, extras });
       const text = res.text.trim();
       const report = text ? truncateResult(text, SUBAGENT_RESULT_LIMIT)

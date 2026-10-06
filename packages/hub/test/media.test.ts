@@ -6,7 +6,7 @@ import { simpleGit } from 'simple-git';
 import type { Job, MediaAsset, MediaList } from '@agenthub/shared';
 import { createHub, type Hub } from '../src/server.js';
 import { commitLabel, landMedia, MediaDesk } from '../src/projects/media.js';
-import { mediaTools } from '../src/agents/media-tools.js';
+import { mediaTools, memberMediaTools } from '../src/agents/media-tools.js';
 import { subagentSystemPrompt } from '../src/projects/prompts.js';
 import { routeAccess } from '../src/auth.js';
 
@@ -192,5 +192,34 @@ describe('the designer tools', () => {
 
   it('a designer is told about them', () => {
     expect(subagentSystemPrompt('designer', ['generate_image', 'generate_video'])).toMatch(/generate_image and generate_video/);
+  });
+
+  it('any role with an ability is told about just that tool, apart from a researcher\'s external ones', () => {
+    expect(subagentSystemPrompt('coder', ['generate_video'])).toMatch(/You also have generate_video\. Each renders/);
+    const researcher = subagentSystemPrompt('researcher', ['web_search', 'generate_image']);
+    expect(researcher).toContain('You also have the external tools web_search.');
+    expect(researcher).toMatch(/You also have generate_image\. Each renders/);
+    expect(subagentSystemPrompt('coder')).not.toContain('generate_');
+  });
+});
+
+describe('who gets the render tools (decision 0073)', () => {
+  const desk = new MediaDesk({ queue: {} as never, registry: {} as never });
+  const names = (member: Parameters<typeof memberMediaTools>[0]) => memberMediaTools(member, desk).map((t) => t.def.name);
+
+  it('follows the member\'s abilities whatever the role; a designer with none set keeps both', () => {
+    expect(names({ role: 'designer' })).toEqual(['generate_image', 'generate_video']);
+    expect(names({ role: 'coder' })).toEqual([]);
+    for (const role of ['coder', 'researcher', 'reviewer', 'browser-operator', 'designer'] as const) {
+      expect(names({ role, abilities: ['image'] })).toEqual(['generate_image']);
+      expect(names({ role, abilities: ['video'] })).toEqual(['generate_video']);
+      expect(names({ role, abilities: ['video', 'image'] })).toEqual(['generate_image', 'generate_video']);
+      expect(names({ role, abilities: [] })).toEqual([]);
+    }
+  });
+
+  it('gives nobody anything without a media desk', () => {
+    expect(memberMediaTools({ role: 'designer' }, undefined)).toEqual([]);
+    expect(memberMediaTools({ role: 'coder', abilities: ['image'] }, undefined)).toEqual([]);
   });
 });

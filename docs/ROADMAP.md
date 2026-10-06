@@ -122,6 +122,9 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   (cut from `agenthub-phase1`); the hub side is merged. Waiting on the owner: one shared
   `JD_WEB_TOKEN` in both env files, `pip install -e .` for aiohttp, restarts.
 
+- Generation on Fireworks (0074): waiting on the owner to turn on **Pause models** for the Spark
+  on the Machines page (or keep its node daemon stopped).
+
 ## Next (in order)
 
 1. Recipe catalog entries verified on real hardware (Spark attach, AMD llama.cpp HIP, Apple

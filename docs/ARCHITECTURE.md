@@ -49,8 +49,12 @@ real ComfyUI.
 JD at the top, projects with status dots, `+`, Machines and Help), and a page per place, each with its own toolbar
 (`toolbar.ts`: title, centred segmented control, actions). The **project page**
 (`pages/projects.ts`) holds five tabs — Overview (`pages/project/overview.ts`), Plan (the PRD and
-roadmap views), Docs (Pages · Media), Code (Files · Terminal · Preview · Browser) and Activity — mounted into its body; a
-document's chat opens in a pane beside it, a team member's drawer (`panels/chat.ts`) floats over
+roadmap views), Docs (Pages · Media · How the code works — the last is `views/codemap.ts`, the map
+and its tour), Code (Files · Terminal · Preview · Browser; Files is `views/code.ts`, tree and editor
+only) and Activity — mounted into its body; a document's chat opens in a pane beside it, and so does
+the Guide, which is the toolbar's chat on the Code tab (the Manager's elsewhere; 0072). Views reach
+a file through `ViewContext.openCode` (Code → Files at a line, the Guide kept open) and the Guide
+through `openGuide`. A team member's drawer (`panels/chat.ts`) floats over
 it, and the project's levers live in a settings sheet (`pages/project/settings.ts`, controls in
 `pages/project/controls.ts`). **Machines** (`pages/machines.ts`) is Nodes, Browser, Queue and
 Access over the old `cluster`/`computer`/`allocation` mounts, which keep their page ids so the
@@ -295,8 +299,8 @@ imported project and the bundle otherwise, and reports `committed: 'none'` for t
 out of history on purpose — credentials by convention, and whatever the repository ignores (0044).
 *Refresh map* runs one manager-shaped task whose only writing tool is `write_code_map`, which is
 `docs/code-map.md` and nothing more exotic (0046); it is one run per project at a time, aborts with
-the request, and reports whether the page was actually rewritten. The guide it sits beside is a
-persona in `chat.ts`, read-only by construction (0045).
+the request, and reports whether the page was actually rewritten. The Guide (the Code tab's chat)
+is a persona in `chat.ts`, read-only by construction (0045).
 
 **`projects/tour.ts`** — the tour over the code map (FR-B6), registered beside `codeRoutes`. One
 owner-only route, `GET /api/projects/:slug/tour/:index` → `{ index, total, step, snippet,
@@ -306,8 +310,8 @@ indentation, at most 60 lines; 0056) — the same functions the UI draws the ste
 tinted is what was explained. An explanation is the guide's prompt and read-only belt on the worker
 tier, six tool calls, serialised per project and aborted with the request; it is kept as a committed
 page `docs/tour/NN-<title>.md` whose key line (path, line, range, snippet hash) must match for the
-page to be served again (0057). The UI half is `views/tour.ts`, a third tab beside Files and Map
-(0058).
+page to be served again (0057). The UI half is `views/tour.ts`, mounted by `views/codemap.ts` in
+Docs → How the code works, in place of the map while touring (0058, moved by 0072).
 
 **`browser/`** — the browser pool (FR-D8, 0059). `lease.ts` is the `LeaseManager`: it reads the pool
 (every slot of every registered browser node; a draining or offline node's slots marked) through a

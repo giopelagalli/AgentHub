@@ -1,7 +1,7 @@
 # 0058 — The tour is a third tab beside Files and Map, entered by *Start tour*
 Date: 2026-10-01
 Decided by: senior-coder
-Status: accepted
+Status: superseded by 0072 (where the tour lives; the rest stands)
 
 ## Context
 FR-B6 says the tour starts "from the Code map". The redesign (0048, 0053) gives Code three parts in

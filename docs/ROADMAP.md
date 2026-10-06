@@ -102,6 +102,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   owner's login (named routes, raw bytes, 502/504, audio ranges, the stream bridged), a **JD** page
   at the top of the sidebar (chat, JD's buttons and quick keys, voice notes both ways, typing), and
   a mock JD in the simulation.
+- A simpler Code tab (0072, the owner's "too complicated"): one control (Files · Terminal ·
+  Preview · Browser); the Map and the Tour moved to **Docs → How the code works**; the toolbar's
+  chat is the Guide on Code (no *Ask the guide*, no auto-opened pane); the editor shows no header
+  until a file is open and Save only while there are unsaved changes.
 
 ## In progress
 

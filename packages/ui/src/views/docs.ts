@@ -18,7 +18,10 @@ import { chatToAdjust, docBar, note, type ViewContext } from './parts.js';
  * itself under the reader as they browse.
  */
 
-/** The two pages that are reference material rather than a chapter of the docs. */
+/**
+ * The code map: not a page of the rail. It has a home of its own, Docs → *How the code works*
+ * (`codemap.ts`), where its links open files — listing it here too would be the map twice.
+ */
 const CODE_MAP = /^code[-_]?map$/i;
 
 /** What a page shows while its markdown is on its way, and when it arrives with nothing in it. */
@@ -41,19 +44,20 @@ export function mountDocs(host: HTMLElement, ctx: ViewContext): () => void {
   let shell: DocShellHandle | null = null;
 
   /**
-   * The rail's pages: the bundle's own, then the reference pair (the code map and the decision
-   * log) which are pinned into a group of their own however they are written.
+   * The rail's pages: the bundle's own, then the decision log, which is pinned into a Reference
+   * group of its own however it is written. The code map is left out (see `CODE_MAP`).
    */
   const pages = (): DocPage[] => {
     const chapters: DocPage[] = [];
     const reference: DocPage[] = [];
     for (const entry of docsEntries(index)) {
+      if (CODE_MAP.test(entry.key)) continue;
       const raw = entry.markdown ?? fetched.get(entry.key);
       const front = raw === undefined ? null : parseFrontMatter(raw);
       const section = front?.fields.section?.trim() || undefined;
-      // The decision log and the code map are reference material whatever they say they are, and
-      // the group goes last — a reader looks things up in it, they do not read it first.
-      const isReference = entry.kind === 'decisions' || CODE_MAP.test(entry.key) || section === 'Reference';
+      // The decision log is reference material whatever it says it is, and the group goes last —
+      // a reader looks things up in it, they do not read it first.
+      const isReference = entry.kind === 'decisions' || section === 'Reference';
       const page: DocPage = {
         id: entry.key,
         title: front?.fields.title?.trim() || entry.title,

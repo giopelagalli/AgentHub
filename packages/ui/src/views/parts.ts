@@ -15,6 +15,16 @@ export interface ViewContext {
   /** Moves the page to another part of the project, e.g. an empty roadmap pointing at the PRD. */
   openArtifact(id: ArtifactId): void;
   /**
+   * Shows `path` in Code → Files, opened at `line` — where a map link, a tour step or a citation in
+   * the Guide's reply goes. An open Guide pane stays open across the move.
+   */
+  openCode(path: string, line?: number): void;
+  /**
+   * Opens the Guide — the code's chat, the same one the toolbar's chat button opens on the Code
+   * tab — in the pane, with `draft` already in its box when given (the tour's *Ask about this*).
+   */
+  openGuide(draft?: string): void;
+  /**
    * Where the view's own actions go, when the page gives it a place for them (the bar under the
    * toolbar); absent, they sit in a row at the top of the view.
    */

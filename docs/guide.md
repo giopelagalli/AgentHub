@@ -600,7 +600,8 @@ only while there are unsaved changes. **Save** (or `Cmd`/`Ctrl`-`S`) writes it a
 it as `Owner edit: <path>` — to the project's own repository if it was imported from GitHub, to the
 bundle otherwise. That commit is the point: the next turn reads the workspace, so an edit nobody
 recorded is an edit the agents overwrite. A dot beside the filename means unsaved changes, and
-leaving the file asks before discarding them.
+leaving the file — for another file, another part of Code or another tab — asks before discarding
+them.
 
 Two kinds of file save but are not committed, and the toast says so: a `.env`, `.pem` or `.key`
 (never committed, so a secret can't ride a milestone push to your GitHub repository) and anything
@@ -631,7 +632,8 @@ that way, citing the decision-log entry or PRD requirement when one says, and *n
 when none does. **Back** and **Next** move between steps (*Step 3 of 14*); **Open in editor** takes
 you to the file in Files to change it; **Ask about this** opens the Guide with the lines already
 named in its message box. **Back to the map** returns to the Map, whose button then reads **Resume
-tour** and brings you back to the step you left.
+tour** and brings you back to the step you left. Leaving for the editor (**Open in editor**, or any
+file link) and coming back to Docs → How the code works finds the tour on the same step.
 
 A step's lines run from the linked line to the end of that block, judged by indentation and capped
 at 60 lines. The first time anyone opens a step the Guide writes its explanation (a few seconds of

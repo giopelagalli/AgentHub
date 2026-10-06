@@ -15,6 +15,10 @@ import { mountTour } from './tour.js';
  * `path:line` links open the file in Code → Files at that line. *Start tour* (FR-B6, `tour.ts`)
  * steps through those same links with the Guide's explanation of each, in place of the map; *Back
  * to the map* returns, and the button then reads *Resume tour* and picks up at the same step.
+ *
+ * A step's links lead out of here (to Code → Files), which takes this view down. Where the reader
+ * was is kept in a `TourPlace` the page owns, one per project: coming back finds the tour at the
+ * step they left, or the map with *Resume tour* if that is where they were.
  */
 
 /** The docs page the map lives on; the hub writes it with `write_code_map`. */
@@ -22,9 +26,19 @@ const MAP_PAGE = 'code-map';
 
 type Fetch = 'loading' | 'ready' | 'failed' | 'missing';
 
-export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
+/** Where a reader was in the tour, kept by the page across this view's mounts. */
+export interface TourPlace {
+  /** The step to come back to (0-based); null before the tour was started. */
+  step: number | null;
+  /** Whether the tour, rather than the map, was on screen. */
+  touring: boolean;
+}
+
+export function mountCodeMap(host: HTMLElement, ctx: ViewContext, place: TourPlace = { step: null, touring: false }): () => void {
   let alive = true;
-  let touring = false;
+  let touring = place.touring;
+  /** The step *Resume tour* goes back to; the tour's own index while the tour is on screen. */
+  let resumeAt = place.step;
   let mapState: Fetch = 'loading';
   let mapMarkdown = '';
   let refreshing = false;
@@ -55,12 +69,14 @@ export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
   // --- drawing -------------------------------------------------------------------
 
   const render = (): void => {
-    mapBox.hidden = touring;
-    tour.root.hidden = !touring;
-    mapButton.hidden = !touring;
+    // A tour being come back to waits for the map it walks; until then the map says it is loading.
+    const showTour = touring && mapState !== 'loading';
+    mapBox.hidden = showTour;
+    tour.root.hidden = !showTour;
+    mapButton.hidden = !showTour;
     refreshButton.hidden = touring;
     tourButton.hidden = touring || !steps().length;
-    tourButton.textContent = tour.current() ? 'Resume tour' : 'Start tour';
+    tourButton.textContent = resumeAt !== null ? 'Resume tour' : 'Start tour';
   };
 
   const renderMap = (): void => {
@@ -84,7 +100,12 @@ export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
   const startTour = (): void => {
     touring = true;
     render();
-    tour.show(tour.current() ?? 0);
+    tour.show(resumeAt ?? 0);
+  };
+
+  /** The map just landed: a reader who left mid-tour is put back on their step. */
+  const resume = (): void => {
+    if (touring) tour.show(resumeAt ?? 0);
   };
 
   const loadMap = (): void => {
@@ -94,12 +115,14 @@ export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
         mapMarkdown = doc.markdown ?? '';
         mapState = 'ready';
         mapChanged();
+        resume();
       })
       .catch(() => {
         if (!alive) return;
         // There is no map page until something writes one, and that 404 is the ordinary case.
         mapState = 'missing';
         mapChanged();
+        resume();
       });
   };
 
@@ -134,7 +157,11 @@ export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
   // --- wiring --------------------------------------------------------------------
 
   tourButton.addEventListener('click', startTour);
-  mapButton.addEventListener('click', () => { touring = false; render(); });
+  mapButton.addEventListener('click', () => {
+    resumeAt = tour.current() ?? resumeAt;
+    touring = false;
+    render();
+  });
   refreshButton.addEventListener('click', refreshMap);
 
   mapBox.addEventListener('click', (event) => {
@@ -150,6 +177,8 @@ export function mountCodeMap(host: HTMLElement, ctx: ViewContext): () => void {
 
   return () => {
     alive = false;
+    place.touring = touring;
+    place.step = (touring ? tour.current() : null) ?? resumeAt;
     tour.destroy();
     host.replaceChildren();
   };

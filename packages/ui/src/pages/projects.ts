@@ -18,11 +18,11 @@ import { DOT_WORDS, openNewProject, projectDot } from '../rail.js';
 import type { RoadmapDoc } from '../roadmap.js';
 import { turnsOf, type Store, type UiState } from '../store.js';
 import { toast } from '../toast.js';
-import { iconButton, segmented, toolbar } from '../toolbar.js';
+import { iconButton, segmented, toolbar, type SegmentedControl } from '../toolbar.js';
 import { formatClock, formatUsd, runningTurn, type TurnsResponse } from '../turns.js';
 import { mountActivity } from '../views/activity.js';
 import { mountCode, type CodeHandle } from '../views/code.js';
-import { mountCodeMap } from '../views/codemap.js';
+import { mountCodeMap, type TourPlace } from '../views/codemap.js';
 import { mountDocs } from '../views/docs.js';
 import { mountMedia } from '../views/media.js';
 import type { ViewContext } from '../views/parts.js';
@@ -402,6 +402,8 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   function openGuide(draft?: string): void {
     const project = selected();
     if (!project) return;
+    // One chat on screen: the Manager's drawer gives way to the Guide.
+    if (drawerFor === 'manager') closeDrawer?.();
     openPane({
       name: 'Guide',
       subtitle: `${project.title} · the code`,
@@ -416,8 +418,19 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   let codeView: CodeHandle | null = null;
   /** A file for Files to open as it mounts — a link followed from another tab or part. */
   let pendingFile: { path: string; line?: number } | null = null;
-  /** Set while a link moves the page to Files: the Guide that sent it stays open beside the file. */
+  /**
+   * Set while a link moves the page to Files: the Guide that sent it stays open beside the file —
+   * where there is room for both. On a narrow window the pane covers the page, and the file it was
+   * asked to show would open underneath it.
+   */
   let keepPane = false;
+  const roomForPane = (): boolean => window.matchMedia?.('(min-width: 1001px)').matches ?? true;
+  /** The Code sub-switch while Code is on screen, so a refused move can light the part still showing. */
+  let codeSeg: SegmentedControl<CodePart> | null = null;
+  /** The tab the body is showing, read when the next one mounts. */
+  let shownTab: ProjectTab | null = null;
+  /** Each project's place in the tour, kept while How the code works is off screen. */
+  const tourPlaces = new Map<string, TourPlace>();
 
   /** Shows `target` in Code → Files at `line`, from wherever the link was. */
   function openCode(target: string, line?: number): void {
@@ -426,7 +439,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       return;
     }
     pendingFile = { path: target, ...(line ? { line } : {}) };
-    keepPane = guideOpen();
+    keepPane = guideOpen() && roomForPane();
     setTab('code', 'files');
   }
 
@@ -577,10 +590,11 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
   /** A slim bar under the toolbar: a sub-segmented control on the left, the view's actions right. */
   const subbar = <T extends string>(
     parts: readonly { id: T; label: string }[] | null, current: T | null, onPick: (id: T) => void, label: string,
-  ): { root: HTMLElement; actions: HTMLElement } => {
+  ): { root: HTMLElement; actions: HTMLElement; seg: SegmentedControl<T> | null } => {
     const root = el('div', 'subbar');
     const lead = el('div', 'subbar__lead');
-    if (parts && current) lead.appendChild(segmented(parts, current, onPick, label).root);
+    const seg = parts && current ? segmented(parts, current, onPick, label) : null;
+    if (seg) lead.appendChild(seg.root);
     const actions = el('div', 'subbar__actions');
     root.append(lead, actions);
     // Arrowing through the old switch remounted the section under it: the new switch takes the
@@ -589,7 +603,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       refocusSubbar = false;
       queueMicrotask(() => lead.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
     }
-    return { root, actions };
+    return { root, actions, seg };
   };
 
   /** Set while a section remounts from under a focused sub-switch. */
@@ -611,8 +625,13 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     overviewHost = null;
     browserDot = null;
     codeView = null;
-    if (!keepPane) closePane?.();
+    codeSeg = null;
+    // The Guide is the chat for all of Code, so it stays across Code's own parts; it also stays
+    // beside a file one of its links (or the tour's) has just opened. Anything else closes the pane.
+    const codeToCode = shownTab === 'code' && lastTab === 'code' && guideOpen();
+    if (!keepPane && !codeToCode) closePane?.();
     keepPane = false;
+    shownTab = lastTab;
     syncChatButton();
     body.replaceChildren();
     body.className = 'view__body';
@@ -678,7 +697,9 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       const sub = subbar(DOCS_PARTS, 'how', (id) => setTab('docs', id), 'Docs');
       const content = el('div', 'fill fill--how');
       body.append(sub.root, content);
-      mounted = { dispose: mountCodeMap(content, ctxFor(sub.actions)) };
+      let place = tourPlaces.get(project.slug);
+      if (!place) { place = { step: null, touring: false }; tourPlaces.set(project.slug, place); }
+      mounted = { dispose: mountCodeMap(content, ctxFor(sub.actions), place) };
       return;
     }
     if (tab === 'code') {
@@ -687,6 +708,7 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       const content = el('div', `fill fill--${part}`);
       body.append(sub.root, content);
       const ctx = ctxFor(sub.actions);
+      codeSeg = sub.seg;
       // The Browser option carries a live dot while the project holds a slot, whichever part is open.
       const option = sub.root.querySelector<HTMLElement>('.seg__option[data-id="browser"]');
       browserDot = el('span', 'dot dot--active');
@@ -719,12 +741,22 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     const where = (): string => `${lastTab}:${lastTab === 'plan' ? lastPlan : lastTab === 'code' ? lastCode : lastTab === 'docs' ? lastDocs : ''}`;
     const before = where();
     const leaving = lastTab;
+    const was = { lastPlan, lastDocs, lastCode };
     lastTab = tab;
     if (tab === 'plan' && (part === 'prd' || part === 'roadmap')) lastPlan = part;
     if (tab === 'docs' && (part === 'pages' || part === 'media' || part === 'how')) lastDocs = part;
     if (tab === 'code' && (part === 'files' || part === 'terminal' || part === 'preview' || part === 'browser')) lastCode = part;
     tabs.set(tab);
     if (before === where() && !force && mounted) return;
+    // Files holds the owner's unsaved text: taking it down asks first, and a no stays put — the
+    // switches that already lit the new place are set back to the one still on screen.
+    if (codeView && !codeView.mayLeave()) {
+      lastTab = leaving;
+      ({ lastPlan, lastDocs, lastCode } = was);
+      tabs.set(leaving);
+      codeSeg?.set(lastCode);
+      return;
+    }
     // Leaving a section may have changed what the Overview summarises (an edited PRD, a new page).
     if (tab === 'overview' && leaving !== 'overview') {
       const project = selected();

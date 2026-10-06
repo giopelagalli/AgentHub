@@ -9,12 +9,13 @@ import type { ViewContext } from '../src/views/parts.js';
  * editor, the toolbar's chat as the Guide; the map and the tour in Docs → How the code works.
  */
 
-const MAP = '# Code map\n\n- `src/main.ts:3` — where it starts.\n';
+const MAP = '# Code map\n\n- `src/main.ts:3` — where it starts.\n- `src/util.ts:1` — a helper.\n- `src/util.ts:2` — another.\n';
 const TREE = {
   truncated: false,
   entries: [
     { path: 'src', dir: true, size: 0, openable: false },
     { path: 'src/main.ts', dir: false, size: 40, openable: true },
+    { path: 'src/util.ts', dir: false, size: 40, openable: true },
   ],
 };
 
@@ -27,6 +28,12 @@ vi.mock('../src/api.js', () => ({
       return Promise.resolve({ path, text: 'one\ntwo\nthree\n', lines: 3 });
     }
     if (url.endsWith('/docs/code-map')) return Promise.resolve({ markdown: MAP });
+    if (url.endsWith('/docs')) {
+      return Promise.resolve({ index: 'Hello.', pages: [{ slug: 'code-map', title: 'Code map' }, { slug: 'arch', title: 'Architecture' }] });
+    }
+    if (url.endsWith('/docs/arch')) return Promise.resolve({ slug: 'arch', title: 'Architecture', markdown: '# Architecture\n\nBoxes.' });
+    // The Guide's history: one reply that cites a line.
+    if (url.endsWith('/chat/guide')) return Promise.resolve({ messages: [{ role: 'assistant', content: 'See `src/util.ts:2`.' }] });
     return new Promise(() => {});
   },
   sendJson: () => new Promise(() => {}),
@@ -152,7 +159,7 @@ describe('Docs → How the code works', () => {
     button('Start tour').click();
     expect(host.querySelector<HTMLElement>('.tour')!.hidden).toBe(false);
     expect(host.querySelector<HTMLElement>('.code__map')!.hidden).toBe(true);
-    expect(host.querySelector('.tour__count')?.textContent).toBe('Step 1 of 1');
+    expect(host.querySelector('.tour__count')?.textContent).toBe('Step 1 of 3');
     button('Back to the map').click();
     expect(host.querySelector<HTMLElement>('.code__map')!.hidden).toBe(false);
     dispose();
@@ -172,6 +179,130 @@ describe('Docs → How the code works', () => {
     expect(editors.at(-1)?.line).toBe(3);
     // The tree is opened down to the file, which is the row lit.
     expect(host.querySelector('.code__row[aria-current="true"]')?.getAttribute('data-path')).toBe('src/main.ts');
+    dispose();
+  });
+});
+
+/** The buttons in the bar under the toolbar, by their words. */
+const barButton = (host: HTMLElement, text: string): HTMLButtonElement | undefined =>
+  [...host.querySelectorAll<HTMLButtonElement>('.subbar__actions button')].find((b) => b.textContent === text);
+const tourButton = (host: HTMLElement, text: string): HTMLButtonElement =>
+  [...host.querySelectorAll<HTMLButtonElement>('.tour button')].find((b) => b.textContent === text)!;
+const selectedPart = (host: HTMLElement, label: string): string | null | undefined =>
+  host.querySelector(`[aria-label="${label}"] [aria-selected="true"]`)?.getAttribute('data-id');
+const pane = (host: HTMLElement): HTMLElement => host.querySelector<HTMLElement>('.project__pane')!;
+const chatButton = (host: HTMLElement): HTMLElement => host.querySelector<HTMLElement>('.toolbar [aria-pressed]')!;
+
+describe('leaving and coming back', () => {
+  it('keeps the tour at the step that was left for the editor', async () => {
+    const { host, dispose } = await mountPage();
+    pick(host, 'Project sections', 'docs');
+    pick(host, 'Docs', 'how');
+    await settle();
+    barButton(host, 'Start tour')!.click();
+    tourButton(host, 'Next').click();
+    tourButton(host, 'Next').click();
+    expect(host.querySelector('.tour__count')?.textContent).toBe('Step 3 of 3');
+    await settle();
+    tourButton(host, 'Open in editor').click();
+    await settle();
+    expect(selectedPart(host, 'Project sections')).toBe('code');
+    expect(host.querySelector('.code__path')?.textContent).toBe('src/util.ts');
+
+    pick(host, 'Project sections', 'docs');
+    await settle();
+    expect(selectedPart(host, 'Docs')).toBe('how');
+    expect(host.querySelector<HTMLElement>('.tour')!.hidden).toBe(false);
+    expect(host.querySelector('.tour__count')?.textContent).toBe('Step 3 of 3');
+    barButton(host, 'Back to the map')!.click();
+    expect(barButton(host, 'Resume tour')?.hidden).toBe(false);
+    barButton(host, 'Resume tour')!.click();
+    expect(host.querySelector('.tour__count')?.textContent).toBe('Step 3 of 3');
+    dispose();
+  });
+
+  it('asks before unsaved edits in Files are dropped, and a no stays put', async () => {
+    // happy-dom has no dialogs: the owner's answer is stubbed in.
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirm);
+    const { host, dispose } = await mountPage();
+    pick(host, 'Project sections', 'docs');
+    pick(host, 'Docs', 'how');
+    await settle();
+    host.querySelector<HTMLElement>('.code__map [data-path="src/main.ts"]')!.click();
+    await settle();
+    editors.at(-1)!.change();
+
+    pick(host, 'Project sections', 'docs');
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(selectedPart(host, 'Project sections')).toBe('code');
+    expect(host.querySelector('.code__path')?.textContent).toBe('src/main.ts');
+
+    pick(host, 'Code', 'terminal');
+    expect(confirm).toHaveBeenCalledTimes(2);
+    expect(selectedPart(host, 'Code')).toBe('files');
+    expect(host.querySelector('.code__path')?.textContent).toBe('src/main.ts');
+
+    confirm.mockReturnValue(true);
+    pick(host, 'Project sections', 'docs');
+    expect(selectedPart(host, 'Project sections')).toBe('docs');
+    expect(host.querySelector('.code__path')).toBeNull();
+    vi.unstubAllGlobals();
+    dispose();
+  });
+});
+
+describe('the Guide', () => {
+  it('opens from the tour with the lines in its box, and its citations land in Files beside it', async () => {
+    const { host, dispose } = await mountPage();
+    pick(host, 'Project sections', 'docs');
+    pick(host, 'Docs', 'how');
+    await settle();
+    barButton(host, 'Start tour')!.click();
+    await settle();
+    tourButton(host, 'Ask about this').click();
+    expect(pane(host).hidden).toBe(false);
+    expect(pane(host).querySelector<HTMLInputElement>('.chat__form input')?.value).toMatch(/^About `src\/main\.ts:\d+`.*\(tour step 1\): $/);
+    await settle();
+
+    pane(host).querySelector<HTMLElement>('.md__ref[data-path="src/util.ts"]')!.click();
+    await settle();
+    expect(selectedPart(host, 'Project sections')).toBe('code');
+    expect(selectedPart(host, 'Code')).toBe('files');
+    expect(host.querySelector('.code__path')?.textContent).toBe('src/util.ts');
+    expect(pane(host).hidden).toBe(false);
+    expect(chatButton(host).getAttribute('aria-pressed')).toBe('true');
+    dispose();
+  });
+
+  it('stays across Code\'s parts, and closes when Code is left, the button going back to the Manager', async () => {
+    const { host, dispose } = await mountPage();
+    pick(host, 'Project sections', 'code');
+    pick(host, 'Code', 'files');
+    chatButton(host).click();
+    expect(pane(host).hidden).toBe(false);
+    pick(host, 'Code', 'preview');
+    expect(pane(host).hidden).toBe(false);
+    expect(chatButton(host).getAttribute('aria-pressed')).toBe('true');
+
+    pick(host, 'Project sections', 'plan');
+    expect(pane(host).hidden).toBe(true);
+    expect(chatButton(host).getAttribute('aria-label')).toBe('Chat with the Manager');
+    expect(chatButton(host).getAttribute('aria-pressed')).toBe('false');
+    dispose();
+  });
+});
+
+describe('Docs → Pages', () => {
+  it('no longer lists the code map, which lives in How the code works', async () => {
+    const { host, dispose } = await mountPage();
+    pick(host, 'Project sections', 'docs');
+    pick(host, 'Docs', 'pages');
+    await settle();
+    const links = [...host.querySelectorAll('.docshell__link')].map((n) => n.textContent);
+    expect(links).toContain('Architecture');
+    expect(links).toContain('Decision log');
+    expect(links).not.toContain('Code map');
     dispose();
   });
 });

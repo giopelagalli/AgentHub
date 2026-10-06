@@ -37,7 +37,16 @@ and on a wide window the Guide pane opened by itself: tree, editor and chat all 
 - **Links into Files.** Views get `ViewContext.openCode(path, line)` and `openGuide(draft)`. A map
   link, *Open in editor*, or a citation goes to Code → Files at the line; if Files is already on
   screen the file opens in place (`CodeHandle.reveal`, so unsaved edits are still asked about),
-  otherwise Files mounts with it. An open Guide pane stays open across that move.
+  otherwise Files mounts with it. An open Guide pane stays open across that move where there is
+  room for both (over 1000px); on a narrow window it would cover the file, so it closes.
+- **The Guide stays across Code's parts** (Files → Terminal keeps it) and closes when Code is left;
+  opening it closes the Manager's drawer, so one chat is on screen.
+- **Leaving Files asks first.** Checking the map is now a tab change, which takes Files down, so
+  the page asks the view (`CodeHandle.mayLeave`, the old discard-changes confirm) before any move
+  away; a no leaves every switch where it was.
+- **The tour keeps its place.** A step's links take the reader to Files, which takes the tour down;
+  the page keeps a `TourPlace` per project (step, and whether the tour was on screen) that
+  `mountCodeMap` reads on mount and writes on dispose, so coming back finds the same step.
 - **Quiet editor.** No header until a file is open; then the path, the unsaved dot, and **Save**
   only while there are unsaved changes (⌘S throughout). With nothing open the column is one line:
   *Choose a file to open it.*

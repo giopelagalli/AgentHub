@@ -36,6 +36,11 @@ type Fetch = 'loading' | 'ready' | 'failed';
 export interface CodeHandle {
   /** Expands the tree down to `path` and opens it at `line` — asking first if edits would be lost. */
   reveal(path: string, line?: number): void;
+  /**
+   * Whether the page may take this view down: true with nothing unsaved, else whatever the owner
+   * answers to "Discard your unsaved changes?". The page asks before every move away from Files.
+   */
+  mayLeave(): boolean;
   dispose(): void;
 }
 
@@ -275,6 +280,7 @@ export function mountCode(host: HTMLElement, ctx: ViewContext, at?: { path: stri
 
   return {
     reveal,
+    mayLeave,
     dispose: () => {
       alive = false;
       fileToken++;

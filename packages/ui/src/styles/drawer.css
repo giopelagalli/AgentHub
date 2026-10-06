@@ -106,12 +106,14 @@
   padding: 6px 8px 6px 12px;
 }
 
-.drawer__harness:not([hidden]) {
+.drawer__harness:not([hidden]),
+.drawer__abilities {
   position: relative;
   display: block;
 }
 
 .drawer__harness::before,
+.drawer__abilities::before,
 .drawer__fields > .drawer__field + .drawer__field::before {
   content: '';
   position: absolute;
@@ -129,6 +131,29 @@
 .drawer__field .select {
   max-width: 64%;
   background-color: var(--bg-raised);
+}
+
+/* "Can make": two labelled switches side by side, and a quiet line when nothing can render. */
+.drawer__switches {
+  display: flex;
+  gap: var(--sp-4);
+  align-items: center;
+  padding-right: 4px;
+}
+
+.drawer__switch {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--label-2);
+  cursor: pointer;
+}
+
+.drawer__hint {
+  margin: -2px 0 0;
+  padding: 0 12px 10px;
+  font-size: var(--fs-sm);
+  color: var(--label-3);
 }
 
 /* "Now": what they are on, live. */

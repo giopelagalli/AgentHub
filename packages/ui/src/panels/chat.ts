@@ -38,6 +38,8 @@ export interface ChatTarget {
   modelField?: HTMLElement;
   /** The Harness select, shown beside the model one; absent when only the built-in harness exists. */
   harnessField?: HTMLElement;
+  /** The "Can make" switches (images, videos), under the model and harness. */
+  abilitiesField?: HTMLElement;
   /**
    * Called once a reply has finished streaming. The document views use it to re-read the PRD,
    * roadmap or docs the agent has just edited; an aborted send (the drawer closed) doesn't fire.
@@ -146,7 +148,8 @@ export function openChat(host: HTMLElement, target: ChatTarget): () => void {
   const head = drawerHeader(target.name, target.subtitle, () => dispose(), target.avatar);
   panel.append(
     head,
-    ...(target.modelField || target.harnessField ? [fields(target.modelField, target.harnessField)] : []),
+    ...(target.modelField || target.harnessField || target.abilitiesField
+      ? [fields(target.modelField, target.harnessField, target.abilitiesField)] : []),
     ...(now ? [now.root, activityBox] : []),
     log, form,
   );

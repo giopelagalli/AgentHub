@@ -1,4 +1,4 @@
-import type { HarnessInfo, ModelCatalog, PreviewStatus, ProjectManifest, TeamRoster, UsageReport } from '@agenthub/shared';
+import { memberAbilities, type HarnessInfo, type MediaKind, type ModelCatalog, type PreviewStatus, type ProjectManifest, type TeamRoster, type UsageReport } from '@agenthub/shared';
 import { getJson, sendJson } from '../api.js';
 import type { ArtifactId } from '../artifacts.js';
 import { autoRunLabel } from '../autorun.js';
@@ -30,7 +30,7 @@ import { mountPreview } from '../views/preview.js';
 import { mountProjectBrowser, projectBrowserView } from '../views/browser.js';
 import { mountRoadmap } from '../views/roadmap.js';
 import { mountTerminal } from '../views/terminal.js';
-import { fillHarnessField, memberModelField, projectHarness } from './project/controls.js';
+import { fillHarnessField, memberAbilitiesField, memberModelField, projectHarness } from './project/controls.js';
 import { renderOverview, tickOverview, type Held, type OverviewData } from './project/overview.js';
 import { openProjectSettings, type SettingsHandle, type SettingsSection } from './project/settings.js';
 
@@ -151,14 +151,20 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
     .catch(() => { /* the picker still offers auto and local only */ });
   /** Which harnesses this hub can run, fetched once per mount; until it answers, none are offered. */
   let harnesses: HarnessInfo[] = [];
-  /** An open employee drawer's Harness slot, filled again once the list lands. */
-  let harnessSlot: { slot: HTMLElement; slug: string; memberId: string } | null = null;
+  /**
+   * An open employee drawer's Harness slot, filled again once the list lands, with the abilities
+   * its built-in-loop note reads and the refresher that note last got.
+   */
+  let harnessSlot: { slot: HTMLElement; slug: string; memberId: string; abilities: MediaKind[]; refresh: () => void } | null = null;
   void getJson<HarnessInfo[]>('/api/harnesses')
     .then((next) => {
       harnesses = next;
       const open = harnessSlot;
       const member = open ? roster?.members.find((m) => m.id === open.memberId) : undefined;
-      if (open && member) fillHarnessField(open.slot, open.slug, member, harnesses, projectHarness(selected()), selected()?.modelPolicy?.prefer === 'local');
+      if (open && member) {
+        open.refresh = fillHarnessField(open.slot, open.slug, member, harnesses, projectHarness(selected()),
+          selected()?.modelPolicy?.prefer === 'local', () => open.abilities);
+      }
       settings?.refresh();
     })
     .catch(() => { /* the drawer simply shows no Harness field */ });
@@ -291,7 +297,14 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
         : undefined;
     const slot = el('div', 'drawer__harness');
     slot.hidden = true;
-    if (member) fillHarnessField(slot, slug, member, harnesses, projectHarness(project), project?.modelPolicy?.prefer === 'local');
+    // The Harness note follows the Can make switches as they save, not just the roster as loaded.
+    const held = member
+      ? { slot, slug, memberId: member.id, abilities: memberAbilities(member), refresh: () => {} }
+      : null;
+    if (member && held) {
+      held.refresh = fillHarnessField(slot, slug, member, harnesses, projectHarness(project),
+        project?.modelPolicy?.prefer === 'local', () => held.abilities);
+    }
     openDrawer(card.id, (into) => openChat(into, {
       name: card.name,
       subtitle: card.kind === 'manager' ? `Manager · ${project.title}` : `${card.role} · ${project.title}`,
@@ -300,9 +313,15 @@ export function mountProjects(host: HTMLElement, store: Store): () => void {
       onClose: onDrawerClosed,
       ...(card.avatar ? { avatar: card.avatar } : {}),
       ...(activity ? { activity } : {}),
-      ...(member ? { modelField: memberModelField(slug, member, catalog), harnessField: slot } : {}),
+      ...(member ? {
+        modelField: memberModelField(slug, member, catalog),
+        harnessField: slot,
+        abilitiesField: memberAbilitiesField(slug, member, roster?.renderers, (kinds) => {
+          if (held) { held.abilities = kinds; held.refresh(); }
+        }),
+      } : {}),
     }));
-    if (member) harnessSlot = { slot, slug, memberId: member.id };
+    if (held) harnessSlot = held;
   };
 
   /** Whether the keyboard currently belongs to an open drawer rather than to the page. */

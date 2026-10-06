@@ -8,6 +8,7 @@ import {
 
 const roster: TeamRoster = {
   manager: { status: 'idle' },
+  renderers: { image: false, video: false },
   members: [
     { id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan', createdAt: 0, status: 'idle', sessionsCount: 0 },
     { id: 'reviewer-1', name: 'Vex', role: 'reviewer', avatar: 'robot-amber', createdAt: 0, status: 'idle', sessionsCount: 0 },

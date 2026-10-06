@@ -102,6 +102,10 @@ estimates are `docs/plan-agenthub-v2.md`; the *why* is `docs/decisions/`.
   owner's login (named routes, raw bytes, 502/504, audio ranges, the stream bridged), a **JD** page
   at the top of the sidebar (chat, JD's buttons and quick keys, voice notes both ways, typing), and
   a mock JD in the simulation.
+- Media as a per-employee ability (0073): `abilities: ['image' | 'video']` on a team member gives
+  `generate_image` / `generate_video` to any role (a designer with none set keeps both), set from
+  a **Can make** row of switches in the employee drawer via the member PATCH; the roster carries
+  `renderers` so the drawer says when nothing can render yet.
 
 ## In progress
 

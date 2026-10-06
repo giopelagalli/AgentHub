@@ -792,7 +792,27 @@ export interface TeamMember {
    * on both means `builtin`. A kind the hub host cannot run falls back to `builtin` at run time.
    */
   harness?: HarnessKind;
+  /**
+   * What this employee can render (decision 0073): `image` gives them `generate_image`, `video`
+   * `generate_video`, whatever their role. Absent means the role's default — both for a designer,
+   * none for anyone else; once set (even `[]`) it wins. Read it through `memberAbilities`.
+   */
+  abilities?: MediaKind[];
   createdAt: number;
+}
+
+/** The media abilities an employee can be given, in the order the UI shows them. */
+export const MEDIA_ABILITIES: readonly MediaKind[] = ['image', 'video'];
+
+/**
+ * What a member can render: their own `abilities` when set, else the role's default — a designer
+ * from before abilities existed keeps both, as it always had.
+ */
+export function memberAbilities(member: Pick<TeamMember, 'role' | 'abilities'>): MediaKind[] {
+  // team.yaml is hand-editable: anything but a list reads as unset, and unknown kinds drop out.
+  const set: unknown = member.abilities;
+  if (Array.isArray(set)) return MEDIA_ABILITIES.filter((k) => set.includes(k));
+  return member.role === 'designer' ? [...MEDIA_ABILITIES] : [];
 }
 
 /** What a member's latest session says they are doing right now. */
@@ -817,6 +837,11 @@ export interface TeamMemberView extends TeamMember {
 export interface TeamRoster {
   members: TeamMemberView[];
   manager: { status: TeamStatus; currentSession?: TeamSessionView };
+  /**
+   * Which media kinds some machine can render — the same answer as `MediaList.renderers`, so an
+   * employee's "Can make" toggles can say when nothing would render yet.
+   */
+  renderers: MediaList['renderers'];
 }
 
 /**

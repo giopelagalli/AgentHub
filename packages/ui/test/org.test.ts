@@ -9,6 +9,7 @@ function roster(overrides: Partial<TeamRoster> = {}): TeamRoster {
       { id: 'reviewer-1', name: 'Bo', role: 'reviewer', avatar: 'robot-green', status: 'working', sessionsCount: 3, createdAt: 0 },
     ],
     manager: { status: 'idle' },
+    renderers: { image: false, video: false },
     ...overrides,
   };
 }

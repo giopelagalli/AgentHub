@@ -277,9 +277,10 @@ calls it for any `image-gen` / `video-gen` job whose project is a bundle (others
 memory-root path). `MediaDesk` is the one place a `MediaRequest` becomes a queued job — validation,
 a hub-picked seed, a refusal when no registered node offers the kind — used by the owner's routes
 (`GET/POST /api/projects/:slug/media`, `GET …/media/:file` served only from inside `media/`, real
-path checked) and by `agents/media-tools.ts`, the `generate_image` / `generate_video` tools a
-`designer` employee gets through `spawn_subagent`; they wait for the file, bounded by the turn's
-signal. Both media job types take the node's one GPU slot (`isMediaJob`, 0061).
+path checked) and by `agents/media-tools.ts`, the `generate_image` / `generate_video` tools an
+employee gets through `spawn_subagent`, one per media ability (`memberMediaTools`; the member's
+`abilities`, or both for a designer with none set — `memberAbilities` in shared, 0073); they wait
+for the file, bounded by the turn's signal. The manager and the milestone reviewer never get them. Both media job types take the node's one GPU slot (`isMediaJob`, 0061).
 
 **`projects/code.ts`** — the Code screen's hub half (FR-B3–B5), registered into the server with one
 line. Five owner-only routes under `/api/projects/:slug/code`: the tree (the workspace as one flat

@@ -1,4 +1,4 @@
-import { AVATARS, TEAM_ROLES, type Priority, type ProjectStatus, type TeamMember, type TeamRole } from '@agenthub/shared';
+import { AVATARS, MEDIA_ABILITIES, TEAM_ROLES, type MediaKind, type Priority, type ProjectStatus, type TeamMember, type TeamRole } from '@agenthub/shared';
 
 // The manifest shape lives in @agenthub/shared because HubState carries it to the UI.
 export type { ProjectManifest as Manifest, ProjectStatus } from '@agenthub/shared';
@@ -83,6 +83,15 @@ export function validateBriefing(b: unknown): asserts b is Briefing {
 export const TEAM_NAME_LIMIT = 40;
 export const TEAM_INSTRUCTIONS_LIMIT = 2000;
 
+/**
+ * An owner-supplied `abilities` list (decision 0073): an array drawn from `MEDIA_ABILITIES`,
+ * returned deduplicated in their order; null when it is anything else.
+ */
+export function validateAbilities(raw: unknown): MediaKind[] | null {
+  if (!Array.isArray(raw) || !raw.every((k) => MEDIA_ABILITIES.includes(k as MediaKind))) return null;
+  return MEDIA_ABILITIES.filter((k) => raw.includes(k));
+}
+
 /** Either the member to append (plus the counter's next value), or the API's error status/message. */
 export type NewMemberResult = { member: TeamMember; nextId: number } | { error: string; code: 400 | 409 };
 
@@ -103,6 +112,8 @@ export function newTeamMember(body: unknown, existing: TeamMember[], nextId: num
   if (instructions !== undefined && (typeof instructions !== 'string' || instructions.length > TEAM_INSTRUCTIONS_LIMIT)) {
     return { error: 'invalid instructions', code: 400 };
   }
+  const abilities = b.abilities === undefined || b.abilities === null ? undefined : validateAbilities(b.abilities);
+  if (abilities === null) return { error: 'invalid abilities', code: 400 };
   if (existing.some((m) => m.name.toLowerCase() === name.toLowerCase())) return { error: 'duplicate name', code: 409 };
 
   const role = b.role as TeamRole;
@@ -110,5 +121,5 @@ export function newTeamMember(body: unknown, existing: TeamMember[], nextId: num
   // The id is a roster key the UI puts in a URL path; a role that stopped being slug-ish would make
   // one that isn't, so it is checked rather than assumed.
   validateSlug(id);
-  return { member: { id, name, role, avatar: b.avatar, ...(instructions ? { instructions } : {}), createdAt: now }, nextId: nextId + 1 };
+  return { member: { id, name, role, avatar: b.avatar, ...(instructions ? { instructions } : {}), ...(abilities ? { abilities } : {}), createdAt: now }, nextId: nextId + 1 };
 }

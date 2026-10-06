@@ -1,4 +1,4 @@
-import { PRD_SECTIONS, TEAM_ROLES, type Milestone, type TeamMember, type TeamRole } from '@agenthub/shared';
+import { memberAbilities, PRD_SECTIONS, TEAM_ROLES, type Milestone, type TeamMember, type TeamRole } from '@agenthub/shared';
 import { BRIEFING_RESERVE, ORCHESTRATOR_TOOL_CALLS } from '../agents/budgets.js';
 import type { Briefing } from './schema.js';
 
@@ -10,12 +10,17 @@ export type SubagentRole = TeamRole;
 /** How much of a member's instructions the orchestrator's roster listing shows. */
 const ROSTER_INSTRUCTIONS_LIMIT = 120;
 
-/** One roster line: `- coder-1 — Ada (coder): prefers small diffs`. */
+/** One roster line: `- coder-1 — Ada (coder, makes images): prefers small diffs`. */
 function rosterLine(m: TeamMember): string {
   const note = (m.instructions ?? '').replace(/\s+/g, ' ').trim();
   const short = note.length > ROSTER_INSTRUCTIONS_LIMIT ? `${note.slice(0, ROSTER_INSTRUCTIONS_LIMIT - 1)}\u2026` : note;
-  return `- ${m.id} \u2014 ${m.name} (${m.role})${short ? `: ${short}` : ''}`;
+  const makes = memberAbilities(m).map((k) => (k === 'image' ? 'images' : 'videos'));
+  const role = makes.length ? `${m.role}, makes ${makes.join(' and ')}` : m.role;
+  return `- ${m.id} \u2014 ${m.name} (${role})${short ? `: ${short}` : ''}`;
 }
+
+/** The render tools' names — an employee with a media ability has one or both among their extras. */
+const MEDIA_TOOL_NAMES = new Set(['generate_image', 'generate_video']);
 
 const BRIEFING_SCHEMA = `{
   "title": string,
@@ -193,8 +198,9 @@ export function orchestratorSystemPrompt(contextPack: string, team: TeamMember[]
     `  browser_read, browser_click, browser_type and browser_screenshot — but only while you hold`,
     `  the lease, and every use renews it. For a self-contained browsing task, prefer delegating to a`,
     `  browser-operator subagent instead; either way, release the lease when you're done.`,
-    `- An app icon, hero image or demo clip is a designer's task: it renders on the GPU machine and`,
-    `  the file lands in the bundle's media/ — ask only for what the milestone needs; clips are slow.`,
+    `- An app icon, hero image or demo clip goes to an employee the roster says makes images or`,
+    `  videos: it renders on the GPU machine and the file lands in the bundle's media/ — ask only for`,
+    `  what the milestone needs; clips are slow.`,
     `- ALWAYS end your turn by calling publish_briefing. It is the master orchestrator's only view`,
     `  of this project, and a turn that ends without one is a turn that never reported.`,
     ``,
@@ -208,12 +214,13 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
   researcher: 'You investigate and report: read the workspace, gather what the task asks about, and answer with findings rather than changes.',
   reviewer: 'You review against the task: read the relevant files, judge whether they meet the stated bar, and report concrete problems.',
   'browser-operator': 'You drive the shared browser to complete the task: acquire the lease, navigate/read/click/type as needed, and report what you found or did.',
-  designer: 'You make the visual assets the task asks for — an app icon, a hero image, a demo clip — and report where each one landed.',
+  designer: 'You make the visual assets the task asks for and report where each one landed.',
 };
 
 /**
  * The subagent's system prompt: one role, one task, workspace tools only — plus the browser for a
- * browser-operator and, when they are configured, the external tools a researcher may use.
+ * browser-operator, the external tools a researcher may use when they are configured, and the
+ * render tools of an employee with a media ability.
  */
 export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = [], instructions?: string): string {
   const lines = [
@@ -234,9 +241,11 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
       `  unsure whether something works, run the real code once instead.`,
     );
   }
-  if (role === 'researcher' && extraTools.length) {
+  const media = extraTools.filter((name) => MEDIA_TOOL_NAMES.has(name));
+  const external = extraTools.filter((name) => !MEDIA_TOOL_NAMES.has(name));
+  if (role === 'researcher' && external.length) {
     lines.push(
-      `- You also have the external tools ${extraTools.join(', ')}. They are the only calls that`,
+      `- You also have the external tools ${external.join(', ')}. They are the only calls that`,
       `  leave the owner's machines, every one is logged in the owner's audit trail, so use them for`,
       `  what the task actually asks about and nothing else.`,
     );
@@ -250,9 +259,10 @@ export function subagentSystemPrompt(role: SubagentRole, extraTools: string[] = 
       `  control", the owner preempted you; stop and report rather than retrying.`,
     );
   }
-  if (role === 'designer' && extraTools.length) {
+  // Any role can be given media abilities (decision 0073); whoever has the tools is told about them.
+  if (media.length) {
     lines.push(
-      `- You also have ${extraTools.join(' and ')}. Each renders on the owner's GPU machine, waits`,
+      `- You also have ${media.join(' and ')}. Each renders on the owner's GPU machine, waits`,
       `  until the file lands in the project's media/ folder and returns its path; write a concrete,`,
       `  visual prompt (subject, style, colours, framing). A still takes a minute, a clip far longer —`,
       `  render only what the task asks for, and put the returned paths in your report.`,

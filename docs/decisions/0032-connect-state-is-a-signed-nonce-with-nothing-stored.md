@@ -1,6 +1,7 @@
 # 0032 — The connect round trip carries a signed nonce; nothing is stored
 Date: 2026-09-24
 Decided by: senior-coder
+Status: accepted
 
 ## Context
 Pressing **Connect GitHub** sends the browser to github.com and hopes it comes back. The hub has to

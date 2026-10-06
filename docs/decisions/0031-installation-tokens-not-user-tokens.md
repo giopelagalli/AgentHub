@@ -1,6 +1,7 @@
 # 0031 — The App works with installation tokens; the user token is used once and dropped
 Date: 2026-09-24
 Decided by: senior-coder
+Status: accepted
 
 ## Context
 Connecting GitHub has to be seamless for a non-technical member: a button, GitHub's own "choose

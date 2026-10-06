@@ -6,7 +6,7 @@ Status: accepted
 ## Context
 Decision 0049 verified that pi has no workspace containment: its file tools take absolute paths
 and its `bash` reaches anything the hub's OS user can. That is what keeps pi opt-in, keeps the
-milestone reviewer on `builtin`, and blocks pi from becoming the default (0013, ROADMAP Next 4).
+milestone reviewer on `builtin`, and blocks pi from becoming the default (0013, ROADMAP Next 2).
 pi itself has no setting for it, so the containment has to come from the OS, around the process.
 The hub runs on two kinds of host: the DGX Spark (Ubuntu, arm64) and dev Macs.
 

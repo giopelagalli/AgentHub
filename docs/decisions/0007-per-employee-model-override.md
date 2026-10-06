@@ -15,4 +15,4 @@ On the Spark the local model planned well but coded badly; a cloud flash model c
 `PATCH /api/projects/:slug/team/:id { model | null }` validated by the same helper as the project route; `runSubagent` resolves `routeFor(member.model ?? policy, 'worker')`.
 
 ## Consequences
-The manager keeps the project's orchestrator model. The roster is now where per-agent behaviour lives (harness follows, 0011).
+The manager keeps the project's orchestrator model. The roster is now where per-agent behaviour lives (harness follows, 0013).

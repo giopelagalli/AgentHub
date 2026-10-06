@@ -1,6 +1,7 @@
 # 0033 — Credentials are tried in order: the App, then the personal access token
 Date: 2026-09-24
 Decided by: senior-coder
+Status: accepted
 
 ## Context
 A hub can now have two ways to reach GitHub at once: a registered App with installations a member

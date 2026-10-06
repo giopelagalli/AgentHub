@@ -1,6 +1,7 @@
 # 0034 — Connect GitHub sits in the import tab, with a status line on Cluster
 Date: 2026-09-24
 Decided by: senior-coder
+Status: accepted
 
 ## Context
 "Connect GitHub" needs a home in the UI. The rail has five pages (Projects, Computer, Cluster,

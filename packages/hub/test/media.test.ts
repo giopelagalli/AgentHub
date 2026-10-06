@@ -7,7 +7,7 @@ import type { Job, MediaAsset, MediaList } from '@agenthub/shared';
 import { createHub, type Hub } from '../src/server.js';
 import { commitLabel, landMedia, MediaDesk } from '../src/projects/media.js';
 import { mediaTools, memberMediaTools } from '../src/agents/media-tools.js';
-import { subagentSystemPrompt } from '../src/projects/prompts.js';
+import { orchestratorSystemPrompt, subagentSystemPrompt } from '../src/projects/prompts.js';
 import { routeAccess } from '../src/auth.js';
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
@@ -216,6 +216,14 @@ describe('who gets the render tools (decision 0073)', () => {
       expect(names({ role, abilities: ['video', 'image'] })).toEqual(['generate_image', 'generate_video']);
       expect(names({ role, abilities: [] })).toEqual([]);
     }
+  });
+
+  it('reads a hand-edited team.yaml safely: a non-list is unset, unknown kinds drop out', () => {
+    expect(names({ role: 'coder', abilities: 5 as never })).toEqual([]);
+    expect(names({ role: 'designer', abilities: {} as never })).toEqual(['generate_image', 'generate_video']);
+    expect(names({ role: 'coder', abilities: ['audio', 'image'] as never })).toEqual(['generate_image']);
+    const roster = [{ id: 'coder-1', name: 'Ada', role: 'coder' as const, avatar: 'robot-cyan', abilities: 'image' as never, createdAt: 0 }];
+    expect(orchestratorSystemPrompt('ctx', roster)).toContain('- coder-1 \u2014 Ada (coder)');
   });
 
   it('gives nobody anything without a media desk', () => {

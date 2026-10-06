@@ -809,7 +809,9 @@ export const MEDIA_ABILITIES: readonly MediaKind[] = ['image', 'video'];
  * from before abilities existed keeps both, as it always had.
  */
 export function memberAbilities(member: Pick<TeamMember, 'role' | 'abilities'>): MediaKind[] {
-  if (member.abilities) return MEDIA_ABILITIES.filter((k) => member.abilities!.includes(k));
+  // team.yaml is hand-editable: anything but a list reads as unset, and unknown kinds drop out.
+  const set: unknown = member.abilities;
+  if (Array.isArray(set)) return MEDIA_ABILITIES.filter((k) => set.includes(k));
   return member.role === 'designer' ? [...MEDIA_ABILITIES] : [];
 }
 
@@ -837,10 +839,9 @@ export interface TeamRoster {
   manager: { status: TeamStatus; currentSession?: TeamSessionView };
   /**
    * Which media kinds some machine can render — the same answer as `MediaList.renderers`, so an
-   * employee's "Can make" toggles can say when nothing would render yet. Absent from a hub that
-   * has no media desk.
+   * employee's "Can make" toggles can say when nothing would render yet.
    */
-  renderers?: MediaList['renderers'];
+  renderers: MediaList['renderers'];
 }
 
 /**

@@ -157,15 +157,19 @@ export function projectHarness(manifest: Pick<ProjectManifest, 'harness'> | null
  * "Project default (…)" names what the project runs on; after it, only harnesses this hub host can
  * actually run are offered — a kind whose CLI is missing would only fail at turn time — so with
  * nothing installed but the built-in loop there is no choice to make and the slot stays empty.
+ *
+ * Under the select, a quiet line says when their media abilities (`abilities`, read afresh each
+ * time) keep them on the built-in loop anyway — pi and claude-code cannot offer the render tools
+ * (0073). The returned function re-reads both after the abilities change.
  */
 export function fillHarnessField(
   slot: HTMLElement, slug: string, member: TeamMemberView, harnesses: HarnessInfo[], projectDefault: HarnessKind,
-  localOnly = false,
-): void {
+  localOnly = false, abilities: () => readonly MediaKind[] = () => memberAbilities(member),
+): () => void {
   const offered = harnesses.filter((h) => h.available);
   slot.replaceChildren();
   slot.hidden = offered.length < 2;
-  if (slot.hidden) return;
+  if (slot.hidden) return () => {};
   const field = el('label', 'drawer__field');
   field.append(el('span', 'drawer__fieldlabel', 'Harness'));
   const select = el('select', 'select');
@@ -183,6 +187,13 @@ export function fillHarnessField(
   }
   let saved = member.harness && offered.some((h) => h.kind === member.harness) ? member.harness : '';
   select.value = saved;
+  const hint = el('p', 'drawer__hint');
+  const refresh = (): void => {
+    const text = builtinOnlyNote(abilities(), select.value ? (select.value as HarnessKind) : projectDefault);
+    hint.textContent = text ?? '';
+    hint.hidden = !text;
+  };
+  select.addEventListener('change', refresh);
   select.addEventListener('change', () => {
     const next = select.value ? (select.value as HarnessKind) : null;
     void sendJson(`/api/projects/${slug}/team/${member.id}`, { harness: next }, 'PATCH')
@@ -190,10 +201,20 @@ export function fillHarnessField(
       .catch((error: unknown) => {
         toast(`Could not set ${member.name}'s harness: ${String(error)}`, 'error');
         select.value = saved;
+        refresh();
       });
   });
   field.appendChild(select);
-  slot.append(field);
+  slot.append(field, hint);
+  refresh();
+  return refresh;
+}
+
+/** "Tasks run on the built-in loop while Images is on.", or null when the harness is honoured. */
+export function builtinOnlyNote(abilities: readonly MediaKind[], harness: HarnessKind): string | null {
+  if (!abilities.length || harness === 'builtin') return null;
+  const names = abilities.map((k) => ABILITY_LABELS[k]).join(' and ');
+  return `Tasks run on the built-in loop while ${names} ${abilities.length > 1 ? 'are' : 'is'} on.`;
 }
 
 /**
@@ -272,11 +293,13 @@ const makesWords = (kinds: readonly MediaKind[]): string | null =>
  * An employee's "Can make" row, shown in their drawer (decision 0073): an Images and a Videos
  * switch, each giving them the render tool of that name whatever their role. A change saves the
  * whole set to their roster entry (`PATCH .../team/:id`) at once, and a refusal puts both switches
- * back to the last saved set. A designer who was never given a set starts with both on — what
+ * back to the last saved set; `onSaved` hears each saved set. A designer who was never given a set starts with both on — what
  * they have always had. With `renderers` saying nothing renders a kind, the switches still work
  * and a quiet line says why a render would not happen yet.
  */
-export function memberAbilitiesField(slug: string, member: TeamMemberView, renderers?: MediaList['renderers']): HTMLElement {
+export function memberAbilitiesField(
+  slug: string, member: TeamMemberView, renderers?: MediaList['renderers'], onSaved?: (kinds: MediaKind[]) => void,
+): HTMLElement {
   const box = el('div', 'drawer__abilities');
   const row = el('div', 'drawer__field');
   row.setAttribute('role', 'group');
@@ -300,6 +323,7 @@ export function memberAbilitiesField(slug: string, member: TeamMemberView, rende
       void sendJson(`/api/projects/${slug}/team/${member.id}`, { abilities: next }, 'PATCH')
         .then(() => {
           saved = next;
+          onSaved?.(next);
           const words = makesWords(next);
           toast(words ? `${member.name} can now make ${words}.` : `${member.name} no longer makes images or videos.`);
         })

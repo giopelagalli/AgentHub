@@ -16,6 +16,8 @@ import { AgentLoop } from '../src/agents/loop.js';
 import { Transcript } from '../src/agents/transcript.js';
 import { SUBAGENT_TOOL_CALLS } from '../src/agents/budgets.js';
 import { runSubagent, type Tool, type ToolContext } from '../src/agents/tools.js';
+import { memberMediaTools } from '../src/agents/media-tools.js';
+import { MediaDesk } from '../src/projects/media.js';
 import { harnessStatus, type HarnessDoor } from '../src/agents/harness/index.js';
 import { createHub, type Hub } from '../src/server.js';
 import type { SandboxOptions, SandboxStatus } from '../src/agents/harness/sandbox.js';
@@ -424,6 +426,20 @@ describe('choosing a harness', () => {
     expect(mock.requests.length).toBeGreaterThan(0);
     expect(sessionEvents()).toContain('claude is not signed in on this host');
     expect(sessionEvents()).toContain('; running on the built-in loop');
+  });
+
+  it('runs an employee with a media ability on the built-in loop, naming the tool pi and claude-code lack (0073)', async () => {
+    const desk = new MediaDesk({ queue: {} as never, registry: {} as never });
+    for (const harness of ['pi', 'claude-code'] as const) {
+      const m = member({ harness, abilities: ['video'] });
+      const run = context();
+      await runSubagent({ loop, subject: 'demo', door }, run.ctx, {
+        role: 'coder', task: 'Make the demo clip', member: m, extras: memberMediaTools(m, desk),
+      });
+      expect(existsSync(logPath)).toBe(false);
+      expect(run.logs.join('\n')).toContain(`${harness} has no generate_video; running on the built-in loop`);
+    }
+    expect(mock.requests.length).toBeGreaterThan(0);
   });
 
   it('runs on the built-in loop when the manifest names a harness that does not exist', async () => {

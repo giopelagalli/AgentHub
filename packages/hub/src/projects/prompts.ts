@@ -214,7 +214,7 @@ const ROLE_BRIEFS: Record<SubagentRole, string> = {
   researcher: 'You investigate and report: read the workspace, gather what the task asks about, and answer with findings rather than changes.',
   reviewer: 'You review against the task: read the relevant files, judge whether they meet the stated bar, and report concrete problems.',
   'browser-operator': 'You drive the shared browser to complete the task: acquire the lease, navigate/read/click/type as needed, and report what you found or did.',
-  designer: 'You make the visual assets the task asks for — an app icon, a hero image, a demo clip — and report where each one landed.',
+  designer: 'You make the visual assets the task asks for and report where each one landed.',
 };
 
 /**

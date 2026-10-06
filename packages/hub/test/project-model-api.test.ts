@@ -222,6 +222,9 @@ describe('an employee\'s media abilities (decision 0073)', () => {
       expect(res.json().error).toBe('invalid abilities');
     }
     expect((await memberOf('coder-1')).abilities).toBeUndefined();
+    const empty = await patchMember('coder-1', {});
+    expect(empty.statusCode).toBe(400);
+    expect(empty.json().error).toBe('nothing to change');
   });
 
   it('is accepted with no machine able to render, and the roster says nothing can render yet', async () => {
@@ -244,6 +247,12 @@ describe('an employee\'s media abilities (decision 0073)', () => {
       payload: { name: 'Otto', role: 'coder', avatar: 'robot-green', abilities: ['audio'] },
     });
     expect(bad.statusCode).toBe(400);
+    const unset = await app().inject({
+      method: 'POST', url: '/api/projects/demo/team',
+      payload: { name: 'Pia', role: 'designer', avatar: 'robot-green', abilities: null },
+    });
+    expect(unset.statusCode).toBe(201);
+    expect(unset.json().abilities).toBeUndefined();
     expect(routeAccess('PATCH', '/api/projects/:slug/team/:id')).toBe('owner');
   });
 });

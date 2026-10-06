@@ -111,6 +111,7 @@ describe('managerCard', () => {
   const roster: TeamRoster = {
     members: [{ id: 'coder-1', name: 'Ada', role: 'coder', avatar: 'robot-cyan', status: 'idle', sessionsCount: 0, createdAt: 0 }],
     manager: { status: 'idle' },
+    renderers: { image: false, video: false },
   };
 
   it('carries the id the chat routes are built from', () => {

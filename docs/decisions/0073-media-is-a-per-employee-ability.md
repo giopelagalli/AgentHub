@@ -39,6 +39,9 @@ whoever the roster says makes it; the subagent prompt tells any role with a rend
 - The `designer` role stays as a role brief (visual assets), but it is no longer what gates media.
 - An employee with an ability on pi or claude-code runs on the built-in loop for each delegated
   task, said in the job log — the same fallback a designer always had, because an external
-  harness cannot offer the hub's tools.
+  harness cannot offer the hub's tools. The drawer says so under Harness ("Tasks run on the
+  built-in loop while Images is on.").
+- `memberAbilities` honours `abilities` only when it is a list (team.yaml is hand-editable);
+  anything else reads as unset, and unknown kinds drop out.
 - The hire form in Settings → Team does not show the switches yet (the route accepts the field);
   abilities are set from the drawer after hiring.

@@ -508,7 +508,8 @@ icon, a hero image or a demo clip. A **designer** you never changed can make bot
 you flip a switch, the switches are what count. If no machine can render yet, the drawer says so
 under the switches — the setting is kept, and a render the employee asks for is refused until a
 machine that renders it joins. An employee with an ability always runs on the built-in loop for
-their tasks (pi and Claude Code cannot offer the render tools).
+their tasks (pi and Claude Code cannot offer the render tools); the drawer says so under
+**Harness** when you have picked one of those.
 
 "No machine can render images yet" means no registered node offers `image-gen`. Rendering runs on
 the PC (the 7900 XTX) through ComfyUI (decision 0018: Qwen-Image for stills, Wan 2.2 or LTX-2 for

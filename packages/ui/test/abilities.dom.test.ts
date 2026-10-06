@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TeamMemberView } from '@agenthub/shared';
-import { memberAbilitiesField } from '../src/pages/project/controls.js';
+import type { HarnessInfo, MediaKind, TeamMemberView } from '@agenthub/shared';
+import { fillHarnessField, memberAbilitiesField } from '../src/pages/project/controls.js';
 
 /**
  * The drawer's "Can make" switches (decision 0073), in a DOM (happy-dom). The hub is a stubbed
@@ -86,5 +86,41 @@ describe("the drawer's Can make switches", () => {
       .toBe('No machine can render videos yet — renders are refused until one joins.');
     expect(mount(member()).field.querySelector('.drawer__hint')).toBeNull();
     expect(mount(member(), undefined).field.querySelector('.drawer__hint')).toBeNull();
+  });
+});
+
+describe("the drawer's Harness note about abilities", () => {
+  const HARNESSES: HarnessInfo[] = [{ kind: 'builtin', available: true }, { kind: 'pi', available: true, version: '0.73.1' }];
+  const note = (slot: HTMLElement) => {
+    const hint = slot.querySelector<HTMLElement>('.drawer__hint');
+    return hint && !hint.hidden ? hint.textContent : null;
+  };
+
+  it('says the built-in loop runs their tasks while an ability is on and a harness other than it is chosen', async () => {
+    let kinds: MediaKind[] = ['image'];
+    const slot = document.createElement('div');
+    const refresh = fillHarnessField(slot, 'demo', member({ harness: 'pi', abilities: kinds }), HARNESSES, 'builtin', false, () => kinds);
+    expect(note(slot)).toBe('Tasks run on the built-in loop while Images is on.');
+
+    kinds = ['image', 'video'];
+    refresh();
+    expect(note(slot)).toBe('Tasks run on the built-in loop while Images and Videos are on.');
+    kinds = [];
+    refresh();
+    expect(note(slot)).toBeNull();
+
+    // Back to the project default, which is the built-in loop: nothing to say.
+    kinds = ['video'];
+    const select = slot.querySelector('select')!;
+    select.value = '';
+    select.dispatchEvent(new Event('change'));
+    expect(note(slot)).toBeNull();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it('counts a project default other than the built-in loop, and a designer with no set', () => {
+    const slot = document.createElement('div');
+    fillHarnessField(slot, 'demo', member({ role: 'designer' }), HARNESSES, 'pi');
+    expect(note(slot)).toBe('Tasks run on the built-in loop while Images and Videos are on.');
   });
 });

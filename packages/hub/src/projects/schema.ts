@@ -112,7 +112,7 @@ export function newTeamMember(body: unknown, existing: TeamMember[], nextId: num
   if (instructions !== undefined && (typeof instructions !== 'string' || instructions.length > TEAM_INSTRUCTIONS_LIMIT)) {
     return { error: 'invalid instructions', code: 400 };
   }
-  const abilities = b.abilities === undefined ? undefined : validateAbilities(b.abilities);
+  const abilities = b.abilities === undefined || b.abilities === null ? undefined : validateAbilities(b.abilities);
   if (abilities === null) return { error: 'invalid abilities', code: 400 };
   if (existing.some((m) => m.name.toLowerCase() === name.toLowerCase())) return { error: 'duplicate name', code: 409 };
 

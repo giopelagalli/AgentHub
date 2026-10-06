@@ -1890,7 +1890,7 @@ export function createHub(opts: HubOptions = {}): Hub {
     const { slug, id } = req.params as { slug: string; id: string };
     const body = (req.body ?? {}) as Partial<{ model: ModelPolicy | null; harness: HarnessKind | null; abilities: unknown }>;
     if (body.model === undefined && body.harness === undefined && body.abilities === undefined) {
-      return reply.code(400).send({ error: 'invalid model' });
+      return reply.code(400).send({ error: 'nothing to change' });
     }
     const validated = body.model === undefined || body.model === null ? null : validateModelPolicy(body.model, modelCatalog());
     if (validated && 'error' in validated) return reply.code(400).send({ error: validated.error });

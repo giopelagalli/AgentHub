@@ -14,7 +14,7 @@ the local"). JD keeps calling the local model directly; this is about the hub's 
 - B — stop the Spark's node daemon: works at once (Auto falls back to cloud) but also takes the
   node's other jobs offline; the stopgap used on the day.
 - C (chosen) — a per-node **Pause models** switch (0054) that takes the node's models out of
-  routing while the node stays online, turned on for the Spark.
+  routing while the node stays online; the owner turns it on for the Spark (until then, stopping the daemon does the same).
 
 ## Decision
 Generation runs on Fireworks' cheap tier (glm-5p3-flash, deepseek-v4p1-flash; hard models stay off,

@@ -7,12 +7,9 @@ Now and Next only; what shipped is in `docs/CHANGELOG.md`, the *why* in `docs/de
 
 - Dogfooding `pomodoro-cli` (m1–m3 done, m4 next); the PC joining via the installer when it is on.
 - The public site on the droplet (`rosenroot.com`, 0025): the owner's droplet, DNS and Caddy steps.
-- JD's side of the assistant scope (plan Phase 1): built and reviewed on `telegramManager`'s
-  `agenthub-phase1` branch — project tools, `/projects`, turn reports, a Projects briefing line.
-  Waiting on the owner: an *assistant* token labelled `JD`, `.env`, checkout, restart.
-- JD's web door (FR-C4, 0069): built and reviewed on `telegramManager`'s `jd-web-door` branch
-  (cut from `agenthub-phase1`); the hub side is merged. Waiting on the owner: one shared
-  `JD_WEB_TOKEN` in both env files, `pip install -e .` for aiohttp, restarts.
+- JD drives projects and talks in the hub (FR-C1–C4): merged to JD's main, off until configured.
+  Waiting on the owner: an *assistant* token labelled `JD` and one shared `JD_WEB_TOKEN` in the
+  two env files, then `deploy/spark/deploy.sh`.
 - Generation on Fireworks (0074): waiting on the owner to turn on **Pause models** for the Spark
   on the Machines page (or keep its node daemon stopped).
 

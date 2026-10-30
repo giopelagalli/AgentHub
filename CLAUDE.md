@@ -22,8 +22,8 @@ are `*.dom.test.ts` on happy-dom.
 ## Records
 
 - Decisions live in `docs/decisions/NNNN-slug.md`; the main session hands out
-  numbers. The owner-facing guide is `docs/guide.md`: update the section for
-  what you changed. Don't edit `docs/ROADMAP.md` or `docs/CHANGELOG.md`.
+  numbers. The owner-facing guide is one page per topic: update the page in
+  `docs/guide/` for what you changed. Don't edit `docs/ROADMAP.md` or `docs/CHANGELOG.md`.
 
 ## Owner rules in force
 

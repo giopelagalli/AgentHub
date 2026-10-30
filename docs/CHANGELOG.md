@@ -3,6 +3,8 @@
 One line per merge, newest first, added by the main session at merge. The *why* behind an entry is
 in `docs/decisions/` (the numbers in parentheses).
 
+- 2026-10-30: one-command deploy on the Spark (`deploy/spark/deploy.sh`); JD's main now carries the
+  AgentHub tools and the web door (off until their tokens are set).
 - 2026-10-30: docs are plain markdown — this changelog replaces the roadmap's Done list, and the
   HTML docs site is gone.
 

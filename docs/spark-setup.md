@@ -63,6 +63,19 @@ Operational notes from the recipe log:
 
 ---
 
+## Updating everything: one command
+
+```
+~/AgentHub/deploy/spark/deploy.sh
+```
+
+It pulls AgentHub and JD, installs, builds the UI, restarts the hub (user unit), the node daemon
+only if it's running (a paused node stays off), and JD (`sudo`, asks once), then checks the hub
+answers and prints what's running. The first time, run `cd ~/AgentHub && git pull` first so the
+script exists.
+
+---
+
 ## JD (the Telegram assistant)
 
 | | |
@@ -73,7 +86,7 @@ Operational notes from the recipe log:
 | Data | `~/telegramManager/knowledge/` — a git repo of markdown: todos, schedule (+ weekly series), goals, courses, sources, memories, chat transcript per day, food and tracker logs, profile. `~/telegramManager/data/state.json` is runtime state |
 | Model use | chat, vision, coaching, exam plans → `:8888`. Voice in/out and embeddings → `:8890`. Fireworks (`deepseek-v4p1-flash`) only as fallback while the Spark is down, and for the explicit `/hard` command |
 | Priority | JD sends **no** priority field (= 0, the front of the line). That's the whole point of the scheduling flag |
-| Update | `cd ~/telegramManager && git pull -q && sudo systemctl restart assistant` (pip install only when told) |
+| Update | `~/AgentHub/deploy/spark/deploy.sh` — updates the hub and JD together (see below) |
 
 JD polls the Spark's model every 60 s; when it stops answering he tells the owner "Spark's down"
 and runs on Fireworks, then "Spark's back". A model reload is a normal event for him.

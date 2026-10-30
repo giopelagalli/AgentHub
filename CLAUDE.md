@@ -13,6 +13,8 @@ are `*.dom.test.ts` on happy-dom.
 - **Typecheck:** `npm run typecheck`.
 - **Full suite** (~50 s): the main session runs it once before merge. Builders
   don't.
+- **Deploy to the Spark:** the owner runs `~/AgentHub/deploy/spark/deploy.sh`
+  (pulls the hub and JD, installs, builds, restarts, checks).
 - **See it running:** `npm run sim:ui` starts a seeded hub and UI with fake
   machines and projects; password `sim`; it prints its URLs. Run one sim at a
   time and stop it when done.

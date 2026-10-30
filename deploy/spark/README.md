@@ -32,6 +32,11 @@ Clone to `~/AgentHub`, `npm install && npm run build:ui`, write `configs/hub.env
 The daemon exits if vLLM is not answering within 15 s and systemd restarts it
 every 15 s, so a reboot (vLLM takes ~10 min) sorts itself out.
 
+## Updating
+
+`~/AgentHub/deploy/spark/deploy.sh` pulls the hub and JD, installs, builds the UI, restarts what's
+running and checks the hub answers. Rerun it after any merge.
+
 ## Worker tier — Qwen3.6-35B-A3B NVFP4 (official recipe) (original two-instance plan, unused)
 
     docker run --gpus all --ipc=host -p 8001:8000 \

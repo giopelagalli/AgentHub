@@ -106,7 +106,7 @@ member acting on what they own or are granted.
   and a live feed of their tool calls in the running turn; idle shows the last turn's summary.
 - FR-A3. Cluster page: Drain (no new work, running work finishes) and Remove (daemon exits on its
   next heartbeat, running jobs requeued, name locked for 60 s). Cloud nodes have neither.
-- FR-A4. A Help page renders `docs/guide.md` with a table of contents; every later requirement
+- FR-A4. A Help page renders the guide (`docs/guide/`) with a table of contents; every later requirement
   ships with its guide section.
 - FR-A5. A turn or employee aborted by a hub stop or the time limit is labelled "cut short";
   a reviewer that never reported is not presented as change requests. `read_file`/`read_bundle`
@@ -236,7 +236,7 @@ member acting on what they own or are granted.
 
 **H — Guide**
 
-- FR-H1. `docs/guide.md` is updated in the same change as every feature above; the Help page
+- FR-H1. The guide (`docs/guide/`) is updated in the same change as every feature above; the Help page
   renders it; acceptance of each phase includes "the guide covers it".
 
 ## UX & UI

@@ -84,7 +84,7 @@ my estimates of focused work; "you" items are installs, keys, and decisions.
 - **Node remove / drain.** Cluster page: *Drain* (no new work; running work finishes), *Remove*
   (forget the node; its daemon gets a 410 on the next heartbeat and exits with a clear message).
   `DELETE /api/nodes/:name`, `POST /api/nodes/:name/drain`.
-- **User guide v1.** `docs/guide.md`, rendered in the UI under *Help* in the rail: concepts (hub,
+- **User guide v1.** `docs/guide/`, rendered in the UI under *Help* in the rail: concepts (hub,
   nodes, projects, PRD/roadmap/docs/activity, turns, auto-run and the caps, models and Fireworks,
   budgets), how-tos, and troubleshooting (systemd, logs, the three checks). Grows with every
   phase; every phase's acceptance includes "the guide covers it."

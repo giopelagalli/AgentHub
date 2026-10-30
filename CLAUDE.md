@@ -16,14 +16,12 @@ are `*.dom.test.ts` on happy-dom.
 - **See it running:** `npm run sim:ui` starts a seeded hub and UI with fake
   machines and projects; password `sim`; it prints its URLs. Run one sim at a
   time and stop it when done.
-- **Docs site:** `docs/site/index.html` is published as the owner's docs page.
-  See `docs/site/README.md` for how it's updated.
 
 ## Records
 
 - Decisions live in `docs/decisions/NNNN-slug.md`; the main session hands out
   numbers. The owner-facing guide is `docs/guide.md`: update the section for
-  what you changed. Don't edit `docs/ROADMAP.md`.
+  what you changed. Don't edit `docs/ROADMAP.md` or `docs/CHANGELOG.md`.
 
 ## Owner rules in force
 
